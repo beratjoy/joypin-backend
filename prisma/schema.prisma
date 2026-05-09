@@ -1,0 +1,2647 @@
+// ═══════════════════════════════════════════════════════════════
+// E-Pin & Top-Up Platform — Prisma Schema
+// Base Currency: USD  |  DB: PostgreSQL
+// ═══════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  SUPPORT     // Destek personeli — e-pin şifrelerini GÖREMEZ
+  STAFF
+  RESELLER    // Bayi (Dealer alias)
+  DEALER
+  CUSTOMER
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum KycDocumentType {
+  IDENTITY_CARD
+  PASSPORT
+  DRIVING_LICENSE
+  TAX_CERTIFICATE
+  COMPANY_REGISTRATION
+  UTILITY_BILL
+  SELFIE_WITH_ID
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum PricingModel {
+  COST_PLUS_MARGIN
+  FIXED_MINUS_DISCOUNT
+  FIXED_PRICE
+}
+
+enum StockType {
+  EPIN
+  API_TOPUP
+}
+
+enum ProductType {
+  EPIN   // Hazır kod stoktan verilir
+  TOPUP  // Manuel yükleme (admin/bot), müşteriden ekstra bilgi alınır
+}
+
+enum Currency {
+  USD
+  EUR
+  TRY
+  GBP
+  AED
+  SAR
+}
+
+enum EPinStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  EXPIRED
+  DEFECTIVE
+}
+
+enum ParentOrderStatus {
+  PENDING
+  PROCESSING
+  PARTIALLY_DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum SubOrderStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  CANCELLED
+  REFUNDED
+  FAILED
+  AWAITING_FALLBACK
+  PENDING_STOCK                // EPIN stokta yok, admin kod girişi bekleniyor
+  PENDING_TOPUP                // TOPUP ürünü, admin manuel yükleme yapacak
+  MANUAL_INTERVENTION_REQUIRED // Hiçbir sağlayıcı başarılı olamadı, admin müdahale gerekli
+}
+
+enum DeliveryType {
+  EPIN
+  API_TOPUP
+  MANUAL
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum WalletTxType {
+  CREDIT
+  DEBIT
+  TRANSFER
+  FREEZE
+  UNFREEZE
+}
+
+enum BalanceField {
+  CURRENT
+  BONUS
+  WITHDRAWABLE
+  CREDIT
+  FROZEN
+  LOTTERY
+  CASHBACK
+  COMMISSION
+}
+
+enum ReferralBasis {
+  PROFIT
+  SALE_PRICE
+}
+
+enum BotProviderType {
+  API
+  BOT
+  MANUAL
+}
+
+enum BotProviderStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  VIEW_EPIN
+  DECRYPT_EPIN
+  LOGIN
+  LOGOUT
+  ORDER_PLACED
+  ORDER_CANCELLED
+  ORDER_REFUNDED
+  SUBORDER_CANCELLED
+  SUBORDER_DELIVERED
+  SUBORDER_REFUNDED
+  BALANCE_UPDATED
+  REFERRAL_PAID
+  STAFF_CLAIM_ORDER
+  STAFF_RELEASE_ORDER
+  API_FALLBACK_TRIGGERED
+  GUEST_ORDER_CREATED
+  COUPON_APPLIED
+  INVOICE_ISSUED
+  SESSION_IMPERSONATED
+}
+
+enum CustomerType {
+  INDIVIDUAL   // Bireysel
+  CORPORATE    // Kurumsal
+}
+
+enum InvoiceType {
+  DEFAULT            // Varsayılan
+  E_INVOICE          // E-Fatura (BirFatura entegre)
+  PDF_INTERNATIONAL  // Yurt dışı PDF fatura
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  ISSUED
+  CANCELLED
+}
+
+enum ReferralIncomeModel {
+  PRODUCT_SALE      // Ürün Satışı
+  NEW_REGISTRATION  // Yeni Üye Kaydı
+}
+
+enum ReferralModelType {
+  REFERRAL_LINK  // Referans linki ile
+  LIST_INCOME    // Liste geliri (üye satın almalarından)
+}
+
+enum ReferralCalculation {
+  SALE_PRICE           // Satış fiyatından
+  PROFIT_STOCK_COST    // Kâr — Stok Maliyeti
+  PROFIT_CURRENT_COST  // Kâr — Güncel Maliyet
+}
+
+enum CouponType {
+  PERCENTAGE    // Yüzde indirim
+  FIXED_AMOUNT  // Sabit tutar indirim
+}
+
+enum CouponStatus {
+  ACTIVE
+  EXPIRED
+  DEPLETED
+  DISABLED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
+// ─────────────────────────────────────────────────────────────
+// 1. USER & ROLE & PERMISSION
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id             String     @id @default(uuid())
+  firstName      String     @db.VarChar(100)
+  lastName       String     @db.VarChar(100)
+  email          String     @unique @db.VarChar(255)
+  passwordHash   String     @db.VarChar(255)
+  phone          String?    @db.VarChar(20)
+  role           UserRole   @default(CUSTOMER)
+  status         UserStatus @default(PENDING_VERIFICATION)
+
+  // Müşteri Detayları (Image 5 — Müşteri Bilgileri)
+  customerType     CustomerType @default(INDIVIDUAL)
+  identityNumber   String?      @db.VarChar(20)   // TC Kimlik No
+  birthDate        DateTime?
+  taxExempt        Boolean      @default(false)   // Vergi Muafiyeti
+  invoiceType      InvoiceType  @default(DEFAULT)  // Fatura Tipi
+
+  // Üye Tipi (B2B kademe fiyatlandırma)
+  memberTypeId   String?
+  memberType     MemberType?   @relation(fields: [memberTypeId], references: [id])
+
+  // Bayi ilişkisi
+  dealerGroupId  String?
+  dealerGroup    DealerGroup?  @relation(fields: [dealerGroupId], references: [id])
+
+  // Referans sistemi
+  referredById   String?
+  referredBy     User?         @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals      User[]        @relation("UserReferrals")
+  referralCode   String?       @unique @db.VarChar(20)
+
+  // Doğrulama Durumu (Image 5)
+  smsVerified      Boolean @default(false)
+  emailVerified    Boolean @default(false)
+
+  // OTP Ayarları (Giriş OTP / Sipariş OTP ayrımı)
+  otpSecret        String?  @db.VarChar(255)
+  loginOtpEnabled  Boolean  @default(false)  // Giriş OTP
+  orderOtpEnabled  Boolean  @default(false)  // Sipariş OTP
+
+  // Ticari İletişim Tercihleri (Image 5)
+  smsNotification   Boolean @default(true)
+  emailNotification Boolean @default(true)
+  callNotification  Boolean @default(true)
+
+  // KYC Durumu
+  kycStatus        KycStatus @default(NOT_SUBMITTED)
+  kycApprovedAt    DateTime?
+  kycLevel         Int       @default(0) // 0=Yok, 1=Temel, 2=Gelişmiş, 3=Kurumsal
+
+  // Sadakat Puanı
+  pointsBalance     Int      @default(0) // Sadakat puanı bakiyesi
+
+  // Metadata
+  countryCode       String  @default("TR") @db.VarChar(10)
+  preferredCurrency Currency @default(TRY)
+  lastLoginAt       DateTime?
+  lastLoginIp       String?  @db.VarChar(45)
+
+  // İzinler (Staff için granüler yetki)
+  permissions    UserPermission[]
+
+  // İlişkiler
+  orders         Order[]
+  wallet         Wallet?
+  invoices       Invoice[]
+  kycDocuments   KycDocument[]
+  referralLinks  UserReferral[]   @relation("ReferrerLinks")
+  referredLinks  UserReferral[]   @relation("ReferredLinks")
+  auditLogs      AuditLog[]
+  walletTxPerformed WalletTransaction[] @relation("PerformedBy")
+  withdrawalRequests  WithdrawalRequest[]
+  notifications       UserNotification[]
+  paymentTransactions PaymentTransaction[]
+  userCoupons         UserCoupon[]
+  lootBoxOpens        LootBoxOpen[]
+  subscriptions       UserSubscription[]
+  affiliateEarnings   AffiliateTransaction[] @relation("AffiliateEarner")
+  missionProgress     UserMissionProgress[]
+  epinCodesUsed       EpinCode[] @relation("EpinCodeUser")
+  staffProfile        StaffProfile?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([memberTypeId])
+  @@index([dealerGroupId])
+  @@index([referredById])
+  @@index([role, status])
+  @@map("users")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique @db.VarChar(100) // ör: "epin.decrypt", "order.cancel"
+  name        String   @db.VarChar(150)
+  description String?
+  module      String   @db.VarChar(50)          // ör: "products", "orders", "epins"
+
+  users       UserPermission[]
+  staffRoles  StaffRolePermission[] @relation("StaffRolePerms")
+
+  createdAt DateTime @default(now())
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model UserPermission {
+  id           String     @id @default(uuid())
+  userId       String
+  permissionId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  grantedAt DateTime @default(now())
+  grantedBy String?  // Admin UUID who granted
+
+  @@unique([userId, permissionId])
+  @@map("user_permissions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2. DEALER GROUP
+// ─────────────────────────────────────────────────────────────
+
+model DealerGroup {
+  id                    String  @id @default(uuid())
+  name                  String  @unique @db.VarChar(100)
+  description           String?
+  defaultDiscountPercent Decimal @default(0) @db.Decimal(5, 2)
+  minOrderAmount        Decimal @default(0) @db.Decimal(12, 2)
+  creditLimit           Decimal @default(0) @db.Decimal(12, 2)
+  isActive              Boolean @default(true)
+
+  // API iptal politikası: API iptal olduğunda müşteriye de iptal et
+  cancelOnApiFail       Boolean @default(false)
+
+  users                 User[]
+  pricings              DealerGroupPricing[]
+  allowedPaymentMethods DealerGroupPaymentMethod[]
+  stockRestrictions     DealerStockRestriction[]
+  apiPriorities         DealerApiPriority[]
+  productDiscounts      ProductDiscount[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dealer_groups")
+}
+
+/// Bayilere özel stok kapatma: belirli ürünler bayi grubuna kapatılabilir
+model DealerStockRestriction {
+  id            String      @id @default(uuid())
+  dealerGroupId String
+  productId     String
+  isBlocked     Boolean     @default(true) // true = bu ürün bu gruba kapalı
+
+  dealerGroup   DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([dealerGroupId, productId])
+  @@map("dealer_stock_restrictions")
+}
+
+/// Bayilere özel API önceliği: hangi BotProvider öncelikli kullanılacak
+model DealerApiPriority {
+  id            String      @id @default(uuid())
+  dealerGroupId String
+  productId     String
+  botProviderId String
+  priority      Int         @default(0) // düşük = yüksek öncelik
+
+  dealerGroup   DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  botProvider   BotProvider @relation(fields: [botProviderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([dealerGroupId, productId, botProviderId])
+  @@map("dealer_api_priorities")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 3. PRODUCT & PRICING
+// ─────────────────────────────────────────────────────────────
+
+model ProductCategory {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(100)
+  slug        String  @unique @db.VarChar(120)
+  description String?
+  imageUrl    String? @db.VarChar(500)
+
+  parentId    String?
+  parent      ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children    ProductCategory[] @relation("CategoryTree")
+
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+
+  // SEO
+  seoTitle       String? @db.VarChar(200)
+  seoDescription String? @db.VarChar(500)
+
+  products    Product[]
+  paymentRestrictions CategoryPaymentRestriction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("product_categories")
+}
+
+model Product {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(200)
+  slug        String  @unique @db.VarChar(220)
+  description String?
+  iconUrl            String? @db.VarChar(500)  // Site kartı ikonu (128×128)
+  merchantImageUrl   String? @db.VarChar(500)  // Merchant resmi (yüksek çözünürlük)
+
+  // Kategori
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id])
+
+  // Fiyatlandırma (USD bazlı)
+  baseCurrency    Currency     @default(USD)
+  baseCost        Decimal      @db.Decimal(12, 4)        // Maliyet USD
+  pricingModel    PricingModel @default(COST_PLUS_MARGIN)
+  marginPercent   Decimal      @default(0) @db.Decimal(5, 2)  // COST_PLUS_MARGIN
+  fixedPrice      Decimal      @default(0) @db.Decimal(12, 4) // FIXED_MINUS_DISCOUNT
+  discountPercent Decimal      @default(0) @db.Decimal(5, 2)  // FIXED_MINUS_DISCOUNT
+
+  // Ürün Tipi
+  type              ProductType @default(EPIN)
+
+  // Stok
+  stockType         StockType @default(EPIN)
+  hasInfiniteStock  Boolean   @default(false) // true = stok sayısı sorgulanmaz
+  stockCount        Int       @default(0)     // hasInfiniteStock=false ise AVAILABLE epin adedi
+  lowStockThreshold Int       @default(10)
+
+  // Puan Marketi fiyatı (null = puan ile satılamaz)
+  pointPrice        Int?     // Kaç puan karşılığı alınabilir
+
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+  metadata  Json?   // bölge, platform vb.
+
+  // SEO (madde #30 — toplu SEO ayarı, flat URL: /pubg — #33)
+  seoTitle       String? @db.VarChar(200)
+  seoDescription String? @db.VarChar(500)
+  seoKeywords    String? @db.VarChar(500)
+
+  // Topup ürünleri için müşteriden alınacak bilgi alanları (#2)
+  // [{key:"gameId", label:"Oyun ID", required:true, type:"text"}, ...]
+  customInputFields Json?
+
+  // İlişkiler
+  dealerGroupPricings  DealerGroupPricing[]
+  epins                EPin[]
+  subOrders            SubOrder[]
+  botProviderProducts  BotProviderProduct[]
+  stockRestrictions    DealerStockRestriction[]
+  apiPriorities        DealerApiPriority[]
+  discounts            ProductDiscount[]
+  prices               ProductPrice[]
+  topupFields          TopupField[]
+  epinStocks           EpinStock[]
+  productProviders     ProductProvider[]
+  stockPoolProducts    StockPoolProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([stockType, isActive])
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ÜYE TİPİ & KADEME FİYATLANDIRMA (B2B)
+// ─────────────────────────────────────────────────────────────
+
+model MemberType {
+  id         String  @id @default(uuid())
+  name       String  @unique @db.VarChar(100) // Bireysel, Gold, Platin, Royal Bayi vb.
+  colorCode  String  @default("#6366f1") @db.VarChar(9) // Badge rengi
+  sortOrder  Int     @default(0)
+  isActive   Boolean @default(true)
+
+  // Varsayılan indirim oranı (bu tipe atananlara genel indirim)
+  defaultDiscountPercent Decimal @default(0) @db.Decimal(5, 2)
+
+  users              User[]
+  prices             ProductPrice[]
+  subscriptionPlans  SubscriptionPlan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("member_types")
+}
+
+model ProductPrice {
+  id           String     @id @default(uuid())
+  productId    String
+  memberTypeId String
+  price        Decimal    @db.Decimal(12, 4) // Bu üye tipine özel satış fiyatı
+  currency     Currency   @default(TRY)
+  isActive     Boolean    @default(true)
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  memberType MemberType @relation(fields: [memberTypeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, memberTypeId])
+  @@index([memberTypeId])
+  @@map("product_prices")
+}
+
+// ─────────────────────────────────────────────────────────────
+// TOPUP FIELD (Müşteriden istenen bilgi alanları)
+// ─────────────────────────────────────────────────────────────
+
+/// TOPUP ürünleri için müşteriden alınacak form alanlarını tanımlar
+/// Örn: "Player ID", "Server ID", "Nickname"
+model TopupField {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  fieldKey    String  @db.VarChar(50)   // "playerId", "serverId"
+  fieldLabel  String  @db.VarChar(100)  // "Oyuncu ID'nizi Girin"
+  fieldType   String  @default("text") @db.VarChar(20) // text, number, select
+  placeholder String? @db.VarChar(200)
+  isRequired  Boolean @default(true)
+  sortOrder   Int     @default(0)
+  options     Json?   // select tipi için: ["Server 1","Server 2"]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@map("topup_fields")
+}
+
+// ─────────────────────────────────────────────────────────────
+// EPIN STOCK (Basit hazır kod stoku — düz metin)
+// ─────────────────────────────────────────────────────────────
+
+/// EPIN ürünleri için admin tarafından toplu eklenen kodlar.
+/// Sipariş geldiğinde kullanılmamış kod otomatik atanır.
+model EpinStock {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  code      String  @db.Text          // E-pin kodu (düz metin)
+  isUsed    Boolean @default(false)
+  orderId   String? @db.VarChar(100)  // Hangi siparişe atandı
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, isUsed])
+  @@index([orderId])
+  @@map("epin_stocks")
+}
+
+model DealerGroupPricing {
+  id            String  @id @default(uuid())
+  dealerGroupId String
+  productId     String
+
+  overridePricingModel PricingModel?
+  customMarginPercent  Decimal?  @db.Decimal(5, 2)
+  customFixedPrice     Decimal?  @db.Decimal(12, 4)
+  customDiscountPercent Decimal? @db.Decimal(5, 2)
+  isActive             Boolean   @default(true)
+
+  dealerGroup DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dealerGroupId, productId])
+  @@map("dealer_group_pricings")
+}
+
+model ExchangeRate {
+  id           String   @id @default(uuid())
+  fromCurrency Currency
+  toCurrency   Currency
+  rate         Decimal  @db.Decimal(18, 8)
+  rawRate      Decimal? @db.Decimal(18, 8)
+  spreadPercent Decimal @default(0) @db.Decimal(5, 2)
+  source       String?  @db.VarChar(100)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromCurrency, toCurrency])
+  @@index([fromCurrency])
+  @@index([toCurrency])
+  @@map("exchange_rates")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 4. E-PIN (Şifreli Saklama)
+// ─────────────────────────────────────────────────────────────
+
+model EPin {
+  id            String     @id @default(uuid())
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  encryptedCode String     @db.Text          // AES-256-CBC şifreli
+  encryptionIv  String     @db.VarChar(64)   // Pin'e özel IV
+  status        EPinStatus @default(AVAILABLE)
+
+  // Tedarikçi & Muhasebe (zorunlu)
+  supplierId    String
+  supplier      Supplier   @relation(fields: [supplierId], references: [id])
+  purchaseCost  Decimal    @db.Decimal(12, 4) // Alış maliyeti
+  purchaseCurrency Currency @default(USD)
+
+  expiresAt     DateTime?
+  serialNumber  String?    @db.VarChar(100)
+  batchId       String?    @db.VarChar(100)
+  supplierRef   String?    @db.VarChar(100)
+
+  reservedAt    DateTime?
+  soldAt        DateTime?
+
+  // Teslimat ilişkisi
+  subOrderItem  SubOrderItem?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId, status])
+  @@index([batchId])
+  @@index([supplierId])
+  @@map("epins")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 5. ORDERS (Parent → Sub → Item)
+// ─────────────────────────────────────────────────────────────
+
+model Order {
+  id          String @id @default(uuid())
+  orderNumber String @unique @db.VarChar(30)
+
+  // Kullanıcı ilişkisi (kayıtlı veya misafir)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // Misafir Alışverişi (Guest Checkout)
+  isGuest            Boolean  @default(false)
+  guestEmail         String?  @db.VarChar(255)
+  guestPhone         String?  @db.VarChar(20)
+  guestTrackingToken String?  @unique @db.VarChar(64) // güvenli takip tokeni
+
+  currency    Currency          @default(TRY)
+  totalAmount Decimal           @default(0) @db.Decimal(14, 4)
+  netAmount   Decimal           @default(0) @db.Decimal(14, 4)
+
+  status        ParentOrderStatus @default(PENDING)
+  paymentStatus PaymentStatus     @default(PENDING)
+  paymentMethod String?           @db.VarChar(50)
+  paymentRef    String?           @db.VarChar(200)
+
+  customerNote String?
+  adminNote    String?
+  ipAddress    String? @db.VarChar(45)
+
+  // Personel Sipariş Havuzu (Staff Pool)
+  assignedStaffId String?          // Siparisi devralan personel
+  staffLockedAt   DateTime?        // Kilitleme zamanı
+  staffNote       String?          // Personel notu
+
+  subOrders            SubOrder[]
+  walletTransactions   WalletTransaction[]
+  referralTransactions ReferralTransaction[]
+  financialLogs        OrderFinancialLog[]
+  paymentTxs           PaymentTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([guestTrackingToken])
+  @@index([assignedStaffId])
+  @@map("orders")
+}
+
+model SubOrder {
+  id            String @id @default(uuid())
+  parentOrderId String
+  parentOrder   Order  @relation(fields: [parentOrderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity   Int     @default(1)
+  unitPrice  Decimal @db.Decimal(12, 4)
+  unitCost   Decimal @db.Decimal(12, 4)
+  totalPrice Decimal @db.Decimal(14, 4)
+  currency   Currency @default(TRY)
+
+  status        SubOrderStatus @default(PENDING)
+  deliveryType  DeliveryType   @default(EPIN)
+  deliveredCount Int           @default(0)
+
+  // Müşteriden alınan bilgiler (TOPUP ürünleri için)
+  topupFieldData   Json?  // {"playerId":"12345","serverId":"2"}
+
+  // Bot / API Fallback
+  botProviderId    String?
+  botProvider      BotProvider? @relation(fields: [botProviderId], references: [id])
+  fallbackAttempts Int          @default(0)
+  lastError        String?
+
+  // Personel notları
+  adminNote     String?
+  cancelReason  String?   // İptal sebebi (personel girer)
+  deliveryNote  String?   // Teslimat notu (personel girer)
+
+  items SubOrderItem[]
+  referralTransactions ReferralTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([parentOrderId])
+  @@index([status])
+  @@map("sub_orders")
+}
+
+model SubOrderItem {
+  id         String   @id @default(uuid())
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+
+  epinId      String?  @unique
+  epin        EPin?    @relation(fields: [epinId], references: [id])
+  externalRef String?  @db.VarChar(200)
+
+  isDelivered  Boolean   @default(false)
+  deliveredAt  DateTime?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+
+  @@index([subOrderId])
+  @@map("sub_order_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 5b. ORDER FINANCIAL LOG (Muhasebe — parçalı iptal/iade kaydı)
+// ─────────────────────────────────────────────────────────────
+
+enum FinancialLogType {
+  SALE                 // Satış gerçekleşti
+  PARTIAL_REFUND       // Parçalı iade
+  FULL_REFUND          // Tam iade
+  CANCELLATION         // İptal
+  SERVICE_FEE          // Hizmet bedeli
+  TAX                  // Vergi
+  COMMISSION_REVERSAL  // Komisyon geri alma
+}
+
+/// Her finansal hareket immutable kayıt olarak tutulur.
+/// Parçalı iptallerde bile hangi SubOrder için ne kadar iade yapıldığı net izlenebilir.
+model OrderFinancialLog {
+  id         String           @id @default(uuid())
+  orderId    String
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  subOrderId String?          // Hangi alt siparişle ilgili (null = parent seviye)
+  type       FinancialLogType
+  description String?
+
+  // Tutarlar
+  grossAmount  Decimal @db.Decimal(14, 4)  // Brüt tutar
+  taxAmount    Decimal @default(0) @db.Decimal(14, 4)
+  feeAmount    Decimal @default(0) @db.Decimal(14, 4) // Hizmet bedeli
+  netAmount    Decimal @db.Decimal(14, 4)  // Net tutar (gross - tax - fee)
+  currency     Currency @default(USD)
+
+  // Maliyet tarafı (kâr hesaplama)
+  costAmount   Decimal @default(0) @db.Decimal(14, 4)
+  profitAmount Decimal @default(0) @db.Decimal(14, 4)
+
+  // Kim yaptı
+  performedById String? @db.VarChar(36)
+  performedBy   String? @db.VarChar(200) // staff adı (snapshot)
+
+  metadata Json? // ek bilgi (iade sebebi, API hata kodu vb.)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([subOrderId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("order_financial_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 6. WALLET (Kolon Bazlı 8 Bakiye Türü)
+// ─────────────────────────────────────────────────────────────
+
+model Wallet {
+  id       String   @id @default(uuid())
+  userId   String   @unique
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency Currency @default(TRY)
+
+  // ─── 8 Bakiye Kolonu ────────────────────────────────────
+  balanceCurrent      Decimal @default(0) @db.Decimal(14, 4) // Güncel
+  balanceBonus        Decimal @default(0) @db.Decimal(14, 4) // Bonus
+  balanceWithdrawable Decimal @default(0) @db.Decimal(14, 4) // Çekilebilir
+  balanceCredit       Decimal @default(0) @db.Decimal(14, 4) // Kredi
+  balanceFrozen       Decimal @default(0) @db.Decimal(14, 4) // Bloke
+  balanceLottery      Decimal @default(0) @db.Decimal(14, 4) // Çekiliş (SADECE çekilişlerde!)
+  balanceCashback     Decimal @default(0) @db.Decimal(14, 4) // Cashback
+  balanceCommission   Decimal @default(0) @db.Decimal(14, 4) // Komisyon
+
+  isActive Boolean @default(true)
+
+  transactions WalletTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id       String @id @default(uuid())
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type         WalletTxType
+  balanceField BalanceField  // Hangi kolon etkilendi
+  amount       Decimal       @db.Decimal(14, 4)
+  balanceAfter Decimal       @db.Decimal(14, 4) // İşlem sonrası o kolonun değeri
+
+  description   String?
+  orderId       String?
+  order         Order?  @relation(fields: [orderId], references: [id])
+  referenceType String? @db.VarChar(50)  // "order", "referral", "manual", "lottery"
+  referenceId   String?
+
+  performedById String?
+  performedBy   User?   @relation("PerformedBy", fields: [performedById], references: [id])
+
+  paymentTx PaymentTransaction?
+
+  createdAt DateTime @default(now())
+
+  @@index([walletId])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("wallet_transactions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 7. REFERRAL SYSTEM
+// ─────────────────────────────────────────────────────────────
+
+model ReferralRule {
+  id                String        @id @default(uuid())
+  name              String        @db.VarChar(100)
+  description       String?
+
+  // Gelir Modeli (Image 2): Ürün Satışı / Yeni Üye Kaydı
+  incomeModel       ReferralIncomeModel  @default(PRODUCT_SALE)
+  // Referans Modeli: ReferansLink / ListeGelir
+  referralModel     ReferralModelType    @default(REFERRAL_LINK)
+  // Gelir Hesaplama Yöntemi: Satış Fiyatından / Kâr-Stok Maliyeti / Kâr-Güncel Maliyet
+  calculationMethod ReferralCalculation  @default(SALE_PRICE)
+
+  // Eski uyumluluk
+  calculationBasis  ReferralBasis
+  commissionPercent Decimal       @db.Decimal(5, 2)   // Yüzde komisyon
+  fixedCommission   Decimal       @default(0) @db.Decimal(14, 4)  // Sabit TL komisyon (% + TL)
+  tierLevel         Int           @default(1)
+
+  // Kazanç Sağlayacak Müşteri Tipi (Image 2)
+  earnerCustomerType String?  @db.VarChar(50) // null = tümü, "INDIVIDUAL", "CORPORATE"
+
+  // Alışveriş Fiyat Aralığı (Image 2)
+  minPurchaseAmount Decimal @default(0) @db.Decimal(14, 4)
+  maxPurchaseAmount Decimal @default(0) @db.Decimal(14, 4) // 0 = sınırsız
+  minSalesAmount    Decimal @default(0) @db.Decimal(14, 4) // Minimum gelir
+  maxCommission     Decimal @default(0) @db.Decimal(14, 4) // Max komisyon
+
+  // Sipariş Adet Sınırı (Image 2)
+  orderCountLimit   Int     @default(0) // 0 = sınırsız
+
+  // Geçerlilik Tarihi (Image 2)
+  validFrom  DateTime?
+  validUntil DateTime?
+
+  // Kendi alışverişinden kazanç sağlayabilir (Image 2 checkbox)
+  selfEarningEnabled Boolean @default(false)
+
+  applicableCategoryIds String[]  // UUID dizisi — boş = tümü
+  applicableProductIds  String[]  // UUID dizisi — boş = tümü
+
+  isActive Boolean @default(true)
+
+  userReferrals UserReferral[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("referral_rules")
+}
+
+model UserReferral {
+  id              String @id @default(uuid())
+  referrerId      String
+  referredUserId  String
+
+  referrer        User   @relation("ReferrerLinks", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUser    User   @relation("ReferredLinks", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  referralRuleId  String?
+  referralRule    ReferralRule? @relation(fields: [referralRuleId], references: [id])
+
+  totalEarnings     Decimal @default(0) @db.Decimal(14, 4)
+  totalTransactions Int     @default(0)
+  isActive          Boolean @default(true)
+
+  transactions ReferralTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([referrerId, referredUserId])
+  @@index([referrerId])
+  @@map("user_referrals")
+}
+
+model ReferralTransaction {
+  id              String   @id @default(uuid())
+  userReferralId  String
+  userReferral    UserReferral @relation(fields: [userReferralId], references: [id], onDelete: Cascade)
+
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id])
+  subOrderId String?
+  subOrder   SubOrder? @relation(fields: [subOrderId], references: [id])
+
+  calculationBasis ReferralBasis
+  appliedPercent   Decimal @db.Decimal(5, 2)
+  baseAmount       Decimal @db.Decimal(14, 4)
+  commissionAmount Decimal @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@index([userReferralId])
+  @@index([orderId])
+  @@map("referral_transactions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 8. BOT & API PROVIDERS
+// ─────────────────────────────────────────────────────────────
+
+model BotProvider {
+  id     String            @id @default(uuid())
+  name   String            @db.VarChar(100)
+  type   BotProviderType
+  status BotProviderStatus @default(ACTIVE)
+
+  apiUrl             String? @db.VarChar(500)
+  encryptedApiKey    String? @db.Text
+  encryptedApiSecret String? @db.Text
+
+  // Bakiye takibi (Sağlayıcıdaki mevcut bakiyemiz)
+  balance            Decimal @default(0) @db.Decimal(14, 4)
+  balanceCurrency    Currency @default(USD)
+  lastBalanceSync    DateTime?
+
+  priority              Int @default(0)
+  maxConcurrentRequests Int @default(10)
+  timeoutMs             Int @default(30000)
+
+  // Fallback zinciri
+  fallbackProviderId String?
+  fallbackProvider   BotProvider?  @relation("BotFallback", fields: [fallbackProviderId], references: [id])
+  fallbackOf         BotProvider[] @relation("BotFallback")
+
+  config Json? // ek konfigürasyon
+
+  supportedProducts BotProviderProduct[]
+  productProviders  ProductProvider[]
+  subOrders         SubOrder[]
+  dealerPriorities  DealerApiPriority[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("bot_providers")
+}
+
+model BotProviderProduct {
+  id            String @id @default(uuid())
+  botProviderId String
+  productId     String
+  priority      Int    @default(0)
+
+  externalProductCode String? @db.VarChar(100)
+  isActive            Boolean @default(true)
+
+  botProvider BotProvider @relation(fields: [botProviderId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([botProviderId, productId])
+  @@map("bot_provider_products")
+}
+
+/// Ürün ↔ Sağlayıcı ilişkisi (priority ve costPrice ile)
+/// Admin bir ürüne birden fazla sağlayıcı atayabilir ve öncelik sırası belirler.
+/// Smart Router bu tabloyu okuyarak sipariş yönlendirmesi yapar.
+model ProductProvider {
+  id         String @id @default(uuid())
+  productId  String
+  providerId String
+
+  providerProductCode String?  @db.VarChar(200) // O API'nin bu ürünü tanıdığı kendi ID'si
+  costPrice           Decimal  @db.Decimal(12, 4) // Bu sağlayıcıdaki alış maliyetimiz
+  costCurrency        Currency @default(USD)
+  priority            Int      @default(1)      // 1 = en yüksek öncelik
+  isActive            Boolean  @default(true)
+
+  product  Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  provider BotProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, providerId])
+  @@index([productId, priority])
+  @@map("product_providers")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 9. PAYMENT METHODS
+// ─────────────────────────────────────────────────────────────
+
+model PaymentMethod {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(100)
+  code        String  @unique @db.VarChar(50) // "wallet", "bank_transfer", "crypto"
+  description String?
+  iconUrl     String? @db.VarChar(500)
+
+  gatewayConfig Json?
+
+  minAmount  Decimal @default(0) @db.Decimal(12, 2)
+  maxAmount  Decimal @default(0) @db.Decimal(12, 2)
+  feePercent Decimal @default(0) @db.Decimal(5, 2)
+  fixedFee   Decimal @default(0) @db.Decimal(12, 2)
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  dealerGroupMappings DealerGroupPaymentMethod[]
+  categoryRestrictions CategoryPaymentRestriction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payment_methods")
+}
+
+model DealerGroupPaymentMethod {
+  id              String @id @default(uuid())
+  dealerGroupId   String
+  paymentMethodId String
+  isAllowed       Boolean @default(true)
+  additionalFeePercent Decimal @default(0) @db.Decimal(5, 2)
+
+  dealerGroup   DealerGroup   @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([dealerGroupId, paymentMethodId])
+  @@map("dealer_group_payment_methods")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 10. SUPPLIER (Tedarikçi — Muhasebe)
+// ─────────────────────────────────────────────────────────────
+
+model Supplier {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(200)
+  code        String  @unique @db.VarChar(50) // kısa kod: "SUP-STEAM", "SUP-APPLE"
+  contactName String? @db.VarChar(150)
+  email       String? @db.VarChar(255)
+  phone       String? @db.VarChar(30)
+  taxId       String? @db.VarChar(50)         // Vergi no
+  address     String?
+  country     String? @db.VarChar(50)
+  notes       String?
+
+  isActive Boolean @default(true)
+
+  epins EPin[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("suppliers")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 11. AUDIT LOG
+// ─────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?
+  user       User?       @relation(fields: [userId], references: [id])
+  action     AuditAction
+  entityType String?     @db.VarChar(50)
+  entityId   String?
+
+  details       Json?
+  previousValue Json?
+  newValue      Json?
+
+  ipAddress String? @db.VarChar(45)
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 12. İNDİRİM KUPONU (#19)
+// ─────────────────────────────────────────────────────────────
+
+model DiscountCoupon {
+  id          String       @id @default(uuid())
+  code        String       @unique @db.VarChar(50)
+  description String?
+  type        CouponType   @default(PERCENTAGE)
+  value       Decimal      @db.Decimal(14, 4) // % veya sabit tutar
+
+  currency         Currency @default(USD)
+  minOrderAmount   Decimal  @default(0) @db.Decimal(14, 4)
+  maxDiscountAmount Decimal @default(0) @db.Decimal(14, 4) // 0 = sınırsız
+
+  maxUsageTotal   Int @default(0)  // 0 = sınırsız
+  maxUsagePerUser Int @default(1)
+  currentUsage    Int @default(0)
+
+  applicableProductIds  String[]
+  applicableCategoryIds String[]
+  applicableUserRoles   String[] // ["CUSTOMER","DEALER"] boş = tümü
+
+  status    CouponStatus @default(ACTIVE)
+  validFrom  DateTime?
+  validUntil DateTime?
+
+  usages      CouponUsage[]
+  userCoupons UserCoupon[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("discount_coupons")
+}
+
+model CouponUsage {
+  id       String @id @default(uuid())
+  couponId String
+  coupon   DiscountCoupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  userId         String?
+  orderId        String?
+  discountAmount Decimal @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@index([couponId])
+  @@index([userId])
+  @@map("coupon_usages")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 13. FATURA SİSTEMİ (#21 — BirFatura + PDF Yurt Dışı)
+// ─────────────────────────────────────────────────────────────
+
+/// Haftalık toplama: 1 haftada 1 müşterinin siparişlerini toplayıp keser.
+/// E-faturada maliyet yazılır, kar edilen tutara hizmet bedeli + %20 KDV.
+model Invoice {
+  id            String @id @default(uuid())
+  invoiceNumber String @unique @db.VarChar(30)
+  userId        String
+  user          User   @relation(fields: [userId], references: [id])
+
+  type   InvoiceType   @default(DEFAULT)
+  status InvoiceStatus @default(DRAFT)
+
+  // Tutarlar
+  subtotal    Decimal @db.Decimal(14, 4)
+  serviceFee  Decimal @default(0) @db.Decimal(14, 4) // Hizmet bedeli
+  taxRate     Decimal @default(20) @db.Decimal(5, 2)  // %20 KDV
+  taxAmount   Decimal @db.Decimal(14, 4)
+  totalAmount Decimal @db.Decimal(14, 4)
+  currency    Currency @default(TRY)
+
+  // Müşteri bilgileri (snapshot)
+  customerName    String  @db.VarChar(200)
+  customerEmail   String  @db.VarChar(255)
+  customerAddress String?
+  taxId           String? @db.VarChar(50) // Vergi No
+
+  // Entegrasyon
+  externalInvoiceId String? @db.VarChar(200) // BirFatura ID
+  pdfUrl            String? @db.VarChar(500)
+
+  // Dönem (haftalık toplama)
+  periodStart DateTime?
+  periodEnd   DateTime?
+
+  notes String?
+
+  items InvoiceItem[]
+
+  billingEntityId String?
+  billingEntity   BillingEntity? @relation(fields: [billingEntityId], references: [id])
+
+  issuedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id        String @id @default(uuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  orderId     String?
+  subOrderId  String?
+  productName String  @db.VarChar(200)
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(12, 4) // E-faturada maliyet yazılır, satış fiyatı DEĞİL
+  totalPrice  Decimal @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 14. SLIDER SİSTEMİ (#22)
+// ─────────────────────────────────────────────────────────────
+
+model Slider {
+  id             String  @id @default(uuid())
+  title          String  @db.VarChar(200)
+  imageUrl       String  @db.VarChar(500)
+  mobileImageUrl String? @db.VarChar(500)
+  linkUrl        String? @db.VarChar(500)
+
+  position  String  @default("HOME_TOP") @db.VarChar(50)
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sliders")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 15. BLOG SİSTEMİ (#23)
+// ─────────────────────────────────────────────────────────────
+
+model BlogCategory {
+  id   String @id @default(uuid())
+  name String @db.VarChar(100)
+  slug String @unique @db.VarChar(120)
+
+  posts BlogPost[]
+
+  createdAt DateTime @default(now())
+
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id         String @id @default(uuid())
+  title      String @db.VarChar(300)
+  slug       String @unique @db.VarChar(350)
+  content    String @db.Text
+  excerpt    String? @db.VarChar(500)
+  coverImage String? @db.VarChar(500)
+  imageUrl   String? @db.VarChar(500) // TrySoro'dan gelen görsel
+
+  categoryId String?
+  category   BlogCategory? @relation(fields: [categoryId], references: [id])
+  authorId   String?
+
+  seoTitle       String? @db.VarChar(200)
+  seoDescription String? @db.VarChar(500)
+
+  status      String @default("DRAFT") @db.VarChar(20) // DRAFT, PUBLISHED
+  isPublished Boolean @default(false)
+  source      String? @db.VarChar(50) // "SORO", "MANUAL"
+
+  translations BlogTranslation[]
+
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([status])
+  @@index([slug])
+  @@map("blog_posts")
+}
+
+/// Çok dilli blog çevirisi — her BlogPost'un birden fazla dil versiyonu olabilir
+model BlogTranslation {
+  id             String   @id @default(uuid())
+  blogPostId     String
+  blogPost       BlogPost @relation(fields: [blogPostId], references: [id], onDelete: Cascade)
+
+  languageCode   String   @db.VarChar(10) // "tr", "en", "de", "fr"
+  title          String   @db.VarChar(300)
+  content        String   @db.Text
+  excerpt        String?  @db.VarChar(500)
+
+  seoTitle       String?  @db.VarChar(200)
+  seoDescription String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([blogPostId, languageCode])
+  @@index([languageCode])
+  @@map("blog_translations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 16. ÇEKİLİŞ SİSTEMİ (#13 — Yayıncılar oluşturur, admin onaylar)
+// ─────────────────────────────────────────────────────────────
+
+model Lottery {
+  id          String  @id @default(uuid())
+  title       String  @db.VarChar(200)
+  description String?
+  imageUrl    String? @db.VarChar(500)
+
+  createdById String // Yayıncı (Publisher user)
+
+  entryPrice Decimal  @db.Decimal(14, 4) // LOTTERY bakiyesinden düşülür
+  currency   Currency @default(TRY)
+
+  maxEntries Int @default(0) // 0 = sınırsız
+
+  prizeDescription String?
+  prizeValue       Decimal? @db.Decimal(14, 4)
+
+  status       String   @default("DRAFT") @db.VarChar(20)
+  approvedById String?
+  approvedAt   DateTime?
+
+  startDate DateTime?
+  endDate   DateTime?
+  drawDate  DateTime?
+
+  winnerId String?
+
+  entries LotteryEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdById])
+  @@map("lotteries")
+}
+
+model LotteryEntry {
+  id        String  @id @default(uuid())
+  lotteryId String
+  lottery   Lottery @relation(fields: [lotteryId], references: [id], onDelete: Cascade)
+  userId    String
+
+  ticketNumber String  @db.VarChar(20)
+  isWinner     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([lotteryId, userId])
+  @@index([lotteryId])
+  @@map("lottery_entries")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 17. BİLDİRİM ŞABLONLARI (#6 — Mail + SMS)
+// ─────────────────────────────────────────────────────────────
+
+/// Sipariş teslim, sepette ürün kaldı maili, stok alarm vb.
+model NotificationTemplate {
+  id      String @id @default(uuid())
+  event   String @db.VarChar(50) // ORDER_CREATED, ORDER_DELIVERED, ABANDONED_CART, LOW_STOCK
+  channel NotificationChannel
+
+  subject String? @db.VarChar(300) // Email subject
+  body    String  @db.Text         // Template body {{orderNumber}}, {{customerName}} vb.
+
+  isActive Boolean @default(true)
+
+  // Bayi grubu bazlı özelleştirme (#7 — her gruba ayrı mesaj)
+  dealerGroupId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([event, channel, dealerGroupId])
+  @@map("notification_templates")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 18. DÖNÜŞÜM TAKİP (#32 — Meta & Google ADS)
+// ─────────────────────────────────────────────────────────────
+
+model ConversionEvent {
+  id        String @id @default(uuid())
+  platform  String @db.VarChar(50)  // META, GOOGLE_ADS
+  eventName String @db.VarChar(100) // Purchase, Lead, AddToCart
+
+  orderId String?
+  userId  String?
+
+  value    Decimal? @db.Decimal(14, 4)
+  currency Currency @default(USD)
+
+  metadata Json?
+  pixelId  String? @db.VarChar(100)
+
+  sentAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([platform])
+  @@index([orderId])
+  @@map("conversion_events")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 19. KATEGORİ BAZLI ÖDEME KISITLAMASI (#17)
+// ─────────────────────────────────────────────────────────────
+
+/// Belirli kategorilerde belirli ödeme yöntemlerini gizleme
+model CategoryPaymentRestriction {
+  id              String @id @default(uuid())
+  categoryId      String
+  paymentMethodId String
+  isHidden        Boolean @default(true) // true = bu ödeme bu kategoride gizli
+
+  category      ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod   @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([categoryId, paymentMethodId])
+  @@map("category_payment_restrictions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 20. KYC (BELGE DOĞRULAMA) SİSTEMİ
+// ─────────────────────────────────────────────────────────────
+
+/// KYC belge yükleme — Kripto/Stripe ve yüksek limitli bayiler için
+model KycDocument {
+  id            String @id @default(uuid())
+
+  userId        String
+  user          User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Belge bilgileri
+  documentType  KycDocumentType
+  documentUrl   String  @db.VarChar(500) // S3/Cloud Storage URL
+  thumbnailUrl  String? @db.VarChar(500)
+
+  // Metadata
+  documentNumber String? @db.VarChar(50)  // Belge numarası (opsiyonel)
+  issuedCountry  String? @db.VarChar(5)   // ISO ülke kodu
+  issuedDate     DateTime?
+  expiryDate     DateTime?
+
+  // Doğrulama durumu
+  status        KycStatus @default(PENDING_REVIEW)
+  reviewedById  String?   // Admin ID
+  reviewedAt    DateTime?
+  reviewNotes   String?   @db.Text
+  rejectionReason String? @db.Text
+
+  // OCR/AI oto-doğrulama (opsiyonel)
+  ocrData       Json?     // Otomatik okunan veriler
+  matchScore    Int?      // 0-100 eşleşme skoru
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([documentType])
+  @@map("kyc_documents")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 21. GLOBAL ÖDEME GEÇİTLERİ & FİNANS MODÜLLERİ
+// ═══════════════════════════════════════════════════════════════
+
+enum PaymentGateway {
+  STRIPE
+  MERCURY
+  BINANCE_PAY
+  CRYPTOMUS
+  BANK_TRANSFER
+  WALLET
+}
+
+enum PaymentTransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum WithdrawalMethod {
+  CRYPTO_USDT_TRC20
+  CRYPTO_USDT_ERC20
+  CRYPTO_BTC
+  BANK_WIRE
+  WISE
+  PAYONEER
+}
+
+enum NotificationType {
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  WITHDRAWAL_STATUS_CHANGE
+  ORDER_STATUS_CHANGE
+  WALLET_BALANCE_CHANGE
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+/// Ana şirket/şirketler (Billing Entity)
+model BillingEntity {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(200)
+  legalName   String  @db.VarChar(300) // Joy Bilişim Yazılım...
+  taxId       String  @db.VarChar(50)   // Vergi numarası
+  vatNumber   String? @db.VarChar(50)   // KDV/VAT numarası
+  
+  // Adres bilgileri
+  address     String
+  city        String  @db.VarChar(100)
+  state       String? @db.VarChar(100)
+  country     String  @db.VarChar(50)   // ISO ülke kodu
+  postalCode  String  @db.VarChar(20)
+  
+  // İletişim
+  email       String  @db.VarChar(255)
+  phone       String  @db.VarChar(30)
+  website     String? @db.VarChar(200)
+  
+  // Banka/Kripto hesap bilgileri (JSON)
+  paymentAccounts Json?
+  
+  // Şirket logosu/imza
+  logoUrl     String? @db.VarChar(500)
+  stampUrl    String? @db.VarChar(500)
+  
+  isActive    Boolean @default(true)
+  isDefault   Boolean @default(false) // Varsayılan fatura şirketi
+  
+  invoices    Invoice[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("billing_entities")
+}
+
+/// Detaylı ödeme işlem kaydı (Gateway entegrasyonları için)
+model PaymentTransaction {
+  id              String @id @default(uuid())
+  
+  // İlişkiler
+  userId          String
+  user            User   @relation(fields: [userId], references: [id])
+  orderId         String?
+  order           Order? @relation(fields: [orderId], references: [id])
+  walletTxId      String?  @unique
+  walletTx        WalletTransaction? @relation(fields: [walletTxId], references: [id])
+  
+  // Ödeme bilgileri
+  gateway         PaymentGateway
+  amount          Decimal @db.Decimal(14, 4)
+  currency        Currency @default(USD)
+  feeAmount       Decimal @default(0) @db.Decimal(14, 4) // İşlem komisyonu
+  netAmount       Decimal @db.Decimal(14, 4) // Komisyon düşülmüş tutar
+  
+  // Gateway'den dönen bilgiler
+  gatewayTransactionId String? @db.VarChar(255)
+  gatewayResponse      Json?   // Ham gateway yanıtı
+  
+  // Durum
+  status          PaymentTransactionStatus @default(PENDING)
+  failureReason   String? @db.Text
+  
+  // Kripto özel alanları
+  cryptoCurrency  String? @db.VarChar(10)  // BTC, USDT, vb.
+  cryptoAddress   String? @db.VarChar(100) // Ödeme adresi
+  cryptoTxHash    String? @db.VarChar(100) // Blockchain tx hash
+  
+  // 3D Secure / Fraud kontrolü
+  riskScore       Int?    // 0-100 fraud skoru
+  is3DSecure      Boolean @default(false)
+  
+  // Zaman damgaları
+  initiatedAt     DateTime @default(now())
+  completedAt     DateTime?
+  
+  @@index([userId])
+  @@index([orderId])
+  @@index([gateway])
+  @@index([status])
+  @@map("payment_transactions")
+}
+
+/// Para çekme talepleri (Bayiler için)
+model WithdrawalRequest {
+  id              String @id @default(uuid())
+  
+  userId          String
+  user            User   @relation(fields: [userId], references: [id])
+  
+  // Talep bilgileri
+  amount          Decimal @db.Decimal(14, 4)
+  currency        Currency @default(USD)
+  feeAmount       Decimal @default(0) @db.Decimal(14, 4)
+  netAmount       Decimal @db.Decimal(14, 4)
+  
+  // Çekim yöntemi
+  method          WithdrawalMethod
+  
+  // Hedef hesap bilgileri (şifreli olarak saklanır)
+  destinationAccount Json // { address: "0x...", network: "TRC20" } veya { iban: "...", swift: "..." }
+  
+  // Durum takibi
+  status          WithdrawalStatus @default(PENDING)
+  statusHistory   Json? // [{ status: "PENDING", at: "...", by: "...", note: "..." }]
+  
+  // İnceleme
+  reviewedById    String?
+  reviewedAt      DateTime?
+  reviewNotes     String? @db.Text
+  
+  // İşlem
+  processedAt     DateTime?
+  processedTxHash String? @db.VarChar(100) // Blockchain tx hash veya banka referans
+  
+  // Hata durumunda
+  failureReason   String? @db.Text
+  retryCount      Int     @default(0)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("withdrawal_requests")
+}
+
+/// Ürün bazlı bayi iskontoları (PUBG, MLBB, Roblox için)
+model ProductDiscount {
+  id              String @id @default(uuid())
+  
+  // İlişkiler
+  dealerGroupId   String
+  dealerGroup   DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  // İskonto kuralları
+  discountPercent Decimal @db.Decimal(5, 2) // %0-100 arası
+  discountAmount  Decimal? @db.Decimal(14, 4) // Sabit tutar indirim (opsiyonel)
+  
+  // Minimum/maximum sipariş koşulları
+  minQuantity     Int @default(1)
+  maxQuantity     Int @default(0) // 0 = sınırsız
+  minOrderAmount  Decimal @default(0) @db.Decimal(14, 4)
+  
+  // Geçerlilik
+  validFrom       DateTime?
+  validUntil      DateTime?
+  
+  isActive        Boolean @default(true)
+  priority        Int     @default(0) // Çakışan iskontolarda öncelik
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([dealerGroupId, productId])
+  @@index([productId])
+  @@index([isActive])
+  @@map("product_discounts")
+}
+
+/// Kullanıcı bildirimleri (WebSocket/Polling destekli)
+model UserNotification {
+  id              String @id @default(uuid())
+  
+  userId          String
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Bildirim içeriği
+  type            NotificationType
+  title           String  @db.VarChar(200)
+  message         String  @db.Text
+  
+  // İlişkili kayıt (opsiyonel)
+  relatedEntityType String? @db.VarChar(50) // "order", "withdrawal", "payment"
+  relatedEntityId   String?
+  
+  // İçerik zenginleştirme
+  actionUrl       String? @db.VarChar(500) // Tıklanınca yönlendirilecek URL
+  actionText      String? @db.VarChar(100) // Buton metni ("Siparişi Gör", "İncele")
+  imageUrl        String? @db.VarChar(500)
+  
+  // Dağıtım durumu
+  deliveryStatus  NotificationDeliveryStatus @default(PENDING)
+  
+  // Okundu bilgisi
+  isRead          Boolean @default(false)
+  readAt          DateTime?
+  
+  // WebSocket/Polling için timestamp
+  createdAt       DateTime @default(now())
+  expiresAt       DateTime? // Otomatik silinecek tarih
+  
+  @@index([userId])
+  @@index([type])
+  @@index([deliveryStatus])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("user_notifications")
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SMART PAYMENT ROUTING & TICKET SYSTEM (v8)
+// ═══════════════════════════════════════════════════════════════
+
+enum PaymentProvider {
+  STRIPE       // Global — Kart ödemeleri (USD, EUR, GBP)
+  CRYPTOMUS    // Global — Kripto ödemeleri (tüm para birimleri)
+  PAYTR        // Türkiye — Yerel kart/havale (TRY)
+  LIDIO        // Türkiye — Yerel alternatif ödeme (TRY)
+}
+
+enum TicketStatus {
+  OPEN
+  AWAITING_REPLY
+  REPLIED
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model PaymentWebhookLog {
+  id            String          @id @default(uuid())
+  provider      PaymentProvider
+  eventType     String          @db.VarChar(100)
+  rawPayload    Json
+  signature     String?         @db.Text
+  isValid       Boolean         @default(false)
+  processedAt   DateTime?
+  errorMessage  String?         @db.Text
+  orderId       String?
+  createdAt     DateTime        @default(now())
+
+  @@index([provider, createdAt])
+  @@index([orderId])
+  @@map("payment_webhook_logs")
+}
+
+model Ticket {
+  id           String         @id @default(uuid())
+  userId       String
+  orderId      String?        // Sipariş referansı (opsiyonel)
+  subject      String         @db.VarChar(255)
+  status       TicketStatus   @default(OPEN)
+  priority     TicketPriority @default(MEDIUM)
+  assignedToId String?        // Support personel
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  resolvedAt   DateTime?
+  closedAt     DateTime?
+
+  messages     TicketMessage[]
+
+  @@index([userId, status])
+  @@index([assignedToId, status])
+  @@index([orderId])
+  @@map("tickets")
+}
+
+model TicketMessage {
+  id         String   @id @default(uuid())
+  ticketId   String
+  senderId   String   // Kullanıcı veya support personel
+  isStaff    Boolean  @default(false)
+  content    String   @db.Text
+  attachments Json?   // File URLs array
+
+  createdAt  DateTime @default(now())
+
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+// ─────────────────────────────────────────────────────────────
+// SITE SETTINGS & SLIDER (CMS)
+// ─────────────────────────────────────────────────────────────
+
+model SiteSettings {
+  id          String  @id @default(uuid())
+  key         String  @unique @db.VarChar(100)  // "site_title", "seo_description", "footer_text" vb.
+  value       String  @db.Text
+  group       String  @default("general") @db.VarChar(50) // general, seo, footer, social
+  description String? @db.VarChar(255)
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?  // Admin userId
+
+  @@index([group])
+  @@map("site_settings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// GAMIFICATION: LOOT BOX (Kasa Açma)
+// ─────────────────────────────────────────────────────────────
+
+enum LootBoxRewardType {
+  POINT    // Sadakat puanı
+  BALANCE  // Cüzdan bakiyesi
+}
+
+model LootBox {
+  id           String   @id @default(uuid())
+  name         String   @db.VarChar(200) // "Altın Kasa", "Elmas Kutu"
+  description  String?
+  imageUrl     String?  @db.VarChar(500)
+  price        Decimal  @db.Decimal(12, 4) // Bakiye veya Puan fiyatı
+  isPointPrice Boolean  @default(false)    // true = puanla alınır, false = bakiye ile
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+
+  rewards LootBoxReward[]
+  opens   LootBoxOpen[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("loot_boxes")
+}
+
+model LootBoxReward {
+  id                   String             @id @default(uuid())
+  boxId                String
+  box                  LootBox            @relation(fields: [boxId], references: [id], onDelete: Cascade)
+
+  rewardType           LootBoxRewardType  // POINT veya BALANCE
+  rewardValue          Decimal            @db.Decimal(12, 4) // 50 puan, 10 TL vb.
+  rewardLabel          String?            @db.VarChar(100)   // "50 Puan!", "25 TL Bonus"
+  dropChancePercentage Decimal            @db.Decimal(5, 2)  // 0.01 - 100.00 arası
+
+  createdAt DateTime @default(now())
+
+  @@index([boxId])
+  @@map("loot_box_rewards")
+}
+
+model LootBoxOpen {
+  id       String  @id @default(uuid())
+  boxId    String
+  box      LootBox @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rewardType  LootBoxRewardType
+  rewardValue Decimal @db.Decimal(12, 4)
+  rewardLabel String? @db.VarChar(100)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([boxId])
+  @@map("loot_box_opens")
+}
+
+// ─────────────────────────────────────────────────────────────
+// GAMIFICATION: USER COUPON (Kişiye Özel Kupon Tanımlama)
+// ─────────────────────────────────────────────────────────────
+
+model UserCoupon {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  couponId String
+  coupon   DiscountCoupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  isUsed   Boolean   @default(false)
+  usedAt   DateTime?
+  expiresAt DateTime?
+
+  assignedReason String? @db.VarChar(200) // "Hoşgeldin kampanyası", "Terk edilen sepet"
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, couponId])
+  @@index([userId, isUsed])
+  @@map("user_coupons")
+}
+
+// ─────────────────────────────────────────────────────────────
+// GAMIFICATION: ABANDONED CART LOG
+// ─────────────────────────────────────────────────────────────
+
+model AbandonedCartLog {
+  id        String @id @default(uuid())
+  orderId   String
+  userId    String?
+  email     String  @db.VarChar(255)
+
+  sentAt    DateTime?
+  status    String @default("PENDING") @db.VarChar(20) // PENDING, SENT, CONVERTED, EXPIRED
+
+  couponCode String? @db.VarChar(50) // Gönderilen kupon kodu (varsa)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([orderId])
+  @@map("abandoned_cart_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// VIP ABONELİK SİSTEMİ (Subscription)
+// ─────────────────────────────────────────────────────────────
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+/// Admin tarafından oluşturulan VIP abonelik planları.
+/// Her plan bir MemberType'a bağlıdır — satın alındığında kullanıcı o tipe yükseltilir.
+model SubscriptionPlan {
+  id                 String     @id @default(uuid())
+  name               String     @db.VarChar(200) // "Aylık VIP", "Yıllık Gold"
+  description        String?
+  price              Decimal    @db.Decimal(12, 4) // Varsayılan fiyat (fallback)
+  currency           Currency   @default(TRY)      // Varsayılan para birimi
+  durationDays       Int        // 30, 90, 365 vb.
+
+  // Bu plan satın alındığında kullanıcı bu tipe geçer
+  targetMemberTypeId String
+  targetMemberType   MemberType @relation(fields: [targetMemberTypeId], references: [id])
+
+  // Opsiyonel avantajlar
+  bonusPoints        Int        @default(0) // Abonelik başlangıcında hediye puan
+  features           Json?      // ["Özel fiyatlar", "%10 ekstra indirim", "Öncelikli destek"]
+
+  isActive           Boolean    @default(true)
+  sortOrder          Int        @default(0)
+
+  // Çoklu para birimi fiyatları
+  prices        SubscriptionPrice[]
+  subscriptions UserSubscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscription_plans")
+}
+
+/// Ülke/para birimi bazlı abonelik fiyatları.
+/// Her plan için birden fazla currency fiyatı tanımlanabilir.
+model SubscriptionPrice {
+  id        String           @id @default(uuid())
+  planId    String
+  plan      SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  currency  Currency         // TRY, USD, EUR, GBP, SAR vb.
+  price     Decimal          @db.Decimal(12, 4) // O para birimindeki fiyat
+  country   String?          @db.VarChar(5) // İsteğe bağlı ülke kodu (tr, us, de)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([planId, currency])
+  @@index([currency])
+  @@map("subscription_prices")
+}
+
+/// Kullanıcıların aktif/geçmiş abonelikleri.
+/// Süre bittiğinde cron job memberTypeId'yi "Bireysel"e geri döndürür.
+model UserSubscription {
+  id        String             @id @default(uuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      SubscriptionPlan   @relation(fields: [planId], references: [id])
+
+  startDate DateTime           @default(now())
+  endDate   DateTime
+  status    SubscriptionStatus @default(ACTIVE)
+
+  // Ödeme referansı
+  paymentRef  String? @db.VarChar(200)
+  paidAmount  Decimal @default(0) @db.Decimal(12, 4)
+
+  // Süresi dolduğunda eski tipe dönmek için
+  previousMemberTypeId String? @db.VarChar(100)
+
+  cancelledAt DateTime?
+  cancelReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([endDate, status])
+  @@map("user_subscriptions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AFFILIATE / REFERANS SİSTEMİ
+// ─────────────────────────────────────────────────────────────
+
+enum AffiliateStatus {
+  PENDING   // Sipariş onaylandı, komisyon beklemede
+  APPROVED  // Admin onayladı, cüzdana eklendi
+  REJECTED  // Admin reddetti
+}
+
+/// Komisyon kademe tablosu — Admin belirler
+model AffiliateTier {
+  id                 String  @id @default(uuid())
+  name               String  @db.VarChar(100) // "Normal Üye", "VIP Yayıncı", "Platin Affiliate"
+  commissionPercent  Decimal @db.Decimal(5, 2) // %1, %3, %5
+  minWithdrawAmount  Decimal @default(50) @db.Decimal(12, 4) // Min para çekme tutarı
+  isDefault          Boolean @default(false)
+  isActive           Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("affiliate_tiers")
+}
+
+/// Her başarılı siparişten referer'a yazılan komisyon kaydı
+model AffiliateTransaction {
+  id               String          @id @default(uuid())
+  orderId          String
+  referrerUserId   String
+  referrer         User            @relation("AffiliateEarner", fields: [referrerUserId], references: [id], onDelete: Cascade)
+
+  orderAmount      Decimal         @db.Decimal(12, 4) // Sipariş toplamı
+  commissionRate   Decimal         @db.Decimal(5, 2)  // Uygulanan oran (%)
+  commissionAmount Decimal         @db.Decimal(12, 4) // Kazanılan tutar
+  currency         Currency        @default(TRY)
+
+  status           AffiliateStatus @default(PENDING)
+  approvedAt       DateTime?
+  approvedBy       String?         // Admin userId
+  paidToWallet     Boolean         @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerUserId, status])
+  @@index([orderId])
+  @@map("affiliate_transactions")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📧 EMAIL MARKETING & ANALYTICS ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+enum EmailType {
+  WELCOME                // Hoş geldin
+  EMAIL_VERIFICATION     // E-posta doğrulama/OTP
+  ORDER_CONFIRMATION     // Sipariş onayı
+  ORDER_DELIVERY         // E-pin teslimi
+  GUEST_ORDER_INFO       // Misafir sipariş bilgi
+  PASSWORD_RESET         // Şifre sıfırlama
+  ACCOUNT_DELETION       // Üyelik iptali
+  ABANDONED_CART_1H      // Terk edilen sepet (1 saat)
+  ABANDONED_CART_24H     // Terk edilen sepet (24 saat)
+  RE_ENGAGEMENT          // Geri dön kampanyası
+  CAMPAIGN               // Manuel kampanya
+  BALANCE_LOADED         // Bakiye yüklendi
+  REFERRAL_EARNED        // Referans komisyonu
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  FAILED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  CANCELLED
+}
+
+enum CampaignTargetType {
+  ALL_USERS
+  ACTIVE_USERS           // Son 30 gün aktif
+  INACTIVE_USERS         // 30+ gün inaktif
+  VIP_MEMBERS            // Belirli MemberType
+  DEALERS                // Bayiler
+  NEW_USERS              // Son 7 gün üye olan
+  CUSTOM_SEGMENT         // Özel segmentasyon (JSON filter)
+}
+
+/// E-posta şablonları — Tüm transactional ve marketing maillerin HTML'leri
+model EmailTemplate {
+  id          String    @id @default(uuid())
+  slug        String    @unique @db.VarChar(100) // "welcome", "order-confirmation", "abandoned-cart-1h"
+  name        String    @db.VarChar(200)         // Görünen ad: "Hoş Geldin Maili"
+  subject     String    @db.VarChar(500)         // "Hoş geldin {{firstName}}!"
+  bodyHtml    String    @db.Text                 // Full HTML template (Handlebars/Mustache vars)
+  description String?   @db.VarChar(500)         // Admin notları
+
+  emailType   EmailType                          // Hangi tetikleyici için kullanılır
+  isActive    Boolean   @default(true)
+  version     Int       @default(1)              // Versiyon takibi
+
+  // Çoklu dil desteği
+  languageCode String  @default("tr") @db.VarChar(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([slug, languageCode])
+  @@index([emailType, isActive])
+  @@map("email_templates")
+}
+
+/// E-posta kampanyaları — Admin takviminden planlanan toplu gönderimler
+model EmailCampaign {
+  id            String             @id @default(uuid())
+  title         String             @db.VarChar(300)
+  description   String?
+
+  // İçerik
+  subject       String             @db.VarChar(500)
+  bodyHtml      String             @db.Text
+  previewText   String?            @db.VarChar(200) // Gmail önizleme
+
+  // Hedef kitle
+  targetType    CampaignTargetType @default(ALL_USERS)
+  targetFilter  Json?              // Özel filtre: {"memberTypeId": "...", "countryCode": "TR"}
+  targetCount   Int?               // Hesaplanan alıcı sayısı
+
+  // Zamanlama
+  scheduledAt   DateTime?          // null = taslak, belirlenmişse o tarihte gider
+  sentAt        DateTime?          // Gerçek gönderim zamanı
+
+  // Metrikler (Aggregate — EmailLog'dan hesaplanır)
+  totalSent     Int @default(0)
+  totalOpened   Int @default(0)
+  totalClicked  Int @default(0)
+  totalBounced  Int @default(0)
+
+  // Dönüşüm
+  conversions   Int     @default(0) // Mailden sipariş tamamlayan sayısı
+  revenue       Decimal @default(0) @db.Decimal(14, 4) // Kampanyadan elde edilen ciro
+
+  status        CampaignStatus @default(DRAFT)
+  createdById   String?        // Admin userId
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs EmailLog[]
+
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdById])
+  @@map("email_campaigns")
+}
+
+/// E-posta gönderim logları — Her tekil mail gönderimi + açılma/tıklanma takibi
+model EmailLog {
+  id            String      @id @default(uuid())
+
+  userId        String?     // Kayıtlı kullanıcı (null = misafir)
+  email         String      @db.VarChar(255) // Alıcı e-posta adresi (snapshot)
+  emailType     EmailType                    // Mail tipi
+
+  // İçerik (snapshot — değişen şablonlardan etkilenmez)
+  subject       String      @db.VarChar(500)
+  templateSlug  String?     @db.VarChar(100) // Hangi şablondan oluşturuldu
+
+  // Kampanya ilişkisi (opsiyonel)
+  campaignId    String?
+  campaign      EmailCampaign? @relation(fields: [campaignId], references: [id])
+
+  // Durum takibi
+  status        EmailStatus @default(QUEUED)
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  openedAt      DateTime?   // Tracking pixel tetiklendi
+  clickedAt     DateTime?   // Link tıklandı
+
+  // Tracking
+  trackingId    String      @unique @default(uuid()) // Pixel ve link tracking için unique ID
+  openCount     Int         @default(0)  // Kaç kez açıldı
+  clickCount    Int         @default(0)  // Kaç kez tıklandı
+
+  // Hata bilgisi
+  errorMessage  String?     @db.Text
+  bounceType    String?     @db.VarChar(50) // "hard", "soft"
+
+  // İlişkili kayıt
+  orderId       String?     // Sipariş onayı gibi maillerde
+  metadata      Json?       // Ek bilgi (coupon code, campaign ref vb.)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([emailType])
+  @@index([status])
+  @@index([campaignId])
+  @@index([trackingId])
+  @@index([createdAt])
+  @@map("email_logs")
+}
+
+/// Terk edilen sepet takibi — Kullanıcının sepetinde bırakıp gittiği ürünler
+model AbandonedCart {
+  id              String    @id @default(uuid())
+  userId          String?   // Kayıtlı kullanıcı
+  email           String?   @db.VarChar(255) // Bilinen e-posta
+
+  // Sepet içeriği
+  itemsJson       Json      // [{productId, name, quantity, unitPrice, imageUrl}]
+  totalAmount     Decimal   @db.Decimal(14, 4)
+  currency        String    @default("TRY") @db.VarChar(10)
+
+  // Hatırlatma durumu
+  reminder1SentAt DateTime? // 1 saat sonra gönderilen
+  reminder2SentAt DateTime? // 24 saat sonra gönderilen
+  couponCode      String?   @db.VarChar(50) // Gönderilen özel kupon kodu
+
+  // Geri kazanım
+  recoveredAt     DateTime? // Sepeti tamamlayarak sipariş verdi
+  recoveredOrderId String?  @db.VarChar(100) // Tamamlanan siparişin ID'si
+  recoveredAmount  Decimal? @db.Decimal(14, 4) // Kurtarılan ciro
+
+  // Durum
+  isRecovered     Boolean @default(false)
+  isExpired       Boolean @default(false) // 7 gün sonra expired
+  lastActivityAt  DateTime @default(now()) // Son sepet aktivitesi
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([email])
+  @@index([isRecovered])
+  @@index([lastActivityAt])
+  @@index([reminder1SentAt])
+  @@map("abandoned_carts")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📦 KURUMSAL STOK HAVUZU (ERP-Level Stock Pool Engine)
+// ═══════════════════════════════════════════════════════════════
+
+/// Stok Havuzu — Kodlar ürünlere doğrudan değil havuzlara eklenir.
+/// Bir havuz birden fazla ürüne bağlanabilir (many-to-many).
+/// Örn: 'PUBG UC Genel Havuz' → PUBG 60 UC, PUBG 325 UC
+model StockPool {
+  id          String  @id @default(uuid())
+  name        String  @db.VarChar(200)  // "PUBG UC Genel Havuz", "Steam TR Havuzu"
+  description String?
+  isActive    Boolean @default(true)
+
+  // İlişkiler
+  codes    EpinCode[]
+  products StockPoolProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("stock_pools")
+}
+
+/// StockPool ↔ Product many-to-many bağlantı tablosu
+model StockPoolProduct {
+  id        String @id @default(uuid())
+  poolId    String
+  pool      StockPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([poolId, productId])
+  @@index([productId])
+  @@map("stock_pool_products")
+}
+
+/// ERP E-Pin Kodu — Her bir kod bağımsız maliyet, tedarikçi, öncelik ve kural taşır.
+/// Sipariş anında akıllı dağıtım motoru bu tablodan seçim yapar.
+model EpinCode {
+  id        String    @id @default(uuid())
+  poolId    String
+  pool      StockPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+
+  code          String    @unique @db.Text  // AES-256-GCM şifreli (ciphertext:iv:tag)
+  codeHash      String?   @db.VarChar(64)  // SHA-256 hash (duplicate check için)
+  addedByUserId String?   // Kodu sisteme ekleyen personel ID
+
+  // Maliyet & Tedarikçi
+  costPrice Decimal   @db.Decimal(12, 4) // Bu kodun geliş fiyatı
+  currency  Currency  @default(USD)       // Maliyet para birimi
+  supplier  String    @db.VarChar(200)    // Tedarikçi firma adı
+
+  // Dağıtım kuralları
+  priority        Int     @default(0)      // Yüksek = önce satılır (FIFO kırıcı)
+  allowResellers  Boolean @default(true)   // false = Sadece B2C (bireysel müşteriye)
+
+  // Kullanım durumu
+  isUsed          Boolean   @default(false)
+  usedAt          DateTime?
+  usedByUserId    String?   // Hangi kullanıcıya satıldı
+  usedByUser      User?     @relation("EpinCodeUser", fields: [usedByUserId], references: [id])
+  orderId         String?   @db.VarChar(100) // Hangi siparişe atandı
+  subOrderId      String?   @db.VarChar(100) // Hangi alt siparişe
+
+  // Meta
+  expiresAt       DateTime? // Kodun son kullanma tarihi (opsiyonel)
+  batchId         String?   @db.VarChar(100) // Toplu ekleme grubu
+  notes           String?   // Admin notu
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([poolId, isUsed, priority, createdAt])
+  @@index([poolId, isUsed, allowResellers])
+  @@index([orderId])
+  @@index([usedByUserId])
+  @@index([batchId])
+  @@index([supplier])
+  @@map("epin_codes")
+}
+
+// ─────────────────────────────────────────────────────────────
+// DİNAMİK GÖREV SİSTEMİ (MISSIONS)
+// ─────────────────────────────────────────────────────────────
+
+enum MissionType {
+  REFERRAL_COUNT   // X üye getir
+  TOTAL_TURNOVER   // X TL ciro yap
+  TOTAL_PROFIT     // X TL net kar ettir
+  SOCIAL_SHARE     // Sosyal medyada paylaş (manuel onaylı)
+  CUSTOM           // Özel görev (admin manuel)
+}
+
+enum MissionRewardType {
+  CASH_BALANCE     // Cüzdan bakiyesi
+  POINTS           // Sadakat puanı
+  VIP_MEMBERSHIP   // VIP üyelik süresi
+}
+
+model Mission {
+  id            String            @id @default(uuid())
+  title         String            @db.VarChar(200)
+  description   String?
+  imageUrl      String?           @db.VarChar(500)
+
+  type          MissionType
+  targetValue   Decimal           @db.Decimal(14, 4) // Hedef değer (50 üye, 10000 TL vb)
+
+  rewardType    MissionRewardType
+  rewardAmount  Decimal           @db.Decimal(12, 4) // Ödül tutarı (200 TL, 500 puan vb)
+
+  isActive      Boolean           @default(true)
+  startDate     DateTime?
+  endDate       DateTime?
+
+  // Kime açık?
+  minTier       String?           @db.VarChar(100) // Min affiliate tier adı (null = herkese)
+
+  progress      UserMissionProgress[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("missions")
+}
+
+model UserMissionProgress {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  missionId     String
+  mission       Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  currentValue  Decimal  @default(0) @db.Decimal(14, 4) // Mevcut ilerleme
+  isCompleted   Boolean  @default(false)
+  completedAt   DateTime?
+  rewardClaimed Boolean  @default(false)
+  claimedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, missionId])
+  @@index([userId, isCompleted])
+  @@map("user_mission_progress")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔐 ZERO-TRUST RBAC & GÜVENLİK SİSTEMİ
+// ═══════════════════════════════════════════════════════════════
+
+enum UnlockRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+/// Personel Rolü — yetki grupları
+model StaffRole {
+  id          String  @id @default(uuid())
+  name        String  @unique @db.VarChar(100)  // "super_admin", "demo_admin", "operation_admin"
+  displayName String  @db.VarChar(200)          // "Süper Admin"
+  description String?
+  color       String  @default("#6366f1") @db.VarChar(9)
+  isSystem    Boolean @default(false)  // true = silinemez (seed rolleri)
+  canDecryptWithoutApproval Boolean @default(false) // E-pin kodlarını onaysız görebilir
+
+  permissions StaffRolePermission[]
+  staff       StaffProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("staff_roles")
+}
+
+/// Rol ↔ Yetki bağlantısı (many-to-many)
+model StaffRolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  role         StaffRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation("StaffRolePerms", fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("staff_role_permissions")
+}
+
+/// Personel Profili — User'a bağlı, hangi rolde olduğunu belirler
+model StaffProfile {
+  id       String    @id @default(uuid())
+  userId   String    @unique
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     StaffRole @relation(fields: [roleId], references: [id])
+
+  // Ek bilgiler
+  department  String?  @db.VarChar(100) // "Operasyon", "Finans", "Destek"
+  phone       String?  @db.VarChar(20)
+  isActive    Boolean  @default(true)
+  lastActiveAt DateTime?
+
+  // Unlock Request'ler
+  unlockRequests EpinUnlockRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roleId])
+  @@index([isActive])
+  @@map("staff_profiles")
+}
+
+/// E-pin Kod Çözme Talepleri — Zero-Trust workflow
+/// Personel şifreli kodu görmek istediğinde onay mekanizması
+model EpinUnlockRequest {
+  id          String              @id @default(uuid())
+  staffId     String
+  staff       StaffProfile        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  epinCodeId  String
+  status      UnlockRequestStatus @default(PENDING)
+
+  // Onay/Red bilgisi
+  reviewedById String?  // Onaylayan/Reddeden admin
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  // Güvenlik metadata
+  ipAddress   String?  @db.VarChar(45)
+  userAgent   String?  @db.VarChar(500)
+  reason      String?  // Personelin talebi neden açtığına dair notu
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime // Talep süresi (örn: 24 saat)
+
+  @@index([staffId, status])
+  @@index([status, createdAt])
+  @@index([epinCodeId])
+  @@map("epin_unlock_requests")
+}

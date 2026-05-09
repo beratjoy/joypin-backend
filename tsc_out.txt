@@ -1,0 +1,66 @@
+src/modules/auth/auth.service.ts(101,13): error TS2353: Object literal may only specify known properties, and 'tier' does not exist in type '(Without<UserReferralCreateInput, UserReferralUncheckedCreateInput> & UserReferralUncheckedCreateInput) | (Without<...> & UserReferralCreateInput)'.
+src/modules/auth/auth.service.ts(118,24): error TS2339: Property 'isActive' does not exist on type '{ id: string; email: string; referralCode: string; firstName: string; lastName: string; passwordHash: string; phone: string; role: UserRole; status: UserStatus; customerType: CustomerType; ... 22 more ...; updatedAt: Date; }'.
+src/modules/auth/auth.service.ts(150,24): error TS2339: Property 'isActive' does not exist on type '{ dealerGroup: { id: string; createdAt: Date; updatedAt: Date; name: string; isActive: boolean; description: string; defaultDiscountPercent: Decimal; minOrderAmount: Decimal; creditLimit: Decimal; cancelOnApiFail: boolean; }; permissions: ({ ...; } & { ...; })[]; } & { ...; }'.
+src/modules/auth/guards/epin-otp.guard.ts(73,43): error TS2339: Property 'verifyEpinViewToken' does not exist on type 'OtpService'.
+src/modules/bots/adapters/index.ts(1,10): error TS2305: Module '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+src/modules/bots/adapters/index.ts(1,31): error TS2305: Module '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+src/modules/bots/adapters/index.ts(1,50): error TS2305: Module '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+src/modules/bots/adapters/index.ts(1,64): error TS2305: Module '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+src/modules/bots/adapters/moogold.adapter.ts(2,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(3,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+src/modules/bots/adapters/moogold.adapter.ts(4,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+src/modules/bots/adapters/moogold.adapter.ts(5,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+src/modules/bots/adapters/moogold.adapter.ts(20,17): error TS2339: Property 'safeCall' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(29,35): error TS2339: Property 'http' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(39,17): error TS2339: Property 'safeCall' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(46,35): error TS2339: Property 'http' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(60,17): error TS2339: Property 'safeCall' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(61,35): error TS2339: Property 'http' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(67,17): error TS2339: Property 'safeCall' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/moogold.adapter.ts(68,35): error TS2339: Property 'http' does not exist on type 'MooGoldAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(2,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(3,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+src/modules/bots/adapters/smile-one.adapter.ts(4,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+src/modules/bots/adapters/smile-one.adapter.ts(5,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+src/modules/bots/adapters/smile-one.adapter.ts(32,17): error TS2339: Property 'safeCall' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(43,35): error TS2339: Property 'http' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(64,17): error TS2339: Property 'safeCall' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(68,35): error TS2339: Property 'http' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(74,17): error TS2339: Property 'safeCall' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/smile-one.adapter.ts(81,35): error TS2339: Property 'http' does not exist on type 'SmileOneAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(2,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(3,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+src/modules/bots/adapters/unipin.adapter.ts(4,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+src/modules/bots/adapters/unipin.adapter.ts(5,3): error TS2305: Module '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+src/modules/bots/adapters/unipin.adapter.ts(24,45): error TS2339: Property 'http' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(30,17): error TS2339: Property 'safeCall' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(40,35): error TS2339: Property 'http' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(52,17): error TS2339: Property 'safeCall' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(60,35): error TS2339: Property 'http' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(72,17): error TS2339: Property 'safeCall' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(73,35): error TS2339: Property 'http' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(79,17): error TS2339: Property 'safeCall' does not exist on type 'UniPinAdapter'.
+src/modules/bots/adapters/unipin.adapter.ts(80,35): error TS2339: Property 'http' does not exist on type 'UniPinAdapter'.
+src/modules/bots/bot-alert.service.ts(147,11): error TS2322: Type '"BOT_ALERT"' is not assignable to type 'AuditAction'.
+src/modules/bots/bot-alert.service.ts(189,38): error TS2322: Type '"OWNER"' is not assignable to type 'UserRole'.
+src/modules/bots/bot-callback.service.ts(53,18): error TS2353: Object literal may only specify known properties, and 'order' does not exist in type 'SubOrderInclude<DefaultArgs>'.
+src/modules/bots/bot-callback.service.ts(92,9): error TS2322: Type '{ encryptedCode: { encryptedCode: string; iv: string; }; productId: string; status: "ASSIGNED"; assignedAt: Date; }[]' is not assignable to type 'EPinCreateManyInput | EPinCreateManyInput[]'.
+  Type '{ encryptedCode: { encryptedCode: string; iv: string; }; productId: string; status: "ASSIGNED"; assignedAt: Date; }[]' is not assignable to type 'EPinCreateManyInput[]'.
+    Type '{ encryptedCode: { encryptedCode: string; iv: string; }; productId: string; status: "ASSIGNED"; assignedAt: Date; }' is missing the following properties from type 'EPinCreateManyInput': encryptionIv, supplierId, purchaseCost
+src/modules/bots/bot-callback.service.ts(110,9): error TS2322: Type '"DELIVERED" | "PARTIAL"' is not assignable to type 'SubOrderStatus | EnumSubOrderStatusFieldUpdateOperationsInput'.
+  Type '"PARTIAL"' is not assignable to type 'SubOrderStatus | EnumSubOrderStatusFieldUpdateOperationsInput'.
+src/modules/bots/bot-callback.service.ts(117,47): error TS2339: Property 'orderId' does not exist on type '{ id: string; status: SubOrderStatus; createdAt: Date; updatedAt: Date; currency: Currency; productId: string; unitPrice: Decimal; unitCost: Decimal; ... 10 more ...; parentOrderId: string; }'.
+src/modules/bots/bot-callback.service.ts(120,50): error TS2339: Property 'orderId' does not exist on type '{ id: string; status: SubOrderStatus; createdAt: Date; updatedAt: Date; currency: Currency; productId: string; unitPrice: Decimal; unitCost: Decimal; ... 10 more ...; parentOrderId: string; }'.
+src/modules/bots/bot-callback.service.ts(151,16): error TS2353: Object literal may only specify known properties, and 'orderId' does not exist in type 'SubOrderWhereInput'.
+src/modules/currency/currency.controller.ts(15,3): error TS4053: Return type of public method from exported class has or is using name 'ExchangeRates' from external module "C:/Users/joyal/OneDrive/Desktop/epin script/backend/src/modules/currency/currency.service" but cannot be named.
+src/modules/dashboard/dashboard.service.ts(59,17): error TS2740: Type '{}' is missing the following properties from type 'DashboardStats': dailyRevenue, dailyRevenueChange, pendingTransactions, pendingChange, and 4 more.
+src/modules/dashboard/dashboard.service.ts(139,17): error TS2740: Type '{}' is missing the following properties from type 'BalanceDistribution': current, bonus, withdrawable, commission, and 4 more.
+src/modules/notifications/notification.gateway.ts(9,8): error TS2307: Cannot find module '@nestjs/websockets' or its corresponding type declarations.
+src/modules/notifications/notification.gateway.ts(10,32): error TS2307: Cannot find module 'socket.io' or its corresponding type declarations.
+src/modules/payments/payment-gateways.service.ts(36,12): error TS2702: 'PaymentGateway' only refers to a type, but is being used as a namespace here.
+src/modules/payments/payment-gateways.service.ts(36,41): error TS2702: 'PaymentGateway' only refers to a type, but is being used as a namespace here.
+src/modules/payments/payment-gateways.service.ts(288,9): error TS2322: Type 'string' is not assignable to type 'Currency'.
+src/modules/payments/payments.controller.ts(18,9): error TS4053: Return type of public method from exported class has or is using name 'AvailableGateway' from external module "C:/Users/joyal/OneDrive/Desktop/epin script/backend/src/modules/payments/smart-routing.service" but cannot be named.
+src/modules/payments/webhooks/webhook-processor.service.ts(256,11): error TS2322: Type '"PAYMENT_CONFIRMED"' is not assignable to type 'NotificationType'.
+src/modules/products/product-discount.service.ts(277,9): error TS1117: An object literal cannot have multiple properties with the same name.
+src/modules/products/product-discount.service.ts(281,9): error TS1117: An object literal cannot have multiple properties with the same name.

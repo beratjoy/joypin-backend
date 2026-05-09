@@ -1,0 +1,33 @@
+﻿Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+node.exe : 
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Error: Prisma schema validation - (validate wasm)
+Error code: P1012
+[1;91merror[0m: [1mError validating field `user` in model `PaymentTransaction`: The relation field `user` on model `
+PaymentTransaction` is missing an opposite relation field on the model `User`. Either run `prisma format` or add it man
+ually.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:1502[0m
+[1;94m   | [0m
+[1;94m1501 | [0m  userId          String
+[1;94m1502 | [0m  [1;91muser            User   @relation(fields: [userId], references: [id])[0m
+[1;94m1503 | [0m  orderId         String?
+[1;94m   | [0m
+[1;91merror[0m: [1mError parsing attribute "@relation": A one-to-one relation must use unique fields on the defining
+ side. Either add an `@unique` attribute to the field `walletTxId`, or change the relation to one-to-many.[0m
+  [1;94m-->[0m  [4mprisma\schema.prisma:1506[0m
+[1;94m   | [0m
+[1;94m1505 | [0m  walletTxId      String?
+[1;94m1506 | [0m  [1;91mwalletTx        WalletTransaction? @relation(fields: [walletTxId], references: [id])[0m
+[1;94m1507 | [0m  
+[1;94m   | [0m
+
+Validation Error Count: 2
+[Context: validate]
+
+Prisma CLI Version : 5.22.0

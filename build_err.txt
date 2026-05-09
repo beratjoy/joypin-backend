@@ -1,0 +1,329 @@
+[96msrc/modules/auth/auth.service.ts[0m:[93m101[0m:[93m13[0m - [91merror[0m[90m TS2353: [0mObject literal may only specify known properties, and 'tier' does not exist in type '(Without<UserReferralCreateInput, UserReferralUncheckedCreateInput> & UserReferralUncheckedCreateInput) | (Without<...> & UserReferralCreateInput)'.
+
+[7m101[0m             tier: 1,
+[7m   [0m [91m            ~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m27596[0m:[93m5[0m
+    [7m27596[0m     data: XOR<UserReferralCreateInput, UserReferralUncheckedCreateInput>
+    [7m     [0m [96m    ~~~~[0m
+    The expected type comes from property 'data' which is declared here on type '{ select?: UserReferralSelect<DefaultArgs>; include?: UserReferralInclude<DefaultArgs>; data: (Without<UserReferralCreateInput, UserReferralUncheckedCreateInput> & UserReferralUncheckedCreateInput) | (Without<...> & UserReferralCreateInput); }'
+[96msrc/modules/auth/auth.service.ts[0m:[93m118[0m:[93m24[0m - [91merror[0m[90m TS2339: [0mProperty 'isActive' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; email: string; referralCode: string; firstName: string; lastName: string; passwordHash: string; phone: string; role: UserRole; ... 22 more ...; lastLoginIp: string; }'.
+
+[7m118[0m     if (!user || !user.isActive) {
+[7m   [0m [91m                       ~~~~~~~~[0m
+[96msrc/modules/auth/auth.service.ts[0m:[93m150[0m:[93m24[0m - [91merror[0m[90m TS2339: [0mProperty 'isActive' does not exist on type '{ dealerGroup: { id: string; name: string; description: string; defaultDiscountPercent: Decimal; minOrderAmount: Decimal; creditLimit: Decimal; isActive: boolean; cancelOnApiFail: boolean; createdAt: Date; updatedAt: Date; }; permissions: ({ ...; } & { ...; })[]; } & { ...; }'.
+
+[7m150[0m     if (!user || !user.isActive) {
+[7m   [0m [91m                       ~~~~~~~~[0m
+[96msrc/modules/auth/guards/epin-otp.guard.ts[0m:[93m73[0m:[93m43[0m - [91merror[0m[90m TS2339: [0mProperty 'verifyEpinViewToken' does not exist on type 'OtpService'.
+
+[7m73[0m     const isValid = await this.otpService.verifyEpinViewToken(user.id, otpToken);
+[7m  [0m [91m                                          ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/auth/strategies/jwt.strategy.ts[0m:[93m14[0m:[93m34[0m - [91merror[0m[90m TS2339: [0mProperty 'fromAuthBearerToken' does not exist on type 'typeof ExtractJwt'.
+
+[7m14[0m       jwtFromRequest: ExtractJwt.fromAuthBearerToken(),
+[7m  [0m [91m                                 ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/index.ts[0m:[93m1[0m:[93m10[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+
+[7m1[0m export { BaseProviderAdapter, ProviderApiResult, TopUpRequest, EpinRequest } from './base-provider.adapter';
+[7m [0m [91m         ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/index.ts[0m:[93m1[0m:[93m31[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+
+[7m1[0m export { BaseProviderAdapter, ProviderApiResult, TopUpRequest, EpinRequest } from './base-provider.adapter';
+[7m [0m [91m                              ~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/index.ts[0m:[93m1[0m:[93m50[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+
+[7m1[0m export { BaseProviderAdapter, ProviderApiResult, TopUpRequest, EpinRequest } from './base-provider.adapter';
+[7m [0m [91m                                                 ~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/index.ts[0m:[93m1[0m:[93m64[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+
+[7m1[0m export { BaseProviderAdapter, ProviderApiResult, TopUpRequest, EpinRequest } from './base-provider.adapter';
+[7m [0m [91m                                                               ~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m2[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+
+[7m2[0m   BaseProviderAdapter,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m3[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+
+[7m3[0m   ProviderApiResult,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m4[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+
+[7m4[0m   TopUpRequest,
+[7m [0m [91m  ~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m5[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+
+[7m5[0m   EpinRequest,
+[7m [0m [91m  ~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m20[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'MooGoldAdapter'.
+
+[7m20[0m     return this.safeCall('MooGold:topUp', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m29[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'MooGoldAdapter'.
+
+[7m29[0m       const { data } = await this.http.post('/api/v1/orders', body);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m39[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'MooGoldAdapter'.
+
+[7m39[0m     return this.safeCall('MooGold:buyEpin', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m46[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'MooGoldAdapter'.
+
+[7m46[0m       const { data } = await this.http.post('/api/v1/orders', body);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m60[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'MooGoldAdapter'.
+
+[7m60[0m     return this.safeCall('MooGold:balance', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m61[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'MooGoldAdapter'.
+
+[7m61[0m       const { data } = await this.http.get('/api/v1/wallet/balance');
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m67[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'MooGoldAdapter'.
+
+[7m67[0m     return this.safeCall('MooGold:status', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/moogold.adapter.ts[0m:[93m68[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'MooGoldAdapter'.
+
+[7m68[0m       const { data } = await this.http.get(`/api/v1/orders/${externalRef}`);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m2[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+
+[7m2[0m   BaseProviderAdapter,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m3[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+
+[7m3[0m   ProviderApiResult,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m4[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+
+[7m4[0m   TopUpRequest,
+[7m [0m [91m  ~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m5[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+
+[7m5[0m   EpinRequest,
+[7m [0m [91m  ~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m32[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'SmileOneAdapter'.
+
+[7m32[0m     return this.safeCall('SmileOne:topUp', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m43[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'SmileOneAdapter'.
+
+[7m43[0m       const { data } = await this.http.post('/api/topup', params);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m64[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'SmileOneAdapter'.
+
+[7m64[0m     return this.safeCall('SmileOne:balance', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m68[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'SmileOneAdapter'.
+
+[7m68[0m       const { data } = await this.http.post('/api/balance', params);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m74[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'SmileOneAdapter'.
+
+[7m74[0m     return this.safeCall('SmileOne:status', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/smile-one.adapter.ts[0m:[93m81[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'SmileOneAdapter'.
+
+[7m81[0m       const { data } = await this.http.post('/api/order/status', params);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m2[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'BaseProviderAdapter'.
+
+[7m2[0m   BaseProviderAdapter,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m3[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'ProviderApiResult'.
+
+[7m3[0m   ProviderApiResult,
+[7m [0m [91m  ~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m4[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'TopUpRequest'.
+
+[7m4[0m   TopUpRequest,
+[7m [0m [91m  ~~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m5[0m:[93m3[0m - [91merror[0m[90m TS2305: [0mModule '"./base-provider.adapter"' has no exported member 'EpinRequest'.
+
+[7m5[0m   EpinRequest,
+[7m [0m [91m  ~~~~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m24[0m:[93m45[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'UniPinAdapter'.
+
+[7m24[0m     return crypto.createHmac('sha256', this.http.defaults.headers['Authorization'] as string)
+[7m  [0m [91m                                            ~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m30[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'UniPinAdapter'.
+
+[7m30[0m     return this.safeCall('UniPin:topUp', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m40[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'UniPinAdapter'.
+
+[7m40[0m       const { data } = await this.http.post('/v2/order/create', body, {
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m52[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'UniPinAdapter'.
+
+[7m52[0m     return this.safeCall('UniPin:buyEpin', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m60[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'UniPinAdapter'.
+
+[7m60[0m       const { data } = await this.http.post('/v2/voucher/purchase', body, {
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m72[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'UniPinAdapter'.
+
+[7m72[0m     return this.safeCall('UniPin:balance', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m73[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'UniPinAdapter'.
+
+[7m73[0m       const { data } = await this.http.get('/v2/partner/balance');
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m79[0m:[93m17[0m - [91merror[0m[90m TS2339: [0mProperty 'safeCall' does not exist on type 'UniPinAdapter'.
+
+[7m79[0m     return this.safeCall('UniPin:status', async () => {
+[7m  [0m [91m                ~~~~~~~~[0m
+[96msrc/modules/bots/adapters/unipin.adapter.ts[0m:[93m80[0m:[93m35[0m - [91merror[0m[90m TS2339: [0mProperty 'http' does not exist on type 'UniPinAdapter'.
+
+[7m80[0m       const { data } = await this.http.get(`/v2/order/status/${externalRef}`);
+[7m  [0m [91m                                  ~~~~[0m
+[96msrc/modules/bots/bot-alert.service.ts[0m:[93m147[0m:[93m11[0m - [91merror[0m[90m TS2322: [0mType '"BOT_ALERT"' is not assignable to type 'AuditAction'.
+
+[7m147[0m           action: 'BOT_ALERT',
+[7m   [0m [91m          ~~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m66416[0m:[93m5[0m
+    [7m66416[0m     action: $Enums.AuditAction
+    [7m     [0m [96m    ~~~~~~[0m
+    The expected type comes from property 'action' which is declared here on type '(Without<AuditLogCreateInput, AuditLogUncheckedCreateInput> & AuditLogUncheckedCreateInput) | (Without<...> & AuditLogCreateInput)'
+[96msrc/modules/bots/bot-alert.service.ts[0m:[93m189[0m:[93m38[0m - [91merror[0m[90m TS2322: [0mType '"OWNER"' is not assignable to type 'UserRole'.
+
+[7m189[0m       where: { role: { in: ['ADMIN', 'OWNER'] }, isActive: true },
+[7m   [0m [91m                                     ~~~~~~~[0m
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m3[0m:[93m35[0m - [91merror[0m[90m TS2307: [0mCannot find module '../epins/encryption.service' or its corresponding type declarations.
+
+[7m3[0m import { EncryptionService } from '../epins/encryption.service';
+[7m [0m [91m                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m53[0m:[93m18[0m - [91merror[0m[90m TS2353: [0mObject literal may only specify known properties, and 'order' does not exist in type 'SubOrderInclude<DefaultArgs>'.
+
+[7m53[0m       include: { order: true },
+[7m  [0m [91m                 ~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m20745[0m:[93m5[0m
+    [7m20745[0m     include?: SubOrderInclude<ExtArgs> | null
+    [7m     [0m [96m    ~~~~~~~[0m
+    The expected type comes from property 'include' which is declared here on type '{ select?: SubOrderSelect<DefaultArgs>; include?: SubOrderInclude<DefaultArgs>; where: SubOrderWhereUniqueInput; }'
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m92[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType '{ encryptedCode: any; productId: string; status: "ASSIGNED"; assignedAt: Date; }[]' is not assignable to type 'EPinCreateManyInput | EPinCreateManyInput[]'.
+  Type '{ encryptedCode: any; productId: string; status: "ASSIGNED"; assignedAt: Date; }[]' is not assignable to type 'EPinCreateManyInput[]'.
+    Type '{ encryptedCode: any; productId: string; status: "ASSIGNED"; assignedAt: Date; }' is missing the following properties from type 'EPinCreateManyInput': encryptionIv, supplierId, purchaseCost
+
+[7m92[0m         data: encryptedCodes.map((ec) => ({
+[7m  [0m [91m        ~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m18430[0m:[93m5[0m
+    [7m18430[0m     data: EPinCreateManyInput | EPinCreateManyInput[]
+    [7m     [0m [96m    ~~~~[0m
+    The expected type comes from property 'data' which is declared here on type '{ data: EPinCreateManyInput | EPinCreateManyInput[]; skipDuplicates?: boolean; }'
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m110[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType '"DELIVERED" | "PARTIAL"' is not assignable to type 'SubOrderStatus | EnumSubOrderStatusFieldUpdateOperationsInput'.
+  Type '"PARTIAL"' is not assignable to type 'SubOrderStatus | EnumSubOrderStatusFieldUpdateOperationsInput'.
+
+[7m110[0m         status: dto.status === 'partial' ? 'PARTIAL' : 'DELIVERED',
+[7m   [0m [91m        ~~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m65021[0m:[93m5[0m
+    [7m65021[0m     status?: EnumSubOrderStatusFieldUpdateOperationsInput | $Enums.SubOrderStatus
+    [7m     [0m [96m    ~~~~~~[0m
+    The expected type comes from property 'status' which is declared here on type '(Without<SubOrderUpdateInput, SubOrderUncheckedUpdateInput> & SubOrderUncheckedUpdateInput) | (Without<...> & SubOrderUpdateInput)'
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m117[0m:[93m47[0m - [91merror[0m[90m TS2339: [0mProperty 'orderId' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; status: SubOrderStatus; botProviderId: string; productId: string; currency: Currency; adminNote: string; ... 10 more ...; parentOrderId: string; }'.
+
+[7m117[0m     await this.checkAndCompleteOrder(subOrder.orderId);
+[7m   [0m [91m                                              ~~~~~~~[0m
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m120[0m:[93m50[0m - [91merror[0m[90m TS2339: [0mProperty 'orderId' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; status: SubOrderStatus; botProviderId: string; productId: string; currency: Currency; adminNote: string; ... 10 more ...; parentOrderId: string; }'.
+
+[7m120[0m     await this.sendRealtimeNotification(subOrder.orderId, dto.subOrderId, deliveredCount);
+[7m   [0m [91m                                                 ~~~~~~~[0m
+[96msrc/modules/bots/bot-callback.service.ts[0m:[93m151[0m:[93m16[0m - [91merror[0m[90m TS2353: [0mObject literal may only specify known properties, and 'orderId' does not exist in type 'SubOrderWhereInput'.
+
+[7m151[0m       where: { orderId },
+[7m   [0m [91m               ~~~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m20881[0m:[93m5[0m
+    [7m20881[0m     where?: SubOrderWhereInput
+    [7m     [0m [96m    ~~~~~[0m
+    The expected type comes from property 'where' which is declared here on type '{ select?: SubOrderSelect<DefaultArgs>; include?: SubOrderInclude<DefaultArgs>; where?: SubOrderWhereInput; ... 4 more ...; distinct?: SubOrderScalarFieldEnum | SubOrderScalarFieldEnum[]; }'
+[96msrc/modules/dashboard/dashboard.service.ts[0m:[93m59[0m:[93m17[0m - [91merror[0m[90m TS2740: [0mType '{}' is missing the following properties from type 'DashboardStats': dailyRevenue, dailyRevenueChange, pendingTransactions, pendingChange, and 4 more.
+
+[7m59[0m     if (cached) return cached;
+[7m  [0m [91m                ~~~~~~[0m
+[96msrc/modules/dashboard/dashboard.service.ts[0m:[93m139[0m:[93m17[0m - [91merror[0m[90m TS2740: [0mType '{}' is missing the following properties from type 'BalanceDistribution': current, bonus, withdrawable, commission, and 4 more.
+
+[7m139[0m     if (cached) return cached;
+[7m   [0m [91m                ~~~~~~[0m
+[96msrc/modules/notifications/notification.gateway.ts[0m:[93m9[0m:[93m8[0m - [91merror[0m[90m TS2307: [0mCannot find module '@nestjs/websockets' or its corresponding type declarations.
+
+[7m9[0m } from '@nestjs/websockets';
+[7m [0m [91m       ~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/notifications/notification.gateway.ts[0m:[93m10[0m:[93m32[0m - [91merror[0m[90m TS2307: [0mCannot find module 'socket.io' or its corresponding type declarations.
+
+[7m10[0m import { Server, Socket } from 'socket.io';
+[7m  [0m [91m                               ~~~~~~~~~~~[0m
+[96msrc/modules/payments/payment-gateways.service.ts[0m:[93m36[0m:[93m12[0m - [91merror[0m[90m TS2702: [0m'PaymentGateway' only refers to a type, but is being used as a namespace here.
+
+[7m36[0m   gateway: PaymentGateway.BINANCE_PAY | PaymentGateway.CRYPTOMUS;
+[7m  [0m [91m           ~~~~~~~~~~~~~~[0m
+[96msrc/modules/payments/payment-gateways.service.ts[0m:[93m36[0m:[93m41[0m - [91merror[0m[90m TS2702: [0m'PaymentGateway' only refers to a type, but is being used as a namespace here.
+
+[7m36[0m   gateway: PaymentGateway.BINANCE_PAY | PaymentGateway.CRYPTOMUS;
+[7m  [0m [91m                                        ~~~~~~~~~~~~~~[0m
+[96msrc/modules/payments/payment-gateways.service.ts[0m:[93m288[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'Currency'.
+
+[7m288[0m         currency: input.currency,
+[7m   [0m [91m        ~~~~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m68063[0m:[93m5[0m
+    [7m68063[0m     currency?: $Enums.Currency
+    [7m     [0m [96m    ~~~~~~~~[0m
+    The expected type comes from property 'currency' which is declared here on type '(Without<PaymentTransactionCreateInput, PaymentTransactionUncheckedCreateInput> & PaymentTransactionUncheckedCreateInput) | (Without<...> & PaymentTransactionCreateInput)'
+[96msrc/modules/payments/webhooks/webhook-processor.service.ts[0m:[93m256[0m:[93m11[0m - [91merror[0m[90m TS2322: [0mType '"PAYMENT_CONFIRMED"' is not assignable to type 'NotificationType'.
+
+[7m256[0m           type: 'PAYMENT_CONFIRMED',
+[7m   [0m [91m          ~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m68482[0m:[93m5[0m
+    [7m68482[0m     type: $Enums.NotificationType
+    [7m     [0m [96m    ~~~~[0m
+    The expected type comes from property 'type' which is declared here on type '(Without<UserNotificationCreateInput, UserNotificationUncheckedCreateInput> & UserNotificationUncheckedCreateInput) | (Without<...> & UserNotificationCreateInput)'
+[96msrc/modules/products/product-discount.service.ts[0m:[93m277[0m:[93m9[0m - [91merror[0m[90m TS1117: [0mAn object literal cannot have multiple properties with the same name.
+
+[7m277[0m         OR: [
+[7m   [0m [91m        ~~[0m
+[96msrc/modules/products/product-discount.service.ts[0m:[93m281[0m:[93m9[0m - [91merror[0m[90m TS1117: [0mAn object literal cannot have multiple properties with the same name.
+
+[7m281[0m         OR: [
+[7m   [0m [91m        ~~[0m
+[96msrc/modules/referrals/referral-calculation.service.ts[0m:[93m94[0m:[93m9[0m - [91merror[0m[90m TS2365: [0mOperator '>' cannot be applied to types 'Decimal' and 'number'.
+
+[7m94[0m     if (rule.fixedCommission > 0) {
+[7m  [0m [91m        ~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/referrals/referral-calculation.service.ts[0m:[93m100[0m:[93m9[0m - [91merror[0m[90m TS2365: [0mOperator '>' cannot be applied to types 'Decimal' and 'number'.
+
+[7m100[0m     if (rule.maxCommission > 0 && commissionAmount > Number(rule.maxCommission)) {
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/referrals/referral-calculation.service.ts[0m:[93m105[0m:[93m9[0m - [91merror[0m[90m TS2365: [0mOperator '>' cannot be applied to types 'Decimal' and 'number'.
+
+[7m105[0m     if (rule.minSalesAmount > 0 && commissionAmount < Number(rule.minSalesAmount)) {
+[7m   [0m [91m        ~~~~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/referrals/referral-calculation.service.ts[0m:[93m176[0m:[93m46[0m - [91merror[0m[90m TS2339: [0mProperty 'salePrice' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; status: SubOrderStatus; botProviderId: string; productId: string; currency: Currency; adminNote: string; ... 10 more ...; parentOrderId: string; }'.
+
+[7m176[0m           const saleAmount = Number(subOrder.salePrice);
+[7m   [0m [91m                                             ~~~~~~~~~[0m
+[96msrc/modules/wallets/withdrawal.service.ts[0m:[93m92[0m:[93m9[0m - [91merror[0m[90m TS2322: [0mType 'string' is not assignable to type 'Currency'.
+
+[7m92[0m         currency,
+[7m  [0m [91m        ~~~~~~~~[0m
+
+  [96mnode_modules/.prisma/client/index.d.ts[0m:[93m68217[0m:[93m5[0m
+    [7m68217[0m     currency?: $Enums.Currency
+    [7m     [0m [96m    ~~~~~~~~[0m
+    The expected type comes from property 'currency' which is declared here on type '(Without<WithdrawalRequestCreateInput, WithdrawalRequestUncheckedCreateInput> & WithdrawalRequestUncheckedCreateInput) | (Without<...> & WithdrawalRequestCreateInput)'
+[96msrc/modules/payments/payments.controller.ts[0m:[93m18[0m:[93m9[0m - [91merror[0m[90m TS4053: [0mReturn type of public method from exported class has or is using name 'AvailableGateway' from external module "C:/Users/joyal/OneDrive/Desktop/epin script/backend/src/modules/payments/smart-routing.service" but cannot be named.
+
+[7m18[0m   async getAvailableGateways(@Req() req: any) {
+[7m  [0m [91m        ~~~~~~~~~~~~~~~~~~~~[0m
+[96msrc/modules/currency/currency.controller.ts[0m:[93m15[0m:[93m3[0m - [91merror[0m[90m TS4053: [0mReturn type of public method from exported class has or is using name 'ExchangeRates' from external module "C:/Users/joyal/OneDrive/Desktop/epin script/backend/src/modules/currency/currency.service" but cannot be named.
+
+[7m15[0m   getRates() {
+[7m  [0m [91m  ~~~~~~~~[0m
+
