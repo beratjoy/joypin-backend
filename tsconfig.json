@@ -13,6 +13,7 @@
     "incremental": true,
     "skipLibCheck": true,
     "noEmitOnError": false,
+    "noEmit": true,
     "strictNullChecks": false,
     "noImplicitAny": false,
     "strict": false,
