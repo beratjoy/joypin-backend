@@ -6,8 +6,7 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-COPY prisma ./prisma/
-RUN npm ci --omit=dev && npx prisma generate
+RUN npm ci --omit=dev
 
 # ─── Stage 2: Build ────────────────────────────────────────
 FROM node:20-alpine AS build
@@ -43,4 +42,4 @@ EXPOSE 4000
 ENV NODE_ENV=production
 ENV PORT=4000
 
-CMD ["node", "dist/main.js"]
+CMD npx prisma generate && node dist/main.js
