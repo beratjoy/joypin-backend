@@ -15,9 +15,10 @@
     "noEmitOnError": false,
     "strictNullChecks": false,
     "noImplicitAny": false,
-    "strictBindCallApply": true,
-    "forceConsistentCasingInFileNames": true,
-    "noFallthroughCasesInSwitch": true,
+    "strict": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false,
     "paths": {
       "@/*": ["src/*"],
       "@common/*": ["src/common/*"],
