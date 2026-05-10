@@ -6,6 +6,25 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async oneEpinRequest(path: string, body: Record<string, any> = {}) {
+    const emailAddress = process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
+    const password = process.env.ONEEPIN_PASSWORD;
+    const mode = process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test';
+    const baseUrl = process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+
+    if (!emailAddress || !password) {
+      return { ResultCode: 'CONFIG_ERROR', ResultMessage: 'ONEEPIN_EMAIL and ONEEPIN_PASSWORD are required' };
+    }
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailAddress, password, ...body }),
+    });
+
+    return response.json();
+  }
+
   @Public()
   @Get('settings')
   async getSettings(@Query('group') group?: string) {
@@ -412,6 +431,167 @@ export class AdminCompatController {
         fixedPrice: body.sellingPrice ?? body.fixedPrice,
       },
     });
+  }
+
+  @Public()
+  @Get('providers')
+  async getProviders() {
+    const providers = await this.prisma.botProvider.findMany({ orderBy: { priority: 'asc' } });
+    return providers.map((provider: any) => ({
+      id: provider.id,
+      name: provider.name,
+      type: provider.type,
+      status: provider.status,
+      balance: Number(provider.balance || 0),
+      balanceCurrency: provider.balanceCurrency,
+      apiUrl: provider.apiUrl,
+      priority: provider.priority,
+      lastBalanceSync: provider.lastBalanceSync,
+    }));
+  }
+
+  @Public()
+  @Post('providers')
+  async createProvider(@Body() body: any) {
+    return this.prisma.botProvider.create({
+      data: {
+        name: body.name,
+        type: body.type || 'API',
+        status: body.status || 'ACTIVE',
+        apiUrl: body.apiUrl || null,
+        balance: body.balance ?? 0,
+        balanceCurrency: body.balanceCurrency || 'USD',
+        priority: body.priority ?? 0,
+        config: body.config || {},
+      },
+    });
+  }
+
+  @Public()
+  @Patch('providers/:id')
+  async updateProvider(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.botProvider.update({
+      where: { id },
+      data: {
+        name: body.name,
+        type: body.type,
+        status: body.status,
+        apiUrl: body.apiUrl,
+        balance: body.balance,
+        balanceCurrency: body.balanceCurrency,
+        priority: body.priority,
+        config: body.config,
+      },
+    });
+  }
+
+  @Public()
+  @Delete('providers/:id')
+  async deleteProvider(@Param('id') id: string) {
+    return this.prisma.botProvider.delete({ where: { id } });
+  }
+
+  @Public()
+  @Post('providers/:id/sync-balance')
+  async syncProviderBalance(@Param('id') id: string) {
+    const provider = await this.prisma.botProvider.findUnique({ where: { id } });
+    let balance = Number(provider?.balance || 0);
+
+    if (provider?.name?.toLowerCase().includes('1epin')) {
+      const result = await this.oneEpinRequest('checkBalance');
+      if (result.ResultCode === '00') balance = Number(result.Balance || 0);
+    }
+
+    await this.prisma.botProvider.update({
+      where: { id },
+      data: { balance, lastBalanceSync: new Date() },
+    });
+
+    return { balance };
+  }
+
+  @Public()
+  @Get('1epin/products')
+  async getOneEpinProducts() {
+    const result = await this.oneEpinRequest('allproducts');
+    return {
+      success: result.ResultCode === '00',
+      message: result.ResultMessage,
+      products: result.Products || [],
+    };
+  }
+
+  @Public()
+  @Get('products/:id/providers')
+  async getProductProviders(@Param('id') productId: string) {
+    const links = await this.prisma.productProvider.findMany({
+      where: { productId },
+      include: { provider: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    return links.map((link: any) => ({
+      id: link.id,
+      productId: link.productId,
+      providerId: link.providerId,
+      providerName: link.provider.name,
+      providerType: link.provider.type,
+      providerProductCode: link.providerProductCode,
+      costPrice: Number(link.costPrice || 0),
+      costCurrency: link.costCurrency,
+      priority: link.priority,
+      isActive: link.isActive,
+    }));
+  }
+
+  @Public()
+  @Post('products/:id/providers')
+  async addProductProvider(@Param('id') productId: string, @Body() body: any) {
+    return this.prisma.productProvider.upsert({
+      where: {
+        productId_providerId: {
+          productId,
+          providerId: body.providerId,
+        },
+      },
+      update: {
+        providerProductCode: body.providerProductCode || null,
+        costPrice: body.costPrice ?? 0,
+        costCurrency: body.costCurrency || 'USD',
+        priority: body.priority ?? 1,
+        isActive: body.isActive ?? true,
+      },
+      create: {
+        productId,
+        providerId: body.providerId,
+        providerProductCode: body.providerProductCode || null,
+        costPrice: body.costPrice ?? 0,
+        costCurrency: body.costCurrency || 'USD',
+        priority: body.priority ?? 1,
+        isActive: body.isActive ?? true,
+      },
+    });
+  }
+
+  @Public()
+  @Patch('product-providers/:id')
+  async updateProductProvider(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.productProvider.update({
+      where: { id },
+      data: {
+        providerProductCode: body.providerProductCode,
+        costPrice: body.costPrice,
+        costCurrency: body.costCurrency,
+        priority: body.priority,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Public()
+  @Delete('product-providers/:id')
+  async removeProductProvider(@Param('id') id: string) {
+    return this.prisma.productProvider.delete({ where: { id } });
   }
 
   @Public()

@@ -140,6 +140,10 @@ export class SmartRouterService {
   ): Promise<{ success: boolean; externalRef?: string; error?: string }> {
     try {
       if (provider.type === 'API') {
+        if (provider.name?.toLowerCase().includes('1epin')) {
+          return this.dispatchToOneEpin(pp, ctx);
+        }
+
         // HTTP POST to API endpoint
         const response = await fetch(provider.apiUrl, {
           method: 'POST',
@@ -193,6 +197,41 @@ export class SmartRouterService {
     } catch (err: any) {
       return { success: false, error: err.message || 'Network error' };
     }
+  }
+
+  private async dispatchToOneEpin(
+    pp: any,
+    ctx: FulfillmentContext,
+  ): Promise<{ success: boolean; externalRef?: string; error?: string }> {
+    const emailAddress = process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
+    const password = process.env.ONEEPIN_PASSWORD;
+    const mode = process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test';
+    const baseUrl = process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+
+    if (!emailAddress || !password) {
+      return { success: false, error: 'ONEEPIN_EMAIL and ONEEPIN_PASSWORD are required' };
+    }
+
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/addOrder/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        emailAddress,
+        password,
+        product: Number(pp.providerProductCode),
+        user: JSON.stringify(ctx.topupFieldData || {}),
+        quantity: ctx.quantity,
+        orderNumber: ctx.subOrderId,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await response.json();
+
+    if (data.ResultCode === '00') {
+      return { success: true, externalRef: ctx.subOrderId };
+    }
+
+    return { success: false, error: data.ResultMessage || `1epin error ${data.ResultCode}` };
   }
 
   // Siparişi MANUAL_INTERVENTION_REQUIRED durumuna al
