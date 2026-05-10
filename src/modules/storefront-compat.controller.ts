@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -21,18 +21,75 @@ export class StorefrontCompatController {
   async getCategories() {
     const categories = await this.prisma.productCategory.findMany({
       where: { isActive: true },
-      include: { products: { where: { isActive: true }, select: { id: true } } },
       orderBy: { sortOrder: 'asc' },
+      select: { id: true, name: true, slug: true, imageUrl: true, sortOrder: true },
     });
 
-    return categories.map((category: any) => ({
+    return Promise.all(
+      categories.map(async (category: any) => ({
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        imageUrl: category.imageUrl,
+        productCount: await this.prisma.product.count({ where: { categoryId: category.id, isActive: true } }),
+        sortOrder: category.sortOrder,
+      })),
+    );
+  }
+
+  @Public()
+  @Get('categories/:slug')
+  async getCategoryBySlug(@Param('slug') slug: string) {
+    const category = await this.prisma.productCategory.findFirst({
+      where: { slug, isActive: true },
+      select: { id: true, name: true, slug: true, description: true, imageUrl: true },
+    });
+
+    if (!category) {
+      throw new NotFoundException('Category not found');
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: { categoryId: category.id, isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        fixedPrice: true,
+        baseCost: true,
+        marginPercent: true,
+        pricingModel: true,
+        type: true,
+        iconUrl: true,
+        merchantImageUrl: true,
+      },
+    });
+
+    return {
       id: category.id,
-      name: category.name,
       slug: category.slug,
-      imageUrl: category.imageUrl,
-      productCount: category.products?.length || 0,
-      sortOrder: category.sortOrder,
-    }));
+      name: category.name,
+      description: category.description || '',
+      imageUrl: category.imageUrl || '',
+      layout: 'jollymax',
+      badges: [],
+      paymentMethods: [],
+      requiresUserId: products.some((product: any) => product.type === 'TOPUP'),
+      userIdLabel: 'Oyuncu ID',
+      userIdPlaceholder: 'Oyuncu ID giriniz',
+      zoneIdLabel: null,
+      products: products.map((product: any) => ({
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        shortName: product.name,
+        baseCost: Number(product.fixedPrice || product.baseCost || 0),
+        marginPercent: Number(product.marginPercent || 0),
+        pricingModel: product.pricingModel,
+        iconUrl: product.iconUrl || product.merchantImageUrl || category.imageUrl || undefined,
+      })),
+    };
   }
 
   @Public()
