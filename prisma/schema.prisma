@@ -432,6 +432,13 @@ model ProductCategory {
   slug        String  @unique @db.VarChar(120)
   description String?
   imageUrl    String? @db.VarChar(500)
+  layout      String  @default("jollymax") @db.VarChar(50)
+  badges      Json?
+  paymentMethods Json?
+  requiresUserId Boolean @default(false)
+  userIdLabel String? @db.VarChar(100)
+  userIdPlaceholder String? @db.VarChar(200)
+  zoneIdLabel String? @db.VarChar(100)
 
   parentId    String?
   parent      ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id])

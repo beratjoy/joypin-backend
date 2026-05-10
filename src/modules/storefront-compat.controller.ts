@@ -70,7 +70,7 @@ export class StorefrontCompatController {
   async getCategoryBySlug(@Param('slug') slug: string) {
     const category = (
       await this.prisma.$queryRawUnsafe<any[]>(
-        'SELECT id, name, slug, description, "imageUrl" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
+        'SELECT id, name, slug, description, "imageUrl", layout, badges, "paymentMethods", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
         slug,
       )
     )[0];
@@ -90,13 +90,13 @@ export class StorefrontCompatController {
       name: category.name,
       description: category.description || '',
       imageUrl: category.imageUrl || '',
-      layout: 'jollymax',
-      badges: [],
-      paymentMethods: [],
-      requiresUserId: products.some((product: any) => product.type === 'TOPUP'),
-      userIdLabel: 'Oyuncu ID',
-      userIdPlaceholder: 'Oyuncu ID giriniz',
-      zoneIdLabel: null,
+      layout: category.layout || 'jollymax',
+      badges: category.badges || [],
+      paymentMethods: category.paymentMethods || [],
+      requiresUserId: category.requiresUserId ?? products.some((product: any) => product.type === 'TOPUP'),
+      userIdLabel: category.userIdLabel || 'Oyuncu ID',
+      userIdPlaceholder: category.userIdPlaceholder || 'Oyuncu ID giriniz',
+      zoneIdLabel: category.zoneIdLabel || null,
       products: products.map((product: any) => ({
         id: product.id,
         name: product.name,
