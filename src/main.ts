@@ -3,7 +3,6 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
-import 'winston-daily-rotate-file';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -29,34 +28,8 @@ async function bootstrap() {
             ),
       }),
 
-      // Dosya — Günlük rotasyonlu log (sadece production)
-      ...(isProduction
-        ? [
-            new winston.transports.DailyRotateFile({
-              filename: 'logs/app-%DATE%.log',
-              datePattern: 'YYYY-MM-DD',
-              zippedArchive: true,
-              maxSize: '20m',
-              maxFiles: '30d',
-              level: 'info',
-              format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.json(),
-              ),
-            }),
-            new winston.transports.DailyRotateFile({
-              filename: 'logs/error-%DATE%.log',
-              datePattern: 'YYYY-MM-DD',
-              zippedArchive: true,
-              maxSize: '20m',
-              maxFiles: '60d',
-              level: 'error',
-              format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.json(),
-              ),
-            }),
-          ]
+      ...(!isProduction
+        ? []
         : []),
     ],
   });
@@ -65,7 +38,7 @@ async function bootstrap() {
     logger: winstonLogger,
   });
 
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api');
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -138,11 +111,11 @@ API entegrasyon desteği: **api-support@joypin.com**`,
     },
   });
 
-  const port = process.env.APP_PORT || 3001;
+  const port = process.env.PORT || process.env.APP_PORT || 4000;
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
-  logger.log(`🚀 E-Pin Platform API running on http://localhost:${port}/api/v1`);
+  logger.log(`🚀 E-Pin Platform API running on http://localhost:${port}/api`);
   logger.log(`📚 Swagger UI: http://localhost:${port}/api/docs`);
 }
 bootstrap();
