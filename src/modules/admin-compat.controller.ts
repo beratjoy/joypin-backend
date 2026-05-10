@@ -7,6 +7,74 @@ export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Public()
+  @Get('settings')
+  async getSettings(@Query('group') group?: string) {
+    return this.prisma.siteSettings.findMany({
+      where: group ? { group } : {},
+      orderBy: { key: 'asc' },
+    });
+  }
+
+  @Public()
+  @Patch('settings/:key')
+  async updateSetting(@Param('key') key: string, @Body() body: any) {
+    return this.prisma.siteSettings.upsert({
+      where: { key },
+      update: { value: String(body.value ?? '') },
+      create: {
+        key,
+        value: String(body.value ?? ''),
+        group: body.group || 'general',
+        description: body.description || key,
+      },
+    });
+  }
+
+  @Public()
+  @Get('sliders')
+  async getSliders() {
+    return this.prisma.slider.findMany({ orderBy: { sortOrder: 'asc' } });
+  }
+
+  @Public()
+  @Post('sliders')
+  async createSlider(@Body() body: any) {
+    const count = await this.prisma.slider.count();
+    return this.prisma.slider.create({
+      data: {
+        title: body.title,
+        imageUrl: body.imageUrl,
+        mobileImageUrl: body.mobileImageUrl || null,
+        linkUrl: body.linkUrl || null,
+        sortOrder: body.sortOrder ?? count,
+        isActive: body.isActive ?? true,
+      },
+    });
+  }
+
+  @Public()
+  @Patch('sliders/:id')
+  async updateSlider(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.slider.update({
+      where: { id },
+      data: {
+        title: body.title,
+        imageUrl: body.imageUrl,
+        mobileImageUrl: body.mobileImageUrl,
+        linkUrl: body.linkUrl,
+        sortOrder: body.sortOrder,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Public()
+  @Delete('sliders/:id')
+  async deleteSlider(@Param('id') id: string) {
+    return this.prisma.slider.delete({ where: { id } });
+  }
+
+  @Public()
   @Get('categories')
   async getCategories() {
     const categories = await this.prisma.productCategory.findMany({

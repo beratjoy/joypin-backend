@@ -25,6 +25,7 @@ import { StocksModule } from './modules/stocks/stocks.module';
 import { SecurityModule } from './modules/security/security.module';
 import { AdminCompatController } from './modules/admin-compat.controller';
 import { HealthController } from './health.controller';
+import { StorefrontCompatController } from './modules/storefront-compat.controller';
 
 @Module({
   imports: [
@@ -72,7 +73,7 @@ import { HealthController } from './health.controller';
     // ─── Security & RBAC (Zero-Trust) ──────────────────────
     SecurityModule,
   ],
-  controllers: [AdminCompatController, HealthController],
+  controllers: [AdminCompatController, HealthController, StorefrontCompatController],
   providers: [
     // ─── Global Guards (sıralama önemli) ─────────────────
     // 1. Rate Limiting — en dış katman
