@@ -11,7 +11,7 @@ import { AnalyticsAiService } from './analytics-ai.service';
  * - GET /api/admin/analytics/chart/daily — Son 30 gün günlük ciro/kar (Line Chart)
  * - GET /api/admin/analytics/chart/categories — Kategori dağılımı (Pie Chart)
  */
-@Controller('api/admin/analytics')
+@Controller('admin/analytics')
 export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,

@@ -31,7 +31,7 @@ import { BotCallbackService, BotCallbackDto } from './bot-callback.service';
  * ═══════════════════════════════════════════════════════════════
  */
 @ApiTags('Bot Integration')
-@Controller('api/bot')
+@Controller('bot')
 export class BotCallbackController {
   private readonly logger = new Logger(BotCallbackController.name);
 

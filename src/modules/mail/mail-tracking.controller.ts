@@ -9,7 +9,7 @@ import { MailService } from './mail.service';
  * - GET /api/track/open/:trackingId — 1x1 transparent pixel (açılma takibi)
  * - GET /api/track/click/:trackingId — Link redirect (tıklanma takibi)
  */
-@Controller('api/track')
+@Controller('track')
 export class MailTrackingController {
   // 1x1 transparent GIF pixel
   private readonly PIXEL_BUFFER = Buffer.from(

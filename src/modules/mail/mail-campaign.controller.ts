@@ -8,7 +8,7 @@ import { MailService } from './mail.service';
  *
  * CRUD + send + analytics for email campaigns
  */
-@Controller('api/admin/campaigns')
+@Controller('admin/campaigns')
 export class MailCampaignController {
   constructor(
     private readonly prisma: PrismaService,

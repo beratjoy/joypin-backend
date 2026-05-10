@@ -3,14 +3,15 @@
 # ============================================================
 
 # ─── Stage 1: Dependencies ──────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 # ─── Stage 2: Build ────────────────────────────────────────
-FROM node:20-alpine AS build
+FROM node:20-bookworm-slim AS build
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 RUN npm ci
@@ -19,12 +20,13 @@ COPY src ./src/
 RUN npx prisma generate && npm run build
 
 # ─── Stage 3: Production ───────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates wget && rm -rf /var/lib/apt/lists/*
 
 # Security: non-root user
-RUN addgroup --system --gid 1001 nestjs && \
-    adduser --system --uid 1001 nestjs
+RUN groupadd --system --gid 1001 nestjs && \
+    useradd --system --uid 1001 --gid nestjs nestjs
 
 # Copy production deps + built app + prisma client
 COPY --from=deps /app/node_modules ./node_modules

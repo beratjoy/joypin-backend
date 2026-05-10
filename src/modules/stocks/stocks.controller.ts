@@ -11,7 +11,7 @@ import { randomUUID } from 'crypto';
  * - EpinCode toplu ekleme
  * - Kod listeleme, filtreleme, log görüntüleme
  */
-@Controller('api/admin/stocks')
+@Controller('admin/stocks')
 export class StocksController {
   constructor(
     private readonly prisma: PrismaService,

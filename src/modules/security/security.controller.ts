@@ -7,7 +7,7 @@ import { RequirePermissions } from './rbac.guard';
  * Security & Staff Management Controller
  * /api/admin/security
  */
-@Controller('api/admin/security')
+@Controller('admin/security')
 export class SecurityController {
   constructor(
     private readonly prisma: PrismaService,
