@@ -7,6 +7,29 @@ export class StorefrontCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Public()
+  @Get('debug')
+  async debugStorefront() {
+    const checks: Record<string, any> = {};
+    for (const [key, sql] of Object.entries({
+      database: 'SELECT current_database() AS database, current_schema() AS schema',
+      productCategories: 'SELECT COUNT(*)::int AS count FROM product_categories',
+      products: 'SELECT COUNT(*)::int AS count FROM products',
+      sliders: 'SELECT COUNT(*)::int AS count FROM sliders',
+    })) {
+      try {
+        checks[key] = await this.prisma.$queryRawUnsafe(sql);
+      } catch (error: any) {
+        checks[key] = {
+          name: error?.name,
+          code: error?.code,
+          message: error?.message,
+        };
+      }
+    }
+    return checks;
+  }
+
+  @Public()
   @Get('sliders')
   async getSliders() {
     return this.prisma.slider.findMany({
