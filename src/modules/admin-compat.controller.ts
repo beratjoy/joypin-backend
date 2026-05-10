@@ -316,6 +316,15 @@ export class AdminCompatController {
       this.prisma.productCategory.findMany({ select: { id: true, name: true }, orderBy: { sortOrder: 'asc' } }),
     ]);
 
+    const normalCustomerMemberType = {
+      id: 'normal-customer',
+      name: 'Normal Müşteri',
+      colorCode: '#f8fafc',
+      sortOrder: -1,
+    };
+
+    const pricingMemberTypes = [normalCustomerMemberType, ...memberTypes];
+
     return {
       products: products.map((product: any) => ({
         id: product.id,
@@ -329,22 +338,25 @@ export class AdminCompatController {
         isActive: product.isActive,
         imageUrl: product.iconUrl,
         prices: Object.fromEntries(
-          memberTypes.map((memberType: any) => {
-            const price = product.prices.find((item: any) => item.memberTypeId === memberType.id);
+          pricingMemberTypes.map((memberType: any) => {
+            const isNormalCustomer = memberType.id === normalCustomerMemberType.id;
+            const price = isNormalCustomer
+              ? null
+              : product.prices.find((item: any) => item.memberTypeId === memberType.id);
             return [
               memberType.id,
               {
                 id: price?.id || null,
                 memberTypeId: memberType.id,
                 pricingStrategy: 'FIXED',
-                strategyValue: 0,
+                strategyValue: Number(price?.price || product.fixedPrice || product.baseCost || 0),
                 price: Number(price?.price || product.fixedPrice || product.baseCost || 0),
               },
             ];
           }),
         ),
       })),
-      memberTypes: memberTypes.map((memberType: any) => ({
+      memberTypes: pricingMemberTypes.map((memberType: any) => ({
         id: memberType.id,
         name: memberType.name,
         colorCode: memberType.colorCode,
@@ -361,6 +373,16 @@ export class AdminCompatController {
   @Put('products/pricing/update')
   async updateSinglePrice(@Body() body: any) {
     const price = Number(body.calculatedPrice || 0);
+    if (body.memberTypeId === 'normal-customer') {
+      return this.prisma.product.update({
+        where: { id: body.productId },
+        data: {
+          fixedPrice: price,
+          pricingModel: 'FIXED_PRICE' as any,
+        },
+      });
+    }
+
     return this.prisma.productPrice.upsert({
       where: {
         productId_memberTypeId: {
@@ -399,22 +421,30 @@ export class AdminCompatController {
             : value || selling;
 
       updates.push(
-        await this.prisma.productPrice.upsert({
-          where: {
-            productId_memberTypeId: {
-              productId: product.id,
-              memberTypeId: body.memberTypeId,
-            },
-          },
-          update: { price, isActive: true },
-          create: {
-            productId: product.id,
-            memberTypeId: body.memberTypeId,
-            price,
-            currency: 'TRY' as any,
-            isActive: true,
-          },
-        }),
+        body.memberTypeId === 'normal-customer'
+          ? await this.prisma.product.update({
+              where: { id: product.id },
+              data: {
+                fixedPrice: price,
+                pricingModel: 'FIXED_PRICE' as any,
+              },
+            })
+          : await this.prisma.productPrice.upsert({
+              where: {
+                productId_memberTypeId: {
+                  productId: product.id,
+                  memberTypeId: body.memberTypeId,
+                },
+              },
+              update: { price, isActive: true },
+              create: {
+                productId: product.id,
+                memberTypeId: body.memberTypeId,
+                price,
+                currency: 'TRY' as any,
+                isActive: true,
+              },
+            }),
       );
     }
 
