@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -13,6 +13,75 @@ export class AdminCompatController {
       where: group ? { group } : {},
       orderBy: { key: 'asc' },
     });
+  }
+
+  @Public()
+  @Get('settings/currencies')
+  async getCurrencies() {
+    const meta: Record<string, { name: string; symbol: string; flag: string }> = {
+      TRY: { name: 'Türk Lirası', symbol: '₺', flag: '🇹🇷' },
+      USD: { name: 'US Dollar', symbol: '$', flag: '🇺🇸' },
+      EUR: { name: 'Euro', symbol: '€', flag: '🇪🇺' },
+      GBP: { name: 'British Pound', symbol: '£', flag: '🇬🇧' },
+      AED: { name: 'UAE Dirham', symbol: 'د.إ', flag: '🇦🇪' },
+      SAR: { name: 'Saudi Riyal', symbol: '﷼', flag: '🇸🇦' },
+    };
+    const rates = await this.prisma.exchangeRate.findMany({
+      where: { toCurrency: 'TRY' as any },
+    });
+
+    return Object.entries(meta).map(([code, info]) => {
+      const rate = code === 'TRY' ? null : rates.find((item: any) => item.fromCurrency === code);
+      return {
+        id: code,
+        code,
+        name: info.name,
+        symbol: info.symbol,
+        flag: info.flag,
+        exchangeRate: code === 'TRY' ? 1 : Number(rate?.rate || 1),
+        isAutoUpdate: rate?.source !== 'manual',
+        isActive: true,
+        lastSyncAt: rate?.updatedAt || null,
+        lastSyncRate: rate ? Number(rate.rawRate || rate.rate) : null,
+      };
+    });
+  }
+
+  @Public()
+  @Post('settings/currencies')
+  async saveCurrencies(@Body() body: any) {
+    const supported = ['USD', 'EUR', 'GBP', 'AED', 'SAR'];
+    const currencies = Array.isArray(body.currencies) ? body.currencies : [];
+    const saved = [];
+
+    for (const currency of currencies) {
+      if (!supported.includes(currency.code)) continue;
+      const rate = Number(currency.exchangeRate || 1);
+      saved.push(
+        await this.prisma.exchangeRate.upsert({
+          where: {
+            fromCurrency_toCurrency: {
+              fromCurrency: currency.code,
+              toCurrency: 'TRY',
+            } as any,
+          },
+          update: {
+            rate,
+            rawRate: currency.lastSyncRate ?? rate,
+            source: currency.isAutoUpdate ? 'manual-auto' : 'manual',
+          },
+          create: {
+            fromCurrency: currency.code,
+            toCurrency: 'TRY',
+            rate,
+            rawRate: currency.lastSyncRate ?? rate,
+            source: currency.isAutoUpdate ? 'manual-auto' : 'manual',
+          } as any,
+        }),
+      );
+    }
+
+    return { success: true, updated: saved.length };
   }
 
   @Public()
@@ -192,6 +261,157 @@ export class AdminCompatController {
       isLimited: false,
       createdAt: product.createdAt,
     }));
+  }
+
+  @Public()
+  @Get('products/pricing')
+  async getAdvancedPricing(
+    @Query('page') page = '1',
+    @Query('pageSize') pageSize = '20',
+    @Query('categoryId') categoryId?: string,
+    @Query('search') search?: string,
+  ) {
+    const take = Number(pageSize) || 20;
+    const skip = ((Number(page) || 1) - 1) * take;
+    const where: any = {
+      ...(categoryId ? { categoryId } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { slug: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+    const [products, totalCount, memberTypes, categories] = await Promise.all([
+      this.prisma.product.findMany({
+        where,
+        include: { category: true, prices: true },
+        orderBy: { sortOrder: 'asc' },
+        skip,
+        take,
+      }),
+      this.prisma.product.count({ where }),
+      this.prisma.memberType.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } }),
+      this.prisma.productCategory.findMany({ select: { id: true, name: true }, orderBy: { sortOrder: 'asc' } }),
+    ]);
+
+    return {
+      products: products.map((product: any) => ({
+        id: product.id,
+        name: product.name,
+        slug: product.slug,
+        categoryId: product.categoryId,
+        categoryName: product.category?.name || '',
+        costPrice: Number(product.baseCost || 0),
+        sellingPrice: Number(product.fixedPrice || product.baseCost || 0),
+        currency: product.baseCurrency || 'TRY',
+        isActive: product.isActive,
+        imageUrl: product.iconUrl,
+        prices: Object.fromEntries(
+          memberTypes.map((memberType: any) => {
+            const price = product.prices.find((item: any) => item.memberTypeId === memberType.id);
+            return [
+              memberType.id,
+              {
+                id: price?.id || null,
+                memberTypeId: memberType.id,
+                pricingStrategy: 'FIXED',
+                strategyValue: 0,
+                price: Number(price?.price || product.fixedPrice || product.baseCost || 0),
+              },
+            ];
+          }),
+        ),
+      })),
+      memberTypes: memberTypes.map((memberType: any) => ({
+        id: memberType.id,
+        name: memberType.name,
+        colorCode: memberType.colorCode,
+        sortOrder: memberType.sortOrder,
+      })),
+      categories,
+      totalCount,
+      page: Number(page) || 1,
+      pageSize: take,
+    };
+  }
+
+  @Public()
+  @Put('products/pricing/update')
+  async updateSinglePrice(@Body() body: any) {
+    const price = Number(body.calculatedPrice || 0);
+    return this.prisma.productPrice.upsert({
+      where: {
+        productId_memberTypeId: {
+          productId: body.productId,
+          memberTypeId: body.memberTypeId,
+        },
+      },
+      update: { price, isActive: true },
+      create: {
+        productId: body.productId,
+        memberTypeId: body.memberTypeId,
+        price,
+        currency: 'TRY' as any,
+        isActive: true,
+      },
+    });
+  }
+
+  @Public()
+  @Put('products/pricing/bulk-update')
+  async bulkUpdatePrices(@Body() body: any) {
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: body.productIds || [] } },
+    });
+    const updates = [];
+
+    for (const product of products as any[]) {
+      const cost = Number(product.baseCost || 0);
+      const selling = Number(product.fixedPrice || product.baseCost || 0);
+      const value = Number(body.strategyValue || 0);
+      const price =
+        body.pricingStrategy === 'PROFIT_PERCENT'
+          ? cost * (1 + value / 100)
+          : body.pricingStrategy === 'DISCOUNT_PERCENT'
+            ? selling * (1 - value / 100)
+            : value || selling;
+
+      updates.push(
+        await this.prisma.productPrice.upsert({
+          where: {
+            productId_memberTypeId: {
+              productId: product.id,
+              memberTypeId: body.memberTypeId,
+            },
+          },
+          update: { price, isActive: true },
+          create: {
+            productId: product.id,
+            memberTypeId: body.memberTypeId,
+            price,
+            currency: 'TRY' as any,
+            isActive: true,
+          },
+        }),
+      );
+    }
+
+    return { success: true, updatedCount: updates.length };
+  }
+
+  @Public()
+  @Patch('products/:id/pricing/base')
+  async updateBasePricing(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.product.update({
+      where: { id },
+      data: {
+        baseCost: body.costPrice ?? body.baseCost,
+        fixedPrice: body.sellingPrice ?? body.fixedPrice,
+      },
+    });
   }
 
   @Public()
