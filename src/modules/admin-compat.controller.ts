@@ -451,6 +451,103 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Get('member-types')
+  async getMemberTypes() {
+    const memberTypes = await this.prisma.memberType.findMany({
+      include: { _count: { select: { users: true } } },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    return memberTypes.map((memberType: any) => ({
+      id: memberType.id,
+      name: memberType.name,
+      colorCode: memberType.colorCode,
+      sortOrder: memberType.sortOrder,
+      isActive: memberType.isActive,
+      defaultDiscountPercent: Number(memberType.defaultDiscountPercent || 0),
+      userCount: memberType._count?.users || 0,
+      createdAt: memberType.createdAt,
+    }));
+  }
+
+  @Public()
+  @Post('member-types')
+  async createMemberType(@Body() body: any) {
+    return this.prisma.memberType.create({
+      data: {
+        name: body.name,
+        colorCode: body.colorCode || '#6366f1',
+        sortOrder: body.sortOrder ?? 0,
+        defaultDiscountPercent: body.defaultDiscountPercent ?? 0,
+        isActive: body.isActive ?? true,
+      },
+    });
+  }
+
+  @Public()
+  @Patch('member-types/:id')
+  async updateMemberType(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.memberType.update({
+      where: { id },
+      data: {
+        name: body.name,
+        colorCode: body.colorCode,
+        sortOrder: body.sortOrder,
+        defaultDiscountPercent: body.defaultDiscountPercent,
+        isActive: body.isActive,
+      },
+    });
+  }
+
+  @Public()
+  @Delete('member-types/:id')
+  async deleteMemberType(@Param('id') id: string) {
+    return this.prisma.memberType.delete({ where: { id } });
+  }
+
+  @Public()
+  @Get('users')
+  async getUsers() {
+    const users = await this.prisma.user.findMany({
+      include: {
+        memberType: true,
+        orders: true,
+        wallet: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+
+    return users.map((user: any) => ({
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      status: user.status,
+      memberTypeId: user.memberTypeId,
+      memberTypeName: user.memberType?.name || null,
+      balance: Number(user.wallet?.currentBalance || 0),
+      orderCount: user.orders?.length || 0,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt,
+    }));
+  }
+
+  @Public()
+  @Patch('users/:id')
+  async updateUser(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        status: body.status,
+        memberTypeId: body.memberTypeId === '' ? null : body.memberTypeId,
+      },
+    });
+  }
+
+  @Public()
   @Post('providers')
   async createProvider(@Body() body: any) {
     return this.prisma.botProvider.create({
