@@ -23,6 +23,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { StocksModule } from './modules/stocks/stocks.module';
 import { SecurityModule } from './modules/security/security.module';
+import { AdminCompatController } from './modules/admin-compat.controller';
 
 @Module({
   imports: [
@@ -70,7 +71,7 @@ import { SecurityModule } from './modules/security/security.module';
     // ─── Security & RBAC (Zero-Trust) ──────────────────────
     SecurityModule,
   ],
-  controllers: [],
+  controllers: [AdminCompatController],
   providers: [
     // ─── Global Guards (sıralama önemli) ─────────────────
     // 1. Rate Limiting — en dış katman

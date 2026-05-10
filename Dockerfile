@@ -16,7 +16,7 @@ COPY prisma ./prisma/
 RUN npm ci
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src/
-RUN npm run build
+RUN npx prisma generate && npm run build
 
 # ─── Stage 3: Production ───────────────────────────────────
 FROM node:20-alpine AS runner
@@ -30,7 +30,8 @@ RUN addgroup --system --gid 1001 nestjs && \
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
-COPY --from=deps /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
@@ -42,4 +43,4 @@ EXPOSE 4000
 ENV NODE_ENV=production
 ENV PORT=4000
 
-CMD npx prisma generate && node dist/main.js
+CMD ["node", "dist/main.js"]
