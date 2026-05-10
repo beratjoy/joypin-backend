@@ -245,7 +245,12 @@ export class AdminCompatController {
   async getProducts(@Query('categoryId') categoryId?: string) {
     const products = await this.prisma.product.findMany({
       where: categoryId ? { categoryId } : {},
-      include: { category: true },
+      include: {
+        category: true,
+        stockPoolProducts: {
+          include: { pool: { select: { id: true, name: true } } },
+        },
+      },
       orderBy: { sortOrder: 'asc' },
     });
 
@@ -264,6 +269,8 @@ export class AdminCompatController {
       currency: product.baseCurrency || 'TRY',
       stockType: product.hasInfiniteStock ? 'infinite' : 'manual',
       stockCount: product.stockCount,
+      stockPoolId: product.stockPoolProducts?.[0]?.poolId || '',
+      stockPoolName: product.stockPoolProducts?.[0]?.pool?.name || null,
       isActive: product.isActive,
       imageUrl: product.iconUrl,
       marketingImage: product.merchantImageUrl,
@@ -741,6 +748,9 @@ export class AdminCompatController {
         seoTitle: body.seoTitle || null,
         seoDescription: body.seoDescription || null,
         seoKeywords: body.seoKeywords || null,
+        stockPoolProducts: body.stockPoolId
+          ? { create: { poolId: body.stockPoolId } }
+          : undefined,
       },
     });
   }
@@ -748,25 +758,38 @@ export class AdminCompatController {
   @Public()
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() body: any) {
-    return this.prisma.product.update({
-      where: { id },
-      data: {
-        name: body.name,
-        slug: body.slug,
-        description: body.description,
-        categoryId: body.categoryId,
-        baseCost: body.costPrice ?? body.baseCost,
-        fixedPrice: body.sellingPrice ?? body.fixedPrice,
-        baseCurrency: body.currency,
-        hasInfiniteStock: body.stockType ? body.stockType === 'infinite' : undefined,
-        stockCount: body.stockCount,
-        isActive: body.isActive,
-        iconUrl: body.imageUrl,
-        merchantImageUrl: body.marketingImage,
-        seoTitle: body.seoTitle,
-        seoDescription: body.seoDescription,
-        seoKeywords: body.seoKeywords,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { id },
+        data: {
+          name: body.name,
+          slug: body.slug,
+          description: body.description,
+          categoryId: body.categoryId,
+          baseCost: body.costPrice ?? body.baseCost,
+          fixedPrice: body.sellingPrice ?? body.fixedPrice,
+          baseCurrency: body.currency,
+          hasInfiniteStock: body.stockType ? body.stockType === 'infinite' : undefined,
+          stockCount: body.stockCount,
+          isActive: body.isActive,
+          iconUrl: body.imageUrl,
+          merchantImageUrl: body.marketingImage,
+          seoTitle: body.seoTitle,
+          seoDescription: body.seoDescription,
+          seoKeywords: body.seoKeywords,
+        },
+      });
+
+      if (body.stockPoolId !== undefined) {
+        await tx.stockPoolProduct.deleteMany({ where: { productId: id } });
+        if (body.stockPoolId) {
+          await tx.stockPoolProduct.create({
+            data: { productId: id, poolId: body.stockPoolId },
+          });
+        }
+      }
+
+      return product;
     });
   }
 
