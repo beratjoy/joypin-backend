@@ -19,11 +19,9 @@ export class StorefrontCompatController {
   @Public()
   @Get('categories')
   async getCategories() {
-    const categories = await this.prisma.productCategory.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: 'asc' },
-      select: { id: true, name: true, slug: true, imageUrl: true, sortOrder: true },
-    });
+    const categories = await this.prisma.$queryRawUnsafe<any[]>(
+      'SELECT id, name, slug, "imageUrl", "sortOrder" FROM product_categories WHERE "isActive" = true ORDER BY "sortOrder" ASC',
+    );
 
     return Promise.all(
       categories.map(async (category: any) => ({
@@ -31,7 +29,14 @@ export class StorefrontCompatController {
         name: category.name,
         slug: category.slug,
         imageUrl: category.imageUrl,
-        productCount: await this.prisma.product.count({ where: { categoryId: category.id, isActive: true } }),
+        productCount: Number(
+          (
+            await this.prisma.$queryRawUnsafe<any[]>(
+              'SELECT COUNT(*)::int AS count FROM products WHERE "categoryId" = $1 AND "isActive" = true',
+              category.id,
+            )
+          )[0]?.count || 0,
+        ),
         sortOrder: category.sortOrder,
       })),
     );
@@ -40,31 +45,21 @@ export class StorefrontCompatController {
   @Public()
   @Get('categories/:slug')
   async getCategoryBySlug(@Param('slug') slug: string) {
-    const category = await this.prisma.productCategory.findFirst({
-      where: { slug, isActive: true },
-      select: { id: true, name: true, slug: true, description: true, imageUrl: true },
-    });
+    const category = (
+      await this.prisma.$queryRawUnsafe<any[]>(
+        'SELECT id, name, slug, description, "imageUrl" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
+        slug,
+      )
+    )[0];
 
     if (!category) {
       throw new NotFoundException('Category not found');
     }
 
-    const products = await this.prisma.product.findMany({
-      where: { categoryId: category.id, isActive: true },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        fixedPrice: true,
-        baseCost: true,
-        marginPercent: true,
-        pricingModel: true,
-        type: true,
-        iconUrl: true,
-        merchantImageUrl: true,
-      },
-    });
+    const products = await this.prisma.$queryRawUnsafe<any[]>(
+      'SELECT id, name, slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
+      category.id,
+    );
 
     return {
       id: category.id,
