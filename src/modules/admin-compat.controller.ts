@@ -335,6 +335,75 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Patch('customers/:id/lootbox-rights')
+  async updateCustomerLootboxRights(@Param('id') id: string, @Body() body: any) {
+    const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
+    const mode = body.mode || 'add';
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) return { success: false, message: 'Kullanıcı bulunamadı' };
+
+    const data = mode === 'set'
+      ? { extraLootboxRights: amount }
+      : { extraLootboxRights: { increment: amount } };
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: data as any,
+      select: { id: true, extraLootboxRights: true },
+    });
+
+    return { success: true, extraLootboxRights: updated.extraLootboxRights };
+  }
+
+  @Public()
+  @Get('customers/:id')
+  async getCustomerDetail(@Param('id') id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        wallet: true,
+        memberType: true,
+        dealerGroup: true,
+        _count: { select: { orders: true, paymentTransactions: true } },
+      },
+    } as any);
+
+    if (!user) return null;
+
+    return {
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      status: user.status,
+      customerType: user.customerType,
+      identityNumber: user.identityNumber,
+      birthDate: user.birthDate,
+      taxExempt: user.taxExempt,
+      countryCode: user.countryCode,
+      preferredCurrency: user.preferredCurrency,
+      avatarUrl: user.avatarUrl,
+      emailVerified: user.emailVerified,
+      smsVerified: user.smsVerified,
+      loginOtpEnabled: user.loginOtpEnabled,
+      orderOtpEnabled: user.orderOtpEnabled,
+      createdAt: user.createdAt,
+      memberType: user.memberType,
+      dealerGroup: user.dealerGroup,
+      wallet: user.wallet,
+      extraLootboxRights: Number((user as any).extraLootboxRights || 0),
+      adminNotes: [],
+      _count: {
+        orders: user._count?.orders || 0,
+        paymentTransactions: user._count?.paymentTransactions || 0,
+        adminNotes: 0,
+      },
+    };
+  }
+
+  @Public()
   @Get('invoices')
   async getInvoices(@Query('status') status?: string) {
     const where = status ? { status: status as any } : {};
@@ -1402,6 +1471,26 @@ export class AdminCompatController {
   @Public()
   @Get('points/summary')
   async getPointsSummary(@Query('userId') userId?: string) {
+    if (!userId) {
+      return {
+        authenticated: false,
+        pointsBalance: 0,
+        pointValueTl: 0,
+        minimumConvertTl: 100,
+        canConvert: false,
+        walletBalance: 0,
+        dailyLootbox: {
+          opensToday: 0,
+          dailyLimit: 0,
+          remaining: 0,
+          nextResetAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+        rules: {
+          conversion: '100 puan = 1 TL',
+          earning: '10 TL ve üzeri kâr eden ürünlerde kârın %5 TL karşılığında puan verilir',
+        },
+      };
+    }
     const user = await this.getPointsUser(userId);
     const wallet = await this.prisma.wallet.findUnique({ where: { userId: user.id } });
     const todayStart = new Date();
@@ -1409,11 +1498,14 @@ export class AdminCompatController {
     const opensToday = await this.prisma.lootBoxOpen.count({
       where: { userId: user.id, createdAt: { gte: todayStart } },
     });
-    const dailyLimit = 1 + await this.getVipExtraLootboxOpens(user.id);
+    const vipExtra = await this.getVipExtraLootboxOpens(user.id);
+    const dailyLimit = 1 + vipExtra + Number((user as any).extraLootboxRights || 0);
 
     return {
       userId: user.id,
+      authenticated: true,
       pointsBalance: user.pointsBalance,
+      extraLootboxRights: Number((user as any).extraLootboxRights || 0),
       pointValueTl: Math.floor(user.pointsBalance / 100),
       minimumConvertTl: 100,
       canConvert: user.pointsBalance >= 10000,
@@ -1502,13 +1594,19 @@ export class AdminCompatController {
   @Public()
   @Post('points/lootboxes/:id/open')
   async openPointLootBox(@Param('id') id: string, @Body() body: any) {
+    if (!body.userId) {
+      return { success: false, requiresLogin: true, message: 'Çark çevirmek için üye girişi yapmalısınız.' };
+    }
     const user = await this.getPointsUser(body.userId);
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const opensToday = await this.prisma.lootBoxOpen.count({
       where: { userId: user.id, createdAt: { gte: todayStart } },
     });
-    const dailyLimit = 1 + await this.getVipExtraLootboxOpens(user.id);
+    const vipExtra = await this.getVipExtraLootboxOpens(user.id);
+    const baseDailyLimit = 1 + vipExtra;
+    const extraLootboxRights = Number((user as any).extraLootboxRights || 0);
+    const dailyLimit = baseDailyLimit + extraLootboxRights;
     if (opensToday >= dailyLimit) {
       return { success: false, message: 'Günlük kasa açma hakkınız doldu' };
     }
@@ -1570,6 +1668,13 @@ export class AdminCompatController {
         rewardLabel: reward.label,
       } as any,
     });
+
+    if (opensToday >= baseDailyLimit && extraLootboxRights > 0) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { extraLootboxRights: { decrement: 1 } },
+      });
+    }
 
     return { success: true, reward, remaining: Math.max(dailyLimit - opensToday - 1, 0) };
   }

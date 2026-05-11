@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "extraLootboxRights" INTEGER NOT NULL DEFAULT 0;
