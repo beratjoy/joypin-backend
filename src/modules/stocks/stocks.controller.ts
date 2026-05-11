@@ -24,6 +24,12 @@ export class StocksController {
     return createHash('sha256').update(code.trim()).digest('hex');
   }
 
+  private maskCode(code: string) {
+    const trimmed = code.trim();
+    if (trimmed.length <= 8) return trimmed;
+    return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+  }
+
   // ═══════════════════════════════════════════════════════════
   // STOCK POOL CRUD
   // ═══════════════════════════════════════════════════════════
@@ -152,11 +158,13 @@ export class StocksController {
 
     const seenHashes = new Set<string>();
     const uniqueCodes: string[] = [];
+    const inputDuplicateCodes: string[] = [];
     let inputDuplicateCount = 0;
     for (const code of rawCodes) {
       const hash = this.hashCode(code);
       if (seenHashes.has(hash)) {
         inputDuplicateCount++;
+        inputDuplicateCodes.push(code);
       } else {
         seenHashes.add(hash);
         uniqueCodes.push(code);
@@ -176,38 +184,56 @@ export class StocksController {
     });
     const existingCodeSet = new Set(existingCodes.map(e => e.code));
     const existingHashSet = new Set(existingCodes.map(e => e.codeHash).filter(Boolean));
+    const existingDuplicateCodes = uniqueCodes.filter(c => existingCodeSet.has(c) || existingHashSet.has(this.hashCode(c)));
 
     // Yeni kodları filtrele
-    const newCodes = uniqueCodes.filter(c => !existingCodeSet.has(c) && !existingHashSet.has(this.hashCode(c)));
+    const newCodes = uniqueCodes.filter(c => !existingDuplicateCodes.includes(c));
     const duplicateCount = rawCodes.length - newCodes.length;
+    const duplicateCodes = [...inputDuplicateCodes, ...existingDuplicateCodes];
+    const duplicateCodeSamples = duplicateCodes.slice(0, 20).map(code => this.maskCode(code));
 
     if (newCodes.length === 0) {
       return {
         added: 0,
         duplicates: duplicateCount,
-        error: 'Tüm kodlar zaten sistemde mevcut',
+        inputDuplicates: inputDuplicateCount,
+        duplicateCodes: duplicateCodeSamples,
+        error: duplicateCodes.length
+          ? `Kodlar zaten mevcut veya iki kere girildi: ${duplicateCodeSamples.join(', ')}`
+          : 'Tüm kodlar zaten sistemde mevcut',
       };
     }
 
     // Batch ID ile toplu ekleme
     const batchId = randomUUID();
 
-    await this.prisma.epinCode.createMany({
-      data: newCodes.map(code => ({
-        poolId,
-        code,
-        codeHash: this.hashCode(code),
-        costPrice: body.costPrice,
-        currency: (body.currency as any) || 'USD',
-        supplier: body.supplier,
-        priority: body.priority || 0,
-        allowResellers: body.allowResellers !== false,
-        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-        batchId,
-        notes: body.notes,
-      })),
-      skipDuplicates: true,
-    });
+    try {
+      await this.prisma.epinCode.createMany({
+        data: newCodes.map(code => ({
+          poolId,
+          code,
+          codeHash: this.hashCode(code),
+          costPrice: body.costPrice,
+          currency: (body.currency as any) || 'USD',
+          supplier: body.supplier,
+          priority: body.priority || 0,
+          allowResellers: body.allowResellers !== false,
+          expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+          batchId,
+          notes: body.notes,
+        })),
+        skipDuplicates: true,
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') {
+        throw new BadRequestException(
+          duplicateCodeSamples.length
+            ? `Kodlar zaten mevcut veya iki kere girildi: ${duplicateCodeSamples.join(', ')}`
+            : 'Eklenmek istenen kodlardan biri zaten sistemde mevcut',
+        );
+      }
+      throw error;
+    }
 
     // Product stockCount güncelle (havuza bağlı ürünlerin stok sayısı)
     await this.syncPoolStockCounts(poolId);
@@ -216,6 +242,7 @@ export class StocksController {
       added: newCodes.length,
       duplicates: duplicateCount,
       inputDuplicates: inputDuplicateCount,
+      duplicateCodes: duplicateCodeSamples,
       batchId,
       poolId,
     };
@@ -237,7 +264,7 @@ export class StocksController {
       where: { OR: [{ code: body.code.trim() }, { codeHash }] },
     });
     if (existing) {
-      throw new BadRequestException('Bu kod zaten sistemde mevcut');
+      throw new BadRequestException(`Bu kod zaten sistemde mevcut: ${this.maskCode(body.code)}`);
     }
 
     const epinCode = await this.prisma.epinCode.create({
