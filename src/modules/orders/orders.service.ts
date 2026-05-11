@@ -102,37 +102,80 @@ export class OrdersService {
       (sum, item) => sum + item.unitPrice * item.quantity,
       0,
     );
+    const isWalletPayment = params.paymentMethod?.toUpperCase() === 'WALLET';
 
-    const order = await this.prisma.order.create({
-      data: {
-        orderNumber,
-        userId: params.userId || null,
-        isGuest: params.isGuest,
-        guestEmail: params.guestEmail,
-        guestPhone: params.guestPhone,
-        guestTrackingToken: params.guestTrackingToken,
-        currency: params.currency,
-        totalAmount,
-        netAmount: totalAmount,
-        status: 'PENDING',
-        paymentStatus: 'PENDING',
-        paymentMethod: params.paymentMethod,
-        ipAddress: params.ipAddress,
-        customerNote: params.customerNote,
-        subOrders: {
-          create: params.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            unitCost: item.unitCost,
-            totalPrice: item.unitPrice * item.quantity,
-            currency: params.currency,
-            deliveryType: item.deliveryType,
-            status: 'PENDING' as SubOrderStatus,
-          })),
+    if (isWalletPayment && params.isGuest) {
+      throw new BadRequestException('Cüzdan ile ödeme için giriş yapmalısınız.');
+    }
+
+    const order = await this.prisma.$transaction(async (tx) => {
+      const wallet = isWalletPayment
+        ? await tx.wallet.findUnique({ where: { userId: params.userId } })
+        : null;
+
+      if (isWalletPayment) {
+        if (!wallet || !wallet.isActive) {
+          throw new BadRequestException('Aktif cüzdan bulunamadı.');
+        }
+        if (Number(wallet.balanceCurrent) < totalAmount) {
+          throw new BadRequestException('Cüzdan bakiyesi yetersiz.');
+        }
+      }
+
+      const createdOrder = await tx.order.create({
+        data: {
+          orderNumber,
+          userId: params.userId || null,
+          isGuest: params.isGuest,
+          guestEmail: params.guestEmail,
+          guestPhone: params.guestPhone,
+          guestTrackingToken: params.guestTrackingToken,
+          currency: params.currency,
+          totalAmount,
+          netAmount: totalAmount,
+          status: isWalletPayment ? 'PROCESSING' : 'PENDING',
+          paymentStatus: isWalletPayment ? 'PAID' : 'PENDING',
+          paymentMethod: params.paymentMethod,
+          ipAddress: params.ipAddress,
+          customerNote: params.customerNote,
+          subOrders: {
+            create: params.items.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              unitCost: item.unitCost,
+              totalPrice: item.unitPrice * item.quantity,
+              currency: params.currency,
+              deliveryType: item.deliveryType,
+              status: isWalletPayment ? 'PROCESSING' as SubOrderStatus : 'PENDING' as SubOrderStatus,
+            })),
+          },
         },
-      },
-      include: { subOrders: true },
+        include: { subOrders: true },
+      });
+
+      if (isWalletPayment && wallet) {
+        const balanceAfter = Number(wallet.balanceCurrent) - totalAmount;
+        await tx.wallet.update({
+          where: { id: wallet.id },
+          data: { balanceCurrent: balanceAfter },
+        });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            type: 'DEBIT',
+            balanceField: 'CURRENT',
+            amount: -totalAmount,
+            balanceAfter,
+            description: `Sipariş ödemesi: ${orderNumber}`,
+            orderId: createdOrder.id,
+            referenceType: 'order',
+            referenceId: createdOrder.id,
+          },
+        });
+      }
+
+      return createdOrder;
     });
 
     // Finansal log: SALE kaydı

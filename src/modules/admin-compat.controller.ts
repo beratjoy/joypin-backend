@@ -6,6 +6,86 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Public()
+  @Get('tickets')
+  async getTickets() {
+    const tickets = await this.prisma.ticket.findMany({
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: [...new Set(tickets.map((ticket) => ticket.userId))] } },
+      select: { id: true, firstName: true, lastName: true, email: true },
+    });
+    const userById = new Map(users.map((user) => [user.id, user]));
+
+    return tickets.map((ticket: any) => {
+      const user = userById.get(ticket.userId);
+      const customerName = user ? `${user.firstName} ${user.lastName}`.trim() : 'Müşteri';
+      return {
+        id: ticket.id,
+        userId: ticket.userId,
+        customerName,
+        customerEmail: user?.email || '',
+        orderId: ticket.orderId,
+        subject: ticket.subject,
+        status: ticket.status,
+        priority: ticket.priority,
+        assignedTo: ticket.assignedToId,
+        createdAt: ticket.createdAt,
+        updatedAt: ticket.updatedAt,
+        messages: ticket.messages.map((message: any) => ({
+          id: message.id,
+          senderId: message.senderId,
+          senderName: message.isStaff ? 'Admin' : customerName,
+          isStaff: message.isStaff,
+          content: message.content,
+          createdAt: message.createdAt,
+        })),
+      };
+    });
+  }
+
+  @Public()
+  @Get('tickets/:id')
+  async getTicket(@Param('id') id: string) {
+    const tickets = await this.getTickets();
+    return tickets.find((ticket: any) => ticket.id === id) || null;
+  }
+
+  @Public()
+  @Post('tickets/:id/reply')
+  async replyTicket(@Param('id') id: string, @Body() body: any) {
+    const ticket = await this.prisma.ticket.findUnique({ where: { id } });
+    if (!ticket) return { success: false, error: 'Ticket bulunamadı' };
+
+    await this.prisma.$transaction([
+      this.prisma.ticketMessage.create({
+        data: {
+          ticketId: id,
+          senderId: body.senderId || 'admin',
+          isStaff: true,
+          content: body.content,
+        },
+      }),
+      this.prisma.ticket.update({
+        where: { id },
+        data: { status: 'REPLIED' },
+      }),
+    ]);
+    return { success: true };
+  }
+
+  @Public()
+  @Patch('tickets/:id')
+  async updateTicket(@Param('id') id: string, @Body() body: any) {
+    const data: any = {};
+    if (body.status) data.status = body.status;
+    if (body.assignedToId !== undefined) data.assignedToId = body.assignedToId;
+    return this.prisma.ticket.update({ where: { id }, data });
+  }
+
   private async oneEpinRequest(path: string, body: Record<string, any> = {}) {
     const emailAddress = process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
     const password = process.env.ONEEPIN_PASSWORD;
