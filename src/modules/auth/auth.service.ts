@@ -7,7 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
-import { UserRole } from '@prisma/client';
+import { UserRole, UserStatus } from '@prisma/client';
 
 export interface JwtPayload {
   sub: string;
@@ -75,6 +75,7 @@ export class AuthService {
         lastName: params.lastName,
         phone: params.phone,
         role: 'CUSTOMER',
+        status: 'ACTIVE',
         referralCode: this.generateReferralCode(),
         referredById: referrerId,
       },
@@ -98,7 +99,6 @@ export class AuthService {
             referrerId,
             referredUserId: user.id,
             referralRuleId: activeRule.id,
-            tier: 1,
           },
         });
       }
@@ -115,7 +115,7 @@ export class AuthService {
   async login(email: string, password: string): Promise<AuthTokens> {
     const user = await this.prisma.user.findUnique({ where: { email } });
 
-    if (!user || !user.isActive) {
+    if (!user || user.status === UserStatus.INACTIVE || user.status === UserStatus.SUSPENDED) {
       throw new UnauthorizedException('Geçersiz kimlik bilgileri.');
     }
 
@@ -147,7 +147,7 @@ export class AuthService {
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user || user.status === UserStatus.INACTIVE || user.status === UserStatus.SUSPENDED) {
       throw new UnauthorizedException('Kullanıcı bulunamadı veya deaktif.');
     }
 
