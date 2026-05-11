@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockDeliveryService } from './stock-delivery.service';
+import { Public } from '../auth/decorators/public.decorator';
 import { randomUUID } from 'crypto';
 
 /**
@@ -11,6 +12,7 @@ import { randomUUID } from 'crypto';
  * - EpinCode toplu ekleme
  * - Kod listeleme, filtreleme, log görüntüleme
  */
+@Public()
 @Controller('admin/stocks')
 export class StocksController {
   constructor(
