@@ -2,7 +2,7 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, BadRequestExcep
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockDeliveryService } from './stock-delivery.service';
 import { Public } from '../auth/decorators/public.decorator';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 /**
  * Admin Stok Yönetimi Controller
@@ -19,6 +19,10 @@ export class StocksController {
     private readonly prisma: PrismaService,
     private readonly delivery: StockDeliveryService,
   ) {}
+
+  private hashCode(code: string) {
+    return createHash('sha256').update(code.trim()).digest('hex');
+  }
 
   // ═══════════════════════════════════════════════════════════
   // STOCK POOL CRUD
@@ -146,15 +150,35 @@ export class StocksController {
       throw new BadRequestException('En az 1 kod girilmelidir');
     }
 
+    const seenHashes = new Set<string>();
+    const uniqueCodes: string[] = [];
+    let inputDuplicateCount = 0;
+    for (const code of rawCodes) {
+      const hash = this.hashCode(code);
+      if (seenHashes.has(hash)) {
+        inputDuplicateCount++;
+      } else {
+        seenHashes.add(hash);
+        uniqueCodes.push(code);
+      }
+    }
+
     // Duplicate check — mevcut kodları kontrol et
+    const uniqueHashes = uniqueCodes.map(code => this.hashCode(code));
     const existingCodes = await this.prisma.epinCode.findMany({
-      where: { code: { in: rawCodes } },
-      select: { code: true },
+      where: {
+        OR: [
+          { code: { in: uniqueCodes } },
+          { codeHash: { in: uniqueHashes } },
+        ],
+      },
+      select: { code: true, codeHash: true },
     });
-    const existingSet = new Set(existingCodes.map(e => e.code));
+    const existingCodeSet = new Set(existingCodes.map(e => e.code));
+    const existingHashSet = new Set(existingCodes.map(e => e.codeHash).filter(Boolean));
 
     // Yeni kodları filtrele
-    const newCodes = rawCodes.filter(c => !existingSet.has(c));
+    const newCodes = uniqueCodes.filter(c => !existingCodeSet.has(c) && !existingHashSet.has(this.hashCode(c)));
     const duplicateCount = rawCodes.length - newCodes.length;
 
     if (newCodes.length === 0) {
@@ -172,6 +196,7 @@ export class StocksController {
       data: newCodes.map(code => ({
         poolId,
         code,
+        codeHash: this.hashCode(code),
         costPrice: body.costPrice,
         currency: (body.currency as any) || 'USD',
         supplier: body.supplier,
@@ -190,6 +215,7 @@ export class StocksController {
     return {
       added: newCodes.length,
       duplicates: duplicateCount,
+      inputDuplicates: inputDuplicateCount,
       batchId,
       poolId,
     };
@@ -206,7 +232,10 @@ export class StocksController {
     allowResellers?: boolean;
   }) {
     // Duplicate check
-    const existing = await this.prisma.epinCode.findUnique({ where: { code: body.code } });
+    const codeHash = this.hashCode(body.code);
+    const existing = await this.prisma.epinCode.findFirst({
+      where: { OR: [{ code: body.code.trim() }, { codeHash }] },
+    });
     if (existing) {
       throw new BadRequestException('Bu kod zaten sistemde mevcut');
     }
@@ -214,7 +243,8 @@ export class StocksController {
     const epinCode = await this.prisma.epinCode.create({
       data: {
         poolId,
-        code: body.code,
+        code: body.code.trim(),
+        codeHash,
         costPrice: body.costPrice,
         currency: (body.currency as any) || 'USD',
         supplier: body.supplier,
