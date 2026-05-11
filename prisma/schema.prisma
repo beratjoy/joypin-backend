@@ -1214,6 +1214,7 @@ model AuditLog {
 model DiscountCoupon {
   id          String       @id @default(uuid())
   code        String       @unique @db.VarChar(50)
+  name        String?      @db.VarChar(200)
   description String?
   type        CouponType   @default(PERCENTAGE)
   value       Decimal      @db.Decimal(14, 4) // % veya sabit tutar
@@ -1229,6 +1230,20 @@ model DiscountCoupon {
   applicableProductIds  String[]
   applicableCategoryIds String[]
   applicableUserRoles   String[] // ["CUSTOMER","DEALER"] boş = tümü
+  targetAudience        String   @default("ALL") @db.VarChar(50)
+
+  showAsBanner      Boolean @default(false)
+  showAsPopup       Boolean @default(false)
+  bannerTitle       String? @db.VarChar(200)
+  bannerDescription String?
+  popupTitle        String? @db.VarChar(200)
+  popupDescription  String?
+  popupCta          String? @db.VarChar(120)
+  popupRedirectUrl  String? @db.VarChar(500)
+  popupDelaySeconds Int     @default(10)
+  popupFrequency    String  @default("SESSION") @db.VarChar(30)
+  popupPageScope    String  @default("ALL") @db.VarChar(30)
+  popupCategoryIds  String[]
 
   status    CouponStatus @default(ACTIVE)
   validFrom  DateTime?

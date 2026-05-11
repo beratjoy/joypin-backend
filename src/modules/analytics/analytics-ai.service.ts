@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AnalyticsService, AnalyticsSummary } from './analytics.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Yapay Zeka Finans Asistanı (AI CFO)
@@ -26,6 +27,7 @@ export class AnalyticsAiService {
   constructor(
     private readonly config: ConfigService,
     private readonly analytics: AnalyticsService,
+    private readonly prisma: PrismaService,
   ) {
     this.openaiApiKey = this.config.get('OPENAI_API_KEY', '');
     this.openaiModel = this.config.get('OPENAI_MODEL', 'gpt-4o-mini');
@@ -60,11 +62,110 @@ export class AnalyticsAiService {
     };
   }
 
+  async answerQuestion(question: string): Promise<{ answer: string; generatedAt: string }> {
+    const [summary, stockPools, financialLogs] = await Promise.all([
+      this.analytics.getSummary(true),
+      this.prisma.stockPool.findMany({
+        include: {
+          codes: { select: { isUsed: true, costPrice: true, currency: true } },
+          products: { include: { product: { select: { name: true } } } },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 25,
+      }),
+      this.prisma.orderFinancialLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+    ]);
+
+    const apiKey = await this.getOpenAiApiKey();
+    if (!apiKey) {
+      return {
+        answer: this.generateFallbackReport(summary),
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
+    const context = {
+      finance: summary.finance,
+      topProducts: summary.topProducts,
+      topMemberTypes: summary.topMemberTypes,
+      lowStock: summary.lowStock,
+      users: summary.users,
+      stockPools: stockPools.map((pool: any) => ({
+        name: pool.name,
+        isActive: pool.isActive,
+        totalCodes: pool.codes.length,
+        availableCodes: pool.codes.filter((code: any) => !code.isUsed).length,
+        usedCodes: pool.codes.filter((code: any) => code.isUsed).length,
+        products: pool.products.map((item: any) => item.product?.name).filter(Boolean),
+      })),
+      financialLogs: financialLogs.map((log: any) => ({
+        type: log.type,
+        grossAmount: Number(log.grossAmount || 0),
+        netAmount: Number(log.netAmount || 0),
+        costAmount: Number(log.costAmount || 0),
+        profitAmount: Number(log.profitAmount || 0),
+        currency: log.currency,
+        createdAt: log.createdAt,
+        description: log.description,
+      })),
+    };
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: await this.getOpenAiModel(),
+          messages: [
+            {
+              role: 'system',
+              content: 'Sen Joy Bilişim admin panelinin muhasebe ve stok veri asistanısın. Sadece verilen canlı veriye dayanarak Türkçe, net ve aksiyon odaklı cevap ver. Veri yoksa bunu açıkça söyle.',
+            },
+            {
+              role: 'user',
+              content: `Soru: ${question}\n\nCanlı veri özeti:\n${JSON.stringify(context)}`,
+            },
+          ],
+          max_tokens: 900,
+          temperature: 0.2,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        this.logger.error(`OpenAI question API error: ${response.status} — ${err}`);
+        return {
+          answer: this.generateFallbackReport(summary),
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
+      const data = await response.json();
+      return {
+        answer: data.choices?.[0]?.message?.content?.trim() || this.generateFallbackReport(summary),
+        generatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('OpenAI question API call failed:', error);
+      return {
+        answer: this.generateFallbackReport(summary),
+        generatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
   /**
    * OpenAI API'ye veri gönder, stratejik özet al
    */
   private async generateAiSummary(summary: AnalyticsSummary): Promise<string> {
-    if (!this.openaiApiKey) {
+    const apiKey = await this.getOpenAiApiKey();
+    if (!apiKey) {
       this.logger.warn('OPENAI_API_KEY not configured — returning fallback report');
       return this.generateFallbackReport(summary);
     }
@@ -102,10 +203,10 @@ ${summary.lowStock.length > 0 ? summary.lowStock.map(s => `- ${s.name}: ${s.stoc
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.openaiApiKey}`,
+          'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: this.openaiModel,
+          model: await this.getOpenAiModel(),
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userContent },
@@ -172,5 +273,15 @@ ${summary.lowStock.length > 0 ? summary.lowStock.map(s => `- ${s.name}: ${s.stoc
     report += `\n\n👥 Bugün ${users.todayNew} yeni üye katıldı. ${users.todayInactive} kullanıcı 30+ gündür inaktif — re-engagement kampanyası düşünülebilir.`;
 
     return report;
+  }
+
+  private async getOpenAiApiKey(): Promise<string> {
+    const setting = await this.prisma.siteSettings.findUnique({ where: { key: 'openai_api_key' } });
+    return setting?.value || this.openaiApiKey || '';
+  }
+
+  private async getOpenAiModel(): Promise<string> {
+    const setting = await this.prisma.siteSettings.findUnique({ where: { key: 'openai_model' } });
+    return setting?.value || this.openaiModel || 'gpt-4o-mini';
   }
 }

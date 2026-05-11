@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsAiService } from './analytics-ai.service';
 
@@ -56,5 +56,11 @@ export class AnalyticsController {
   async getCategoryChart() {
     const data = await this.analytics.getCategoryDistribution();
     return { success: true, data };
+  }
+
+  @Post('ask')
+  async ask(@Body() body: { question: string }) {
+    const result = await this.aiService.answerQuestion(body.question || '');
+    return { success: true, data: result };
   }
 }

@@ -1,10 +1,68 @@
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('me')
 export class CustomerCompatController {
   constructor(private readonly prisma: PrismaService) {}
+
+  private mapUserCoupon(item: any) {
+    const coupon = item.coupon;
+    const expiresAt = item.expiresAt || coupon.validUntil;
+    const expired = expiresAt ? new Date(expiresAt).getTime() < Date.now() : false;
+    return {
+      id: item.id,
+      code: coupon.code,
+      name: coupon.name || coupon.code,
+      description: coupon.description || null,
+      discountType: coupon.type,
+      discountValue: Number(coupon.value || 0),
+      currency: coupon.currency,
+      minOrderAmount: Number(coupon.minOrderAmount || 0),
+      maxDiscount: Number(coupon.maxDiscountAmount || 0),
+      expiresAt,
+      assignedReason: item.assignedReason || null,
+      status: item.isUsed ? 'used' : expired ? 'expired' : 'active',
+      isUsed: item.isUsed,
+      usedAt: item.usedAt,
+    };
+  }
+
+  @Get('coupons')
+  async getCoupons(@Req() req: any) {
+    const coupons = await this.prisma.userCoupon.findMany({
+      where: { userId: req.user.id },
+      include: { coupon: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return coupons.map((coupon: any) => this.mapUserCoupon(coupon));
+  }
+
+  @Post('coupons')
+  async claimCoupon(@Req() req: any, @Body() body: any) {
+    const coupon = await this.prisma.discountCoupon.findFirst({
+      where: {
+        code: String(body.code || '').trim().toUpperCase(),
+        status: 'ACTIVE' as any,
+      },
+    });
+    if (!coupon) return { success: false, message: 'Kupon bulunamadı' };
+
+    const userCoupon = await this.prisma.userCoupon.upsert({
+      where: { userId_couponId: { userId: req.user.id, couponId: coupon.id } },
+      update: {},
+      create: {
+        userId: req.user.id,
+        couponId: coupon.id,
+        expiresAt: coupon.validUntil,
+        assignedReason: body.assignedReason || 'Kampanya kuponu',
+      },
+      include: { coupon: true },
+    });
+
+    return this.mapUserCoupon(userCoupon);
+  }
 
   @Get()
   async getProfile(@Req() req: any) {

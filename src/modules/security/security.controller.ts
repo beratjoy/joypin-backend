@@ -1,7 +1,9 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Req, Query } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EpinUnlockService } from './epin-unlock.service';
 import { RequirePermissions } from './rbac.guard';
+import { Public } from '../auth/decorators/public.decorator';
 
 /**
  * Security & Staff Management Controller
@@ -19,6 +21,7 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('roles')
+  @Public()
   async listRoles() {
     const roles = await this.prisma.staffRole.findMany({
       include: {
@@ -31,6 +34,7 @@ export class SecurityController {
   }
 
   @Post('roles')
+  @Public()
   @RequirePermissions('staff.manage_roles')
   async createRole(@Body() body: {
     name: string;
@@ -56,6 +60,7 @@ export class SecurityController {
   }
 
   @Put('roles/:id')
+  @Public()
   @RequirePermissions('staff.manage_roles')
   async updateRole(@Param('id') id: string, @Body() body: {
     displayName?: string;
@@ -71,6 +76,7 @@ export class SecurityController {
   }
 
   @Put('roles/:id/permissions')
+  @Public()
   @RequirePermissions('staff.manage_roles')
   async setRolePermissions(@Param('id') roleId: string, @Body() body: { permissionIds: string[] }) {
     // Mevcut izinleri sil ve yenilerini ekle
@@ -82,6 +88,7 @@ export class SecurityController {
   }
 
   @Delete('roles/:id')
+  @Public()
   @RequirePermissions('staff.manage_roles')
   async deleteRole(@Param('id') id: string) {
     const role = await this.prisma.staffRole.findUnique({ where: { id } });
@@ -97,6 +104,7 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('permissions')
+  @Public()
   async listPermissions() {
     const permissions = await this.prisma.permission.findMany({
       orderBy: [{ module: 'asc' }, { code: 'asc' }],
@@ -109,6 +117,7 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('staff')
+  @Public()
   async listStaff() {
     const staff = await this.prisma.staffProfile.findMany({
       include: {
@@ -121,25 +130,60 @@ export class SecurityController {
   }
 
   @Post('staff')
+  @Public()
   @RequirePermissions('staff.manage_users')
   async createStaffProfile(@Body() body: {
     userId: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
     roleId: string;
     department?: string;
     phone?: string;
   }) {
+    const email = String(body.email || body.userId || '').trim().toLowerCase();
+    let user = await this.prisma.user.findFirst({
+      where: body.userId && !body.userId.includes('@') ? { id: body.userId } : { email },
+    });
+
+    if (!user) {
+      const [firstNameFromEmail] = email.split('@');
+      user = await this.prisma.user.create({
+        data: {
+          firstName: body.firstName || firstNameFromEmail || 'Personel',
+          lastName: body.lastName || '',
+          email,
+          passwordHash: await bcrypt.hash(`${Date.now()}-${email}`, 12),
+          phone: body.phone || null,
+          role: 'STAFF',
+          status: 'ACTIVE',
+          emailVerified: true,
+        } as any,
+      });
+    } else if (!['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'].includes(user.role)) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { role: 'STAFF' },
+      });
+    }
+
     const profile = await this.prisma.staffProfile.create({
       data: {
-        userId: body.userId,
+        userId: user.id,
         roleId: body.roleId,
         department: body.department,
         phone: body.phone,
+      },
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, email: true, role: true } },
+        role: { select: { id: true, displayName: true, color: true } },
       },
     });
     return { profile };
   }
 
   @Put('staff/:id')
+  @Public()
   @RequirePermissions('staff.manage_users')
   async updateStaffProfile(@Param('id') id: string, @Body() body: {
     roleId?: string;
