@@ -544,7 +544,7 @@ export class AdminCompatController {
     return products.map((product: any) => ({
       id: product.id,
       name: product.name,
-      shortName: null,
+      shortName: product.shortName || '',
       slug: product.slug,
       description: product.description,
       categoryId: product.categoryId,
@@ -1275,6 +1275,7 @@ export class AdminCompatController {
     return this.prisma.product.create({
       data: {
         name: body.name,
+        shortName: body.shortName || null,
         slug: body.slug,
         description: body.description || null,
         categoryId: body.categoryId,
@@ -1304,6 +1305,7 @@ export class AdminCompatController {
         where: { id },
         data: {
           name: body.name,
+          shortName: body.shortName,
           slug: body.slug,
           description: body.description,
           categoryId: body.categoryId,

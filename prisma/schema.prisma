@@ -463,6 +463,7 @@ model ProductCategory {
 model Product {
   id          String  @id @default(uuid())
   name        String  @db.VarChar(200)
+  shortName   String? @db.VarChar(120)
   slug        String  @unique @db.VarChar(220)
   description String?
   iconUrl            String? @db.VarChar(500)  // Site kartı ikonu (128×128)

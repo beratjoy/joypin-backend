@@ -7,6 +7,34 @@ export class CouponCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Public()
+  @Get('active')
+  async getActiveCoupons() {
+    const now = new Date();
+    const coupons = await this.prisma.discountCoupon.findMany({
+      where: {
+        status: 'ACTIVE' as any,
+        OR: [{ validFrom: null }, { validFrom: { lte: now } }],
+        AND: [{ OR: [{ validUntil: null }, { validUntil: { gte: now } }] }],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 12,
+    } as any);
+
+    return coupons.map((coupon: any) => ({
+      id: coupon.id,
+      code: coupon.code,
+      name: coupon.name || coupon.code,
+      description: coupon.description || coupon.popupDescription || null,
+      type: coupon.type,
+      value: Number(coupon.value || 0),
+      currency: coupon.currency,
+      minOrderAmount: Number(coupon.minOrderAmount || 0),
+      maxDiscountAmount: Number(coupon.maxDiscountAmount || 0),
+      validUntil: coupon.validUntil,
+    }));
+  }
+
+  @Public()
   @Get('popup')
   async getPopupCoupon(
     @Query('audience') audience?: string,

@@ -80,7 +80,7 @@ export class StorefrontCompatController {
     }
 
     const products = await this.prisma.$queryRawUnsafe<any[]>(
-      'SELECT id, name, slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
+      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
       category.id,
     );
 
@@ -101,7 +101,7 @@ export class StorefrontCompatController {
         id: product.id,
         name: product.name,
         slug: product.slug,
-        shortName: product.name,
+        shortName: product.shortName || product.name,
         baseCost: Number(product.fixedPrice || product.baseCost || 0),
         marginPercent: Number(product.marginPercent || 0),
         pricingModel: product.pricingModel,
@@ -140,6 +140,52 @@ export class StorefrontCompatController {
         discount,
       };
     });
+  }
+
+  @Public()
+  @Get('products/:slug')
+  async getProductBySlug(@Param('slug') slug: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { slug, isActive: true },
+      include: {
+        category: true,
+        topupFields: { orderBy: { sortOrder: 'asc' } },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const basePrice = Number(product.fixedPrice || product.baseCost || 0);
+    const discount = Number(product.discountPercent || 0);
+
+    return {
+      id: product.id,
+      name: product.name,
+      shortName: product.shortName || null,
+      slug: product.slug,
+      description: product.description,
+      type: product.type,
+      basePrice,
+      memberPrice: discount > 0 ? Number((basePrice * (1 - discount / 100)).toFixed(2)) : null,
+      currency: product.baseCurrency || 'TRY',
+      inStock: product.hasInfiniteStock || product.stockCount > 0,
+      imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.imageUrl || null,
+      categoryName: product.category?.name || '',
+      topupFields: product.topupFields.map((field: any) => ({
+        id: field.id,
+        fieldKey: field.fieldKey,
+        fieldLabel: field.fieldLabel,
+        fieldType: field.fieldType,
+        placeholder: field.placeholder,
+        isRequired: field.isRequired,
+        options: field.options,
+      })),
+      seoTitle: product.seoTitle,
+      seoDescription: product.seoDescription,
+      seoKeywords: product.seoKeywords,
+    };
   }
 
   @Public()
