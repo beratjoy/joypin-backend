@@ -165,7 +165,7 @@ export class OrdersService {
             walletId: wallet.id,
             type: 'DEBIT',
             balanceField: 'CURRENT',
-            amount: -totalAmount,
+            amount: totalAmount,
             balanceAfter,
             description: `Sipariş ödemesi: ${orderNumber}`,
             orderId: createdOrder.id,

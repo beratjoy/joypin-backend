@@ -630,6 +630,69 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Patch('customers/:id/wallet')
+  async updateCustomerWallet(@Param('id') id: string, @Body() body: any) {
+    const fieldMap: Record<string, { column: string; balanceField: any }> = {
+      balanceCurrent: { column: 'balanceCurrent', balanceField: 'CURRENT' },
+      balanceBonus: { column: 'balanceBonus', balanceField: 'BONUS' },
+      balanceWithdrawable: { column: 'balanceWithdrawable', balanceField: 'WITHDRAWABLE' },
+      balanceCredit: { column: 'balanceCredit', balanceField: 'CREDIT' },
+      balanceDebt: { column: 'balanceCredit', balanceField: 'CREDIT' },
+      balanceFrozen: { column: 'balanceFrozen', balanceField: 'FROZEN' },
+      balanceLottery: { column: 'balanceLottery', balanceField: 'LOTTERY' },
+      balanceLavBlocked: { column: 'balanceLottery', balanceField: 'LOTTERY' },
+      balanceCashback: { column: 'balanceCashback', balanceField: 'CASHBACK' },
+      balanceBoost: { column: 'balanceCashback', balanceField: 'CASHBACK' },
+      balanceCommission: { column: 'balanceCommission', balanceField: 'COMMISSION' },
+    };
+    const selected = fieldMap[String(body.field || '')];
+    const amount = Number(body.amount || 0);
+    const action = String(body.action || 'add');
+    if (!selected || !['add', 'subtract', 'set'].includes(action) || amount < 0) {
+      return { success: false, message: 'Geçersiz bakiye işlemi' };
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.wallet.upsert({
+        where: { userId: id },
+        update: {},
+        create: { userId: id, currency: 'TRY' as any },
+      }) as any;
+      const before = Number(wallet[selected.column] || 0);
+      const after = action === 'set' ? amount : action === 'subtract' ? before - amount : before + amount;
+      if (after < 0) return { success: false, message: 'Bakiye negatife düşemez' };
+      const txAmount = action === 'set' ? Math.abs(after - before) : amount;
+      const txType = action === 'subtract' || (action === 'set' && after < before) ? 'DEBIT' : 'CREDIT';
+      const updated = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: { [selected.column]: after },
+      }) as any;
+      if (txAmount > 0) {
+        await tx.walletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            type: txType,
+            balanceField: selected.balanceField,
+            amount: txAmount,
+            balanceAfter: after,
+            description: `Admin bakiye ${action === 'set' ? 'ayarlama' : action === 'subtract' ? 'düşüm' : 'ekleme'} işlemi`,
+            referenceType: 'admin_wallet_adjust',
+          } as any,
+        });
+      }
+      return {
+        success: true,
+        wallet: {
+          ...updated,
+          balanceDebt: updated.balanceCredit,
+          balanceBoost: updated.balanceCashback,
+          balanceLavBlocked: updated.balanceLottery,
+        },
+      };
+    });
+  }
+
+  @Public()
   @Get('customers/:id')
   async getCustomerDetail(@Param('id') id: string) {
     const user = await this.prisma.user.findUnique({
@@ -666,7 +729,12 @@ export class AdminCompatController {
       createdAt: user.createdAt,
       memberType: user.memberType,
       dealerGroup: user.dealerGroup,
-      wallet: user.wallet,
+      wallet: user.wallet ? {
+        ...user.wallet,
+        balanceDebt: user.wallet.balanceCredit,
+        balanceBoost: user.wallet.balanceCashback,
+        balanceLavBlocked: user.wallet.balanceLottery,
+      } : null,
       extraLootboxRights: Number((user as any).extraLootboxRights || 0),
       adminNotes: [],
       _count: {
@@ -1449,7 +1517,7 @@ export class AdminCompatController {
       memberTypeName: user.memberType?.name || null,
       dealerGroupId: user.dealerGroupId,
       dealerGroupName: user.dealerGroup?.name || null,
-      balance: Number(user.wallet?.currentBalance || 0),
+      balance: Number(user.wallet?.balanceCurrent || 0),
       orderCount: user.orders?.length || 0,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
