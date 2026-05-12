@@ -313,6 +313,7 @@ model User {
   notifications       UserNotification[]
   paymentTransactions PaymentTransaction[]
   userCoupons         UserCoupon[]
+  productReviews      ProductReview[]
   lootBoxOpens        LootBoxOpen[]
   subscriptions       UserSubscription[]
   affiliateEarnings   AffiliateTransaction[] @relation("AffiliateEarner")
@@ -454,11 +455,48 @@ model ProductCategory {
 
   products    Product[]
   paymentRestrictions CategoryPaymentRestriction[]
+  reviews     ProductReview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("product_categories")
+}
+
+enum ProductReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ProductReview {
+  id              String              @id @default(uuid())
+  userId          String?
+  user            User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  productId       String?
+  product         Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  categoryId      String?
+  category        ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  orderId         String?
+  order           Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customerName    String              @db.VarChar(120)
+  customerAvatar  String?             @db.VarChar(10)
+  gameName        String?             @db.VarChar(160)
+  rating          Int                 @default(5)
+  comment         String              @db.Text
+  status          ProductReviewStatus @default(PENDING)
+  isFake          Boolean             @default(false)
+  isFeatured      Boolean             @default(false)
+  reviewedAt      DateTime            @default(now())
+  approvedAt      DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([status])
+  @@index([productId])
+  @@index([categoryId])
+  @@index([orderId])
+  @@map("product_reviews")
 }
 
 model Product {
@@ -517,6 +555,7 @@ model Product {
   discounts            ProductDiscount[]
   prices               ProductPrice[]
   topupFields          TopupField[]
+  reviews              ProductReview[]
   epinStocks           EpinStock[]
   productProviders     ProductProvider[]
   stockPoolProducts    StockPoolProduct[]
@@ -740,6 +779,7 @@ model Order {
   referralTransactions ReferralTransaction[]
   financialLogs        OrderFinancialLog[]
   paymentTxs           PaymentTransaction[]
+  reviews              ProductReview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

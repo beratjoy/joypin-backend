@@ -1,10 +1,141 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+﻿import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('admin')
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
+
+  private formatReview(review: any) {
+    return {
+      id: review.id,
+      userId: review.userId,
+      productId: review.productId,
+      categoryId: review.categoryId,
+      orderId: review.orderId,
+      customerName: review.customerName,
+      customerAvatar: review.customerAvatar || review.customerName?.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase(),
+      gameName: review.gameName || review.product?.name || review.category?.name || '',
+      rating: review.rating,
+      comment: review.comment,
+      status: review.status,
+      isFake: review.isFake,
+      isFeatured: review.isFeatured,
+      reviewedAt: review.reviewedAt,
+      createdAt: review.createdAt,
+      productName: review.product?.name || null,
+      categoryName: review.category?.name || null,
+      orderNumber: review.order?.orderNumber || null,
+    };
+  }
+
+  @Public()
+  @Get('reviews')
+  async listReviews(@Query('status') status?: string, @Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
+    const reviews = await this.prisma.productReview.findMany({
+      where: {
+        ...(status ? { status: status as any } : {}),
+        ...(categoryId ? { categoryId } : {}),
+        ...(productId ? { productId } : {}),
+      },
+      include: {
+        product: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+      orderBy: { reviewedAt: 'desc' },
+      take: 100,
+    });
+    return { reviews: reviews.map((review: any) => this.formatReview(review)) };
+  }
+
+  @Public()
+  @Get('reviews/public')
+  async listPublicReviews(@Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
+    const reviews = await this.prisma.productReview.findMany({
+      where: {
+        status: 'APPROVED' as any,
+        ...(categoryId ? { categoryId } : {}),
+        ...(productId ? { productId } : {}),
+      },
+      include: {
+        product: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+      orderBy: [{ isFeatured: 'desc' }, { reviewedAt: 'desc' }],
+      take: 24,
+    });
+    return { reviews: reviews.map((review: any) => this.formatReview(review)) };
+  }
+
+  @Public()
+  @Post('reviews')
+  async createReview(@Body() body: any) {
+    const order = body.orderId ? await this.prisma.order.findUnique({
+      where: { id: body.orderId },
+      include: {
+        user: true,
+        subOrders: { include: { product: { include: { category: true } } } },
+      },
+    }) : null;
+    const firstProduct = order?.subOrders?.[0]?.product;
+    const customerName = body.customerName || (order?.user ? `${order.user.firstName} ${order.user.lastName}`.trim() : 'MÃ¼ÅŸteri');
+    const review = await this.prisma.productReview.create({
+      data: {
+        userId: body.userId || order?.userId || null,
+        orderId: body.orderId || null,
+        productId: body.productId || firstProduct?.id || null,
+        categoryId: body.categoryId || firstProduct?.categoryId || null,
+        customerName,
+        customerAvatar: body.customerAvatar || customerName.split(' ').map((p: string) => p[0]).join('').slice(0, 2).toUpperCase(),
+        gameName: body.gameName || firstProduct?.name || firstProduct?.category?.name || null,
+        rating: Math.min(5, Math.max(1, Math.floor(Number(body.rating || 5)))),
+        comment: String(body.comment || '').trim(),
+        status: body.isFake ? 'APPROVED' as any : 'PENDING' as any,
+        isFake: Boolean(body.isFake),
+        isFeatured: Boolean(body.isFeatured),
+        approvedAt: body.isFake ? new Date() : null,
+      },
+      include: {
+        product: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+    });
+    return { success: true, review: this.formatReview(review) };
+  }
+
+  @Public()
+  @Patch('reviews/:id')
+  async updateReview(@Param('id') id: string, @Body() body: any) {
+    const review = await this.prisma.productReview.update({
+      where: { id },
+      data: {
+        customerName: body.customerName,
+        customerAvatar: body.customerAvatar,
+        gameName: body.gameName,
+        rating: body.rating ? Math.min(5, Math.max(1, Math.floor(Number(body.rating)))) : undefined,
+        comment: body.comment,
+        status: body.status,
+        isFeatured: body.isFeatured,
+        approvedAt: body.status === 'APPROVED' ? new Date() : undefined,
+      } as any,
+      include: {
+        product: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
+        order: { select: { id: true, orderNumber: true } },
+      },
+    });
+    return { success: true, review: this.formatReview(review) };
+  }
+
+  @Public()
+  @Delete('reviews/:id')
+  async deleteReview(@Param('id') id: string) {
+    await this.prisma.productReview.delete({ where: { id } });
+    return { success: true };
+  }
 
   @Public()
   @Get('tickets')
@@ -22,7 +153,7 @@ export class AdminCompatController {
 
     return tickets.map((ticket: any) => {
       const user = userById.get(ticket.userId);
-      const customerName = user ? `${user.firstName} ${user.lastName}`.trim() : 'Müşteri';
+      const customerName = user ? `${user.firstName} ${user.lastName}`.trim() : 'MÃ¼ÅŸteri';
       return {
         id: ticket.id,
         userId: ticket.userId,
@@ -58,7 +189,7 @@ export class AdminCompatController {
   @Post('tickets/:id/reply')
   async replyTicket(@Param('id') id: string, @Body() body: any) {
     const ticket = await this.prisma.ticket.findUnique({ where: { id } });
-    if (!ticket) return { success: false, error: 'Ticket bulunamadı' };
+    if (!ticket) return { success: false, error: 'Ticket bulunamadÄ±' };
 
     await this.prisma.$transaction([
       this.prisma.ticketMessage.create({
@@ -118,12 +249,12 @@ export class AdminCompatController {
   @Get('settings/currencies')
   async getCurrencies() {
     const meta: Record<string, { name: string; symbol: string; flag: string }> = {
-      TRY: { name: 'Türk Lirası', symbol: '₺', flag: '🇹🇷' },
-      USD: { name: 'US Dollar', symbol: '$', flag: '🇺🇸' },
-      EUR: { name: 'Euro', symbol: '€', flag: '🇪🇺' },
-      GBP: { name: 'British Pound', symbol: '£', flag: '🇬🇧' },
-      AED: { name: 'UAE Dirham', symbol: 'د.إ', flag: '🇦🇪' },
-      SAR: { name: 'Saudi Riyal', symbol: '﷼', flag: '🇸🇦' },
+      TRY: { name: 'TÃ¼rk LirasÄ±', symbol: 'â‚º', flag: 'ğŸ‡¹ğŸ‡·' },
+      USD: { name: 'US Dollar', symbol: '$', flag: 'ğŸ‡ºğŸ‡¸' },
+      EUR: { name: 'Euro', symbol: 'â‚¬', flag: 'ğŸ‡ªğŸ‡º' },
+      GBP: { name: 'British Pound', symbol: 'Â£', flag: 'ğŸ‡¬ğŸ‡§' },
+      AED: { name: 'UAE Dirham', symbol: 'Ø¯.Ø¥', flag: 'ğŸ‡¦ğŸ‡ª' },
+      SAR: { name: 'Saudi Riyal', symbol: 'ï·¼', flag: 'ğŸ‡¸ğŸ‡¦' },
     };
     const rates = await this.prisma.exchangeRate.findMany({
       where: { toCurrency: 'TRY' as any },
@@ -216,7 +347,7 @@ export class AdminCompatController {
       deposits: deposits.map((deposit: any) => ({
         id: deposit.id,
         userId: deposit.userId,
-        userName: `${deposit.user?.firstName || ''} ${deposit.user?.lastName || ''}`.trim() || deposit.user?.email || 'Kullanıcı',
+        userName: `${deposit.user?.firstName || ''} ${deposit.user?.lastName || ''}`.trim() || deposit.user?.email || 'KullanÄ±cÄ±',
         amount: Number(deposit.amount || 0),
         currency: deposit.currency,
         method: deposit.gateway,
@@ -232,7 +363,7 @@ export class AdminCompatController {
   @Post('finance/deposits/:id/approve')
   async approveDeposit(@Param('id') id: string) {
     const deposit = await this.prisma.paymentTransaction.findUnique({ where: { id } });
-    if (!deposit) return { success: false, message: 'Talep bulunamadı' };
+    if (!deposit) return { success: false, message: 'Talep bulunamadÄ±' };
     if (deposit.status === 'COMPLETED') return { success: true };
 
     const wallet = await this.prisma.wallet.upsert({
@@ -249,7 +380,7 @@ export class AdminCompatController {
         balanceField: 'CURRENT',
         amount,
         balanceAfter,
-        description: 'Havale/EFT bakiye yükleme onayı',
+        description: 'Havale/EFT bakiye yÃ¼kleme onayÄ±',
         referenceType: 'deposit',
         referenceId: deposit.id,
       } as any,
@@ -271,7 +402,7 @@ export class AdminCompatController {
   async rejectDeposit(@Param('id') id: string, @Body() body: any) {
     await this.prisma.paymentTransaction.update({
       where: { id },
-      data: { status: 'FAILED', failureReason: body.reason || 'Admin tarafından reddedildi' },
+      data: { status: 'FAILED', failureReason: body.reason || 'Admin tarafÄ±ndan reddedildi' },
     });
     return { success: true };
   }
@@ -292,7 +423,7 @@ export class AdminCompatController {
       return {
         id: tx.id,
         userId: tx.wallet.userId,
-        userName: `${tx.wallet.user?.firstName || ''} ${tx.wallet.user?.lastName || ''}`.trim() || tx.wallet.user?.email || 'Kullanıcı',
+        userName: `${tx.wallet.user?.firstName || ''} ${tx.wallet.user?.lastName || ''}`.trim() || tx.wallet.user?.email || 'KullanÄ±cÄ±',
         type: tx.type === 'DEBIT' ? 'debit' : 'credit',
         amount,
         balanceBefore: tx.type === 'DEBIT' ? balanceAfter + amount : balanceAfter - amount,
@@ -308,7 +439,7 @@ export class AdminCompatController {
   @Post('finance/manual-adjust')
   async manualBalanceAdjust(@Body() body: any) {
     const amount = Number(body.amount || 0);
-    if (!body.userId || amount <= 0) return { success: false, message: 'Geçersiz işlem' };
+    if (!body.userId || amount <= 0) return { success: false, message: 'GeÃ§ersiz iÅŸlem' };
     const wallet = await this.prisma.wallet.upsert({
       where: { userId: body.userId },
       update: {},
@@ -327,7 +458,7 @@ export class AdminCompatController {
         balanceField: 'CURRENT',
         amount,
         balanceAfter,
-        description: body.description || 'Manuel bakiye işlemi',
+        description: body.description || 'Manuel bakiye iÅŸlemi',
         referenceType: 'manual',
       } as any,
     });
@@ -340,7 +471,7 @@ export class AdminCompatController {
     const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
     const mode = body.mode || 'add';
     const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) return { success: false, message: 'Kullanıcı bulunamadı' };
+    if (!user) return { success: false, message: 'KullanÄ±cÄ± bulunamadÄ±' };
 
     const data = mode === 'set'
       ? { extraLootboxRights: amount }
@@ -438,7 +569,7 @@ export class AdminCompatController {
   @Post('invoices')
   async createInvoice(@Body() body: any) {
     if (body.runBatch) return this.createBatchInvoices(Boolean(body.forceAll));
-    if (!body.userId) return { success: false, message: 'Kullanıcı gerekli' };
+    if (!body.userId) return { success: false, message: 'KullanÄ±cÄ± gerekli' };
     const invoice = await this.createInvoiceForUser(body.userId, body.type);
     return { success: true, invoiceNumber: invoice.invoiceNumber, invoice };
   }
@@ -468,7 +599,7 @@ export class AdminCompatController {
       where: { id },
       include: { items: true, billingEntity: true, user: true },
     });
-    if (!invoice) return '<h1>Fatura bulunamadı</h1>';
+    if (!invoice) return '<h1>Fatura bulunamadÄ±</h1>';
     const settings = await this.getInvoiceSettings();
     const billing = invoice.billingEntity || await this.getDefaultBillingEntityFromSettings(settings);
     return this.renderInvoiceHtml(invoice, billing, settings.invoice_pdf_format || 'classic');
@@ -685,7 +816,7 @@ export class AdminCompatController {
 
     const normalCustomerMemberType = {
       id: 'normal-customer',
-      name: 'Normal Müşteri',
+      name: 'Normal MÃ¼ÅŸteri',
       colorCode: '#f8fafc',
       sortOrder: -1,
     };
@@ -1008,7 +1139,7 @@ export class AdminCompatController {
       ? { id: body.targetMemberTypeId }
       : await this.prisma.memberType.findFirst({ where: { name: body.targetMemberTypeName } });
 
-    if (!targetMemberType) return { message: 'Hedef üye tipi bulunamadı' };
+    if (!targetMemberType) return { message: 'Hedef Ã¼ye tipi bulunamadÄ±' };
 
     const plan = await this.prisma.subscriptionPlan.create({
       data: {
@@ -1487,7 +1618,7 @@ export class AdminCompatController {
         },
         rules: {
           conversion: '100 puan = 1 TL',
-          earning: '10 TL ve üzeri kâr eden ürünlerde kârın %5 TL karşılığında puan verilir',
+          earning: '10 TL ve Ã¼zeri kÃ¢r eden Ã¼rÃ¼nlerde kÃ¢rÄ±n %5 TL karÅŸÄ±lÄ±ÄŸÄ±nda puan verilir',
         },
       };
     }
@@ -1518,7 +1649,7 @@ export class AdminCompatController {
       },
       rules: {
         conversion: '100 puan = 1 TL',
-        earning: '10 TL ve üzeri kâr eden ürünlerde kârın %5 TL karşılığında puan verilir',
+        earning: '10 TL ve Ã¼zeri kÃ¢r eden Ã¼rÃ¼nlerde kÃ¢rÄ±n %5 TL karÅŸÄ±lÄ±ÄŸÄ±nda puan verilir',
       },
     };
   }
@@ -1528,7 +1659,7 @@ export class AdminCompatController {
   async convertPoints(@Body() body: any) {
     const user = await this.getPointsUser(body.userId);
     const requestedTl = Math.floor(Number(body.amountTl || Math.floor(user.pointsBalance / 100)));
-    if (requestedTl < 100) return { success: false, message: 'En az 100 TL puan dönüşümü yapılabilir' };
+    if (requestedTl < 100) return { success: false, message: 'En az 100 TL puan dÃ¶nÃ¼ÅŸÃ¼mÃ¼ yapÄ±labilir' };
     const pointsToSpend = requestedTl * 100;
     if (user.pointsBalance < pointsToSpend) return { success: false, message: 'Yetersiz puan' };
 
@@ -1553,7 +1684,7 @@ export class AdminCompatController {
         balanceField: 'CURRENT',
         amount: requestedTl,
         balanceAfter,
-        description: `${pointsToSpend} puan TL bakiyeye çevrildi`,
+        description: `${pointsToSpend} puan TL bakiyeye Ã§evrildi`,
         referenceType: 'points_conversion',
         referenceId: user.id,
       } as any,
@@ -1573,20 +1704,60 @@ export class AdminCompatController {
 
     if (boxes.length) return boxes.map((box: any) => this.formatLootBox(box));
 
-    return this.getDefaultLootBoxes();
+    const created = [];
+    for (const preset of this.getDefaultLootBoxes()) {
+      created.push(await this.getOrCreatePresetLootBox(preset.id));
+    }
+    return created.map((box: any) => this.formatLootBox(box));
+  }
+
+  @Public()
+  @Patch('points/lootboxes/:id')
+  async updatePointLootBox(@Param('id') id: string, @Body() body: any) {
+    const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
+      ? await this.getOrCreatePresetLootBox(id)
+      : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
+    if (!dbBox) return { success: false, message: 'Kasa bulunamadÄ±' };
+
+    const rewards = Array.isArray(body.rewards) ? body.rewards : [];
+    const chanceTotal = rewards.reduce((sum: number, reward: any) => sum + Number(reward.chance || 0), 0);
+    if (Math.round(chanceTotal * 100) / 100 !== 100) {
+      return { success: false, message: `Åans toplamÄ± 100 olmalÄ±. Mevcut toplam: ${chanceTotal}` };
+    }
+
+    await this.prisma.lootBoxReward.deleteMany({ where: { boxId: dbBox.id } });
+    await this.prisma.lootBox.update({
+      where: { id: dbBox.id },
+      data: {
+        name: body.name || dbBox.name,
+        price: body.price !== undefined ? Number(body.price) : dbBox.price,
+        isPointPrice: body.isPointPrice !== undefined ? Boolean(body.isPointPrice) : dbBox.isPointPrice,
+        rewards: {
+          create: rewards.map((reward: any) => ({
+            rewardType: reward.type as any,
+            rewardValue: Number(reward.value || 0),
+            rewardLabel: String(reward.label || ''),
+            dropChancePercentage: Number(reward.chance || 0),
+          })),
+        },
+      } as any,
+    });
+
+    const updated = await this.prisma.lootBox.findUnique({ where: { id: dbBox.id }, include: { rewards: true } });
+    return { success: true, lootBox: this.formatLootBox(updated) };
   }
 
   @Public()
   @Post('points/lootboxes/:id/open')
   async openPointLootBox(@Param('id') id: string, @Body() body: any) {
     if (!body.userId) {
-      return { success: false, requiresLogin: true, message: 'Çark çevirmek için üye girişi yapmalısınız.' };
+      return { success: false, requiresLogin: true, message: 'Ã‡ark Ã§evirmek iÃ§in Ã¼ye giriÅŸi yapmalÄ±sÄ±nÄ±z.' };
     }
     const user = await this.getPointsUser(body.userId);
     const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
       ? await this.getOrCreatePresetLootBox(id)
       : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
-    if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+    if (!dbBox) return { success: false, message: 'Kasa bulunamadÄ±' };
     const boxMeta = this.formatLootBox(dbBox);
     const accessType = boxMeta.accessType;
 
@@ -1602,12 +1773,12 @@ export class AdminCompatController {
     const dailyLimit = baseDailyLimit + extraLootboxRights;
 
     if (accessType === 'VIP' && !hasVip) {
-      return { success: false, message: 'Bu kasa sadece aktif VIP üyeler içindir.' };
+      return { success: false, message: 'Bu kasa sadece aktif VIP Ã¼yeler iÃ§indir.' };
     }
     if (accessType === 'POINTS') {
       const price = Number(dbBox.price || 0);
       if (Number(user.pointsBalance || 0) < price) {
-        return { success: false, message: 'Bu kasayı açmak için yeterli puanınız yok.' };
+        return { success: false, message: 'Bu kasayÄ± aÃ§mak iÃ§in yeterli puanÄ±nÄ±z yok.' };
       }
       if (price > 0) {
         await this.prisma.user.update({
@@ -1616,7 +1787,7 @@ export class AdminCompatController {
         });
       }
     } else if (opensToday >= dailyLimit) {
-      return { success: false, message: 'Günlük kasa açma hakkınız doldu' };
+      return { success: false, message: 'GÃ¼nlÃ¼k kasa aÃ§ma hakkÄ±nÄ±z doldu' };
     }
 
     const rewards = dbBox?.rewards?.length
@@ -1652,7 +1823,7 @@ export class AdminCompatController {
           balanceField: 'CURRENT',
           amount: reward.value,
           balanceAfter: Number(wallet.balanceCurrent || 0) + reward.value,
-          description: 'Günlük kasa ödülü',
+          description: 'GÃ¼nlÃ¼k kasa Ã¶dÃ¼lÃ¼',
           referenceType: 'lootbox',
           referenceId: id,
         } as any,
@@ -1739,14 +1910,14 @@ export class AdminCompatController {
   private async createInvoiceForUser(userId: string, requestedType?: string) {
     const settings = await this.getInvoiceSettings();
     const user = await this.prisma.user.findUnique({ where: { id: userId }, include: { orders: true } });
-    if (!user) throw new Error('Kullanıcı bulunamadı');
+    if (!user) throw new Error('KullanÄ±cÄ± bulunamadÄ±');
     const subOrders = await this.prisma.subOrder.findMany({
       where: { parentOrder: { userId, status: 'COMPLETED' as any }, status: 'DELIVERED' as any },
       include: { product: true, parentOrder: true },
       orderBy: { createdAt: 'asc' },
       take: 100,
     });
-    if (!subOrders.length) throw new Error('Faturalanacak teslim edilmiş sipariş bulunamadı');
+    if (!subOrders.length) throw new Error('Faturalanacak teslim edilmiÅŸ sipariÅŸ bulunamadÄ±');
 
     const subtotal = subOrders.reduce((sum: number, item: any) => sum + Number(item.totalPrice || 0), 0);
     const taxRate = Number(settings.invoice_tax_rate || 20);
@@ -1774,12 +1945,12 @@ export class AdminCompatController {
         billingEntityId: billingEntity.id,
         periodStart: subOrders[0]?.createdAt || null,
         periodEnd: subOrders[subOrders.length - 1]?.createdAt || null,
-        notes: 'Admin panel üzerinden oluşturuldu',
+        notes: 'Admin panel Ã¼zerinden oluÅŸturuldu',
         items: {
           create: subOrders.map((item: any) => ({
             orderId: item.parentOrderId,
             subOrderId: item.id,
-            productName: item.product?.name || 'Ürün',
+            productName: item.product?.name || 'ÃœrÃ¼n',
             quantity: item.quantity,
             unitPrice: Number(item.totalPrice || 0) / Math.max(item.quantity, 1),
             totalPrice: Number(item.totalPrice || 0),
@@ -1816,12 +1987,12 @@ export class AdminCompatController {
   private async getDefaultBillingEntityFromSettings(settings: Record<string, string>) {
     const existing = await this.prisma.billingEntity.findFirst({ where: { isDefault: true, isActive: true } });
     const data = {
-      name: settings.company_name || 'Joy Bilişim',
-      legalName: settings.company_legal_name || 'Joy Bilişim Yazılım E-Ticaret Danışmanlık Limited Şirketi',
+      name: settings.company_name || 'Joy BiliÅŸim',
+      legalName: settings.company_legal_name || 'Joy BiliÅŸim YazÄ±lÄ±m E-Ticaret DanÄ±ÅŸmanlÄ±k Limited Åirketi',
       taxId: settings.company_tax_id || '0000000000',
       vatNumber: settings.company_vat_number || null,
-      address: settings.company_address || 'Şirket adresi girilmedi',
-      city: settings.company_city || 'İstanbul',
+      address: settings.company_address || 'Åirket adresi girilmedi',
+      city: settings.company_city || 'Ä°stanbul',
       country: settings.company_country || 'TR',
       postalCode: settings.company_postal_code || '34000',
       email: settings.company_email || 'billing@joybilisim.com',
@@ -1863,8 +2034,8 @@ export class AdminCompatController {
         th{background:#f8fafc}.totals{margin-top:24px;text-align:right;font-size:16px}.total{font-size:24px;font-weight:800;color:${theme.accent}}
       </style></head>
       <body><div class="box"><div class="head"><div><h1>FATURA</h1><p>${invoice.invoiceNumber}</p></div><div><strong>${billing.legalName}</strong><p>${billing.address}<br>${billing.city}/${billing.country}</p></div></div>
-      <div class="content"><p><strong>Müşteri:</strong> ${invoice.customerName}<br><strong>E-posta:</strong> ${invoice.customerEmail}</p>
-      <table><thead><tr><th>Ürün</th><th>Adet</th><th>Birim</th><th>Tutar</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="content"><p><strong>MÃ¼ÅŸteri:</strong> ${invoice.customerName}<br><strong>E-posta:</strong> ${invoice.customerEmail}</p>
+      <table><thead><tr><th>ÃœrÃ¼n</th><th>Adet</th><th>Birim</th><th>Tutar</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><p>Ara Toplam: ${Number(invoice.subtotal).toFixed(2)} ${invoice.currency}</p><p>KDV: ${Number(invoice.taxAmount).toFixed(2)} ${invoice.currency}</p><p class="total">Toplam: ${Number(invoice.totalAmount).toFixed(2)} ${invoice.currency}</p></div>
       </div></div></body></html>`;
   }
@@ -1875,7 +2046,7 @@ export class AdminCompatController {
       if (user) return user;
     }
     const user = await this.prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
-    if (!user) throw new Error('Kullanıcı bulunamadı');
+    if (!user) throw new Error('KullanÄ±cÄ± bulunamadÄ±');
     return user;
   }
 
@@ -1954,17 +2125,17 @@ export class AdminCompatController {
     return [
       {
         id: 'daily-free',
-        name: 'Normal Günlük Kasa',
+        name: 'Normal GÃ¼nlÃ¼k Kasa',
         price: 0,
         isPointPrice: true,
         accessType: 'NORMAL',
         imageColor: 'from-cyan-400 via-blue-600 to-indigo-700',
         rewards: [
-          { label: '25 Puan', chance: 45, value: 25, type: 'POINT' },
-          { label: '50 Puan', chance: 30, value: 50, type: 'POINT' },
-          { label: '100 Puan', chance: 18, value: 100, type: 'POINT' },
-          { label: '250 Puan', chance: 6, value: 250, type: 'POINT' },
-          { label: '5 TL Bakiye', chance: 1, value: 5, type: 'BALANCE' },
+          { label: '25 Puan', chance: 40, value: 25, type: 'POINT' },
+          { label: '50 Puan', chance: 28, value: 50, type: 'POINT' },
+          { label: '100 Puan', chance: 20, value: 100, type: 'POINT' },
+          { label: '250 Puan', chance: 7, value: 250, type: 'POINT' },
+          { label: 'Puan kazanamadınız', chance: 5, value: 0, type: 'POINT' },
         ],
       },
       {
@@ -1975,26 +2146,29 @@ export class AdminCompatController {
         accessType: 'VIP',
         imageColor: 'from-fuchsia-500 via-purple-600 to-indigo-700',
         rewards: [
-          { label: '100 Puan', chance: 38, value: 100, type: 'POINT' },
-          { label: '250 Puan', chance: 30, value: 250, type: 'POINT' },
+          { label: '100 Puan', chance: 34, value: 100, type: 'POINT' },
+          { label: '250 Puan', chance: 28, value: 250, type: 'POINT' },
           { label: '500 Puan', chance: 20, value: 500, type: 'POINT' },
-          { label: '10 TL Bakiye', chance: 10, value: 10, type: 'BALANCE' },
-          { label: '50 TL Jackpot', chance: 2, value: 50, type: 'BALANCE' },
+          { label: '1000 Puan', chance: 13, value: 1000, type: 'POINT' },
+          { label: 'Puan kazanamadÄ±nÄ±z', chance: 5, value: 0, type: 'POINT' },
         ],
       },
       {
         id: 'points-case',
-        name: 'Puanla Alınan Premium Kasa',
-        price: 500,
+        name: 'Puanla AlÄ±nan Premium Kasa',
+        price: 10000,
         isPointPrice: true,
         accessType: 'POINTS',
         imageColor: 'from-amber-400 via-orange-500 to-red-600',
         rewards: [
-          { label: '100 Puan', chance: 35, value: 100, type: 'POINT' },
-          { label: '300 Puan', chance: 30, value: 300, type: 'POINT' },
-          { label: '750 Puan', chance: 20, value: 750, type: 'POINT' },
-          { label: '15 TL Bakiye', chance: 12, value: 15, type: 'BALANCE' },
-          { label: '100 TL Efsane Ödül', chance: 3, value: 100, type: 'BALANCE' },
+          { label: '5 TL', chance: 22, value: 5, type: 'BALANCE' },
+          { label: '10 TL', chance: 20, value: 10, type: 'BALANCE' },
+          { label: '20 TL', chance: 18, value: 20, type: 'BALANCE' },
+          { label: '25 TL', chance: 15, value: 25, type: 'BALANCE' },
+          { label: '50 TL', chance: 12, value: 50, type: 'BALANCE' },
+          { label: '100 TL', chance: 10, value: 100, type: 'BALANCE' },
+          { label: '120 TL', chance: 2, value: 120, type: 'BALANCE' },
+          { label: '150 TL', chance: 1, value: 150, type: 'BALANCE' },
         ],
       },
     ];
@@ -2011,10 +2185,10 @@ export class AdminCompatController {
       data: {
         name: preset.name,
         description: preset.accessType === 'VIP'
-          ? 'Aktif VIP üyelerin açabildiği özel ödül kasası'
+          ? 'Aktif VIP Ã¼yelerin aÃ§abildiÄŸi Ã¶zel Ã¶dÃ¼l kasasÄ±'
           : preset.accessType === 'POINTS'
-            ? 'Puan harcayarak açılan premium ödül kasası'
-            : '24 saatte bir açılabilen ücretsiz oyuncu kasası',
+            ? 'Puan harcayarak aÃ§Ä±lan premium Ã¶dÃ¼l kasasÄ±'
+            : '24 saatte bir aÃ§Ä±labilen Ã¼cretsiz oyuncu kasasÄ±',
         price: preset.price,
         isPointPrice: preset.isPointPrice,
         isActive: true,
@@ -2032,3 +2206,4 @@ export class AdminCompatController {
     });
   }
 }
+
