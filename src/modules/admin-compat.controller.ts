@@ -1573,22 +1573,7 @@ export class AdminCompatController {
 
     if (boxes.length) return boxes.map((box: any) => this.formatLootBox(box));
 
-    return [
-      {
-        id: 'daily-free',
-        name: 'Günlük Puan Kasası',
-        price: 0,
-        isPointPrice: true,
-        imageColor: 'from-amber-500 to-orange-600',
-        rewards: [
-          { label: '25 Puan', chance: 45, value: 25, type: 'POINT' },
-          { label: '50 Puan', chance: 30, value: 50, type: 'POINT' },
-          { label: '100 Puan', chance: 18, value: 100, type: 'POINT' },
-          { label: '250 Puan', chance: 6, value: 250, type: 'POINT' },
-          { label: '5 TL Bakiye', chance: 1, value: 5, type: 'BALANCE' },
-        ],
-      },
-    ];
+    return this.getDefaultLootBoxes();
   }
 
   @Public()
@@ -1598,22 +1583,42 @@ export class AdminCompatController {
       return { success: false, requiresLogin: true, message: 'Çark çevirmek için üye girişi yapmalısınız.' };
     }
     const user = await this.getPointsUser(body.userId);
+    const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
+      ? await this.getOrCreatePresetLootBox(id)
+      : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
+    if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+    const boxMeta = this.formatLootBox(dbBox);
+    const accessType = boxMeta.accessType;
+
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const opensToday = await this.prisma.lootBoxOpen.count({
       where: { userId: user.id, createdAt: { gte: todayStart } },
     });
     const vipExtra = await this.getVipExtraLootboxOpens(user.id);
+    const hasVip = await this.userHasActiveVip(user.id);
     const baseDailyLimit = 1 + vipExtra;
     const extraLootboxRights = Number((user as any).extraLootboxRights || 0);
     const dailyLimit = baseDailyLimit + extraLootboxRights;
-    if (opensToday >= dailyLimit) {
+
+    if (accessType === 'VIP' && !hasVip) {
+      return { success: false, message: 'Bu kasa sadece aktif VIP üyeler içindir.' };
+    }
+    if (accessType === 'POINTS') {
+      const price = Number(dbBox.price || 0);
+      if (Number(user.pointsBalance || 0) < price) {
+        return { success: false, message: 'Bu kasayı açmak için yeterli puanınız yok.' };
+      }
+      if (price > 0) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { pointsBalance: { decrement: Math.floor(price) } },
+        });
+      }
+    } else if (opensToday >= dailyLimit) {
       return { success: false, message: 'Günlük kasa açma hakkınız doldu' };
     }
 
-    const dbBox = id === 'daily-free'
-      ? await this.getOrCreateDailyLootBox()
-      : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
     const rewards = dbBox?.rewards?.length
       ? dbBox.rewards.map((reward: any) => ({
           label: reward.rewardLabel || `${Number(reward.rewardValue)} ${reward.rewardType === 'BALANCE' ? 'TL' : 'Puan'}`,
@@ -1669,14 +1674,14 @@ export class AdminCompatController {
       } as any,
     });
 
-    if (opensToday >= baseDailyLimit && extraLootboxRights > 0) {
+    if (accessType !== 'POINTS' && opensToday >= baseDailyLimit && extraLootboxRights > 0) {
       await this.prisma.user.update({
         where: { id: user.id },
         data: { extraLootboxRights: { decrement: 1 } },
       });
     }
 
-    return { success: true, reward, remaining: Math.max(dailyLimit - opensToday - 1, 0) };
+    return { success: true, reward, remaining: accessType === 'POINTS' ? null : Math.max(dailyLimit - opensToday - 1, 0) };
   }
 
   @Public()
@@ -1898,13 +1903,33 @@ export class AdminCompatController {
     return Number(features?.extraDailyLootboxOpens || features?.extraDailySpins || 0);
   }
 
+  private async userHasActiveVip(userId: string) {
+    const active = await this.prisma.userSubscription.findFirst({
+      where: { userId, status: 'ACTIVE' as any, endDate: { gte: new Date() } },
+      select: { id: true },
+    });
+    return Boolean(active);
+  }
+
   private formatLootBox(box: any) {
+    const name = String(box.name || '').toLowerCase();
+    const accessType = box.isPointPrice && Number(box.price || 0) > 0
+      ? 'POINTS'
+      : name.includes('vip')
+        ? 'VIP'
+        : 'NORMAL';
+    const imageColor = accessType === 'VIP'
+      ? 'from-fuchsia-500 via-purple-600 to-indigo-700'
+      : accessType === 'POINTS'
+        ? 'from-amber-400 via-orange-500 to-red-600'
+        : 'from-cyan-400 via-blue-600 to-indigo-700';
     return {
       id: box.id,
       name: box.name,
       price: Number(box.price || 0),
       isPointPrice: box.isPointPrice,
-      imageColor: 'from-purple-500 to-indigo-600',
+      accessType,
+      imageColor,
       rewards: box.rewards.map((reward: any) => ({
         label: reward.rewardLabel || `${Number(reward.rewardValue)} ${reward.rewardType === 'BALANCE' ? 'TL' : 'Puan'}`,
         chance: Number(reward.dropChancePercentage),
@@ -1925,27 +1950,82 @@ export class AdminCompatController {
     return rewards[rewards.length - 1];
   }
 
-  private async getOrCreateDailyLootBox() {
+  private getDefaultLootBoxes() {
+    return [
+      {
+        id: 'daily-free',
+        name: 'Normal Günlük Kasa',
+        price: 0,
+        isPointPrice: true,
+        accessType: 'NORMAL',
+        imageColor: 'from-cyan-400 via-blue-600 to-indigo-700',
+        rewards: [
+          { label: '25 Puan', chance: 45, value: 25, type: 'POINT' },
+          { label: '50 Puan', chance: 30, value: 50, type: 'POINT' },
+          { label: '100 Puan', chance: 18, value: 100, type: 'POINT' },
+          { label: '250 Puan', chance: 6, value: 250, type: 'POINT' },
+          { label: '5 TL Bakiye', chance: 1, value: 5, type: 'BALANCE' },
+        ],
+      },
+      {
+        id: 'vip-exclusive',
+        name: 'VIP Elmas Kasa',
+        price: 0,
+        isPointPrice: true,
+        accessType: 'VIP',
+        imageColor: 'from-fuchsia-500 via-purple-600 to-indigo-700',
+        rewards: [
+          { label: '100 Puan', chance: 38, value: 100, type: 'POINT' },
+          { label: '250 Puan', chance: 30, value: 250, type: 'POINT' },
+          { label: '500 Puan', chance: 20, value: 500, type: 'POINT' },
+          { label: '10 TL Bakiye', chance: 10, value: 10, type: 'BALANCE' },
+          { label: '50 TL Jackpot', chance: 2, value: 50, type: 'BALANCE' },
+        ],
+      },
+      {
+        id: 'points-case',
+        name: 'Puanla Alınan Premium Kasa',
+        price: 500,
+        isPointPrice: true,
+        accessType: 'POINTS',
+        imageColor: 'from-amber-400 via-orange-500 to-red-600',
+        rewards: [
+          { label: '100 Puan', chance: 35, value: 100, type: 'POINT' },
+          { label: '300 Puan', chance: 30, value: 300, type: 'POINT' },
+          { label: '750 Puan', chance: 20, value: 750, type: 'POINT' },
+          { label: '15 TL Bakiye', chance: 12, value: 15, type: 'BALANCE' },
+          { label: '100 TL Efsane Ödül', chance: 3, value: 100, type: 'BALANCE' },
+        ],
+      },
+    ];
+  }
+
+  private async getOrCreatePresetLootBox(id: string) {
+    const preset = this.getDefaultLootBoxes().find((box) => box.id === id) || this.getDefaultLootBoxes()[0];
     const existing = await this.prisma.lootBox.findFirst({
-      where: { name: 'Günlük Puan Kasası' },
+      where: { name: preset.name },
       include: { rewards: true },
     });
     if (existing) return existing;
     return this.prisma.lootBox.create({
       data: {
-        name: 'Günlük Puan Kasası',
-        description: '24 saatte bir açılabilen ücretsiz puan kasası',
-        price: 0,
-        isPointPrice: true,
+        name: preset.name,
+        description: preset.accessType === 'VIP'
+          ? 'Aktif VIP üyelerin açabildiği özel ödül kasası'
+          : preset.accessType === 'POINTS'
+            ? 'Puan harcayarak açılan premium ödül kasası'
+            : '24 saatte bir açılabilen ücretsiz oyuncu kasası',
+        price: preset.price,
+        isPointPrice: preset.isPointPrice,
         isActive: true,
+        sortOrder: preset.accessType === 'NORMAL' ? 0 : preset.accessType === 'VIP' ? 1 : 2,
         rewards: {
-          create: [
-            { rewardType: 'POINT', rewardValue: 25, rewardLabel: '25 Puan', dropChancePercentage: 45 },
-            { rewardType: 'POINT', rewardValue: 50, rewardLabel: '50 Puan', dropChancePercentage: 30 },
-            { rewardType: 'POINT', rewardValue: 100, rewardLabel: '100 Puan', dropChancePercentage: 18 },
-            { rewardType: 'POINT', rewardValue: 250, rewardLabel: '250 Puan', dropChancePercentage: 6 },
-            { rewardType: 'BALANCE', rewardValue: 5, rewardLabel: '5 TL Bakiye', dropChancePercentage: 1 },
-          ],
+          create: preset.rewards.map((reward) => ({
+            rewardType: reward.type as any,
+            rewardValue: reward.value,
+            rewardLabel: reward.label,
+            dropChancePercentage: reward.chance,
+          })),
         },
       } as any,
       include: { rewards: true },
