@@ -329,7 +329,106 @@ export class AdminCompatController {
     });
   }
 
+
   @Public()
+  @Get('referrals/rules')
+  async listReferralRules() {
+    return this.prisma.referralRule.findMany({ orderBy: [{ tierLevel: 'asc' }, { createdAt: 'desc' }] });
+  }
+
+  @Public()
+  @Post('referrals/rules')
+  async createReferralRule(@Body() body: any) {
+    return this.prisma.referralRule.create({
+      data: {
+        name: body.name,
+        description: body.description || null,
+        incomeModel: body.incomeModel || 'PRODUCT_SALE',
+        referralModel: body.referralModel || 'REFERRAL_LINK',
+        calculationMethod: body.calculationMethod || 'SALE_PRICE',
+        calculationBasis: body.calculationBasis || 'SALE_PRICE',
+        commissionPercent: Number(body.commissionPercent || 0),
+        fixedCommission: Number(body.fixedCommission || 0),
+        tierLevel: Number(body.tierLevel || 1),
+        earnerCustomerType: body.earnerCustomerType || null,
+        minPurchaseAmount: Number(body.minPurchaseAmount || 0),
+        maxPurchaseAmount: Number(body.maxPurchaseAmount || 0),
+        minSalesAmount: Number(body.minSalesAmount || 0),
+        maxCommission: Number(body.maxCommission || 0),
+        orderCountLimit: Number(body.orderCountLimit || 0),
+        selfEarningEnabled: Boolean(body.selfEarningEnabled),
+        applicableCategoryIds: Array.isArray(body.applicableCategoryIds) ? body.applicableCategoryIds : [],
+        applicableProductIds: Array.isArray(body.applicableProductIds) ? body.applicableProductIds : [],
+        isActive: body.isActive !== false,
+      } as any,
+    });
+  }
+
+  @Public()
+  @Patch('referrals/rules/:id')
+  async updateReferralRule(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.referralRule.update({ where: { id }, data: body as any });
+  }
+
+  @Public()
+  @Delete('referrals/rules/:id')
+  async deleteReferralRule(@Param('id') id: string) {
+    await this.prisma.referralRule.delete({ where: { id } });
+    return { success: true };
+  }
+
+  @Public()
+  @Get('referrals/missions')
+  async listReferralMissions() {
+    return this.prisma.mission.findMany({ orderBy: { createdAt: 'desc' } });
+  }
+
+  @Public()
+  @Post('referrals/missions')
+  async createReferralMission(@Body() body: any) {
+    return this.prisma.mission.create({
+      data: {
+        title: body.title,
+        description: body.description || null,
+        type: body.type || 'REFERRAL_COUNT',
+        targetValue: Number(body.targetValue || 0),
+        rewardType: body.rewardType || 'CASH_BALANCE',
+        rewardAmount: Number(body.rewardAmount || 0),
+        minTier: body.minTier || null,
+        isActive: body.isActive !== false,
+        startDate: body.startDate ? new Date(body.startDate) : null,
+        endDate: body.endDate ? new Date(body.endDate) : null,
+      } as any,
+    });
+  }
+
+  @Public()
+  @Patch('referrals/missions/:id')
+  async updateReferralMission(@Param('id') id: string, @Body() body: any) {
+    return this.prisma.mission.update({ where: { id }, data: body as any });
+  }
+
+  @Public()
+  @Post('customers/:id/referrals/tier')
+  async setCustomerReferralTier(@Param('id') id: string, @Body() body: any) {
+    const rule = await this.prisma.referralRule.findUnique({ where: { id: body.referralRuleId } });
+    if (!rule) return { success: false, message: 'Kademe bulunamadı' };
+    await this.prisma.userReferral.updateMany({ where: { referrerId: id }, data: { referralRuleId: rule.id } });
+    return { success: true, rule };
+  }
+
+  @Public()
+  @Post('customers/:id/referrals/mission-complete')
+  async completeCustomerReferralMission(@Param('id') id: string, @Body() body: any) {
+    const mission = await this.prisma.mission.findUnique({ where: { id: body.missionId } });
+    if (!mission) return { success: false, message: 'Görev bulunamadı' };
+    const progress = await this.prisma.userMissionProgress.upsert({
+      where: { userId_missionId: { userId: id, missionId: mission.id } },
+      update: { currentValue: mission.targetValue, isCompleted: true, completedAt: new Date() },
+      create: { userId: id, missionId: mission.id, currentValue: mission.targetValue, isCompleted: true, completedAt: new Date() },
+    });
+    return { success: true, progress };
+  }  @Public()
   @Get('finance/deposits')
   async getDeposits(@Query('status') status?: string, @Query('limit') limit?: string) {
     const take = Math.min(Number(limit || 100), 200);
@@ -2206,4 +2305,5 @@ export class AdminCompatController {
     });
   }
 }
+
 
