@@ -147,7 +147,7 @@ export class StocksController {
     if (!pool) throw new BadRequestException('Havuz bulunamadı');
 
     // Parse codes
-    const rawCodes = body.codes
+    const rawCodes = String(body.codes || '')
       .split(/[,\n;]+/)
       .map(c => c.trim())
       .filter(c => c.length > 0);
@@ -175,10 +175,7 @@ export class StocksController {
     const uniqueHashes = uniqueCodes.map(code => this.hashCode(code));
     const existingCodes = await this.prisma.epinCode.findMany({
       where: {
-        OR: [
-          { code: { in: uniqueCodes } },
-          { codeHash: { in: uniqueHashes } },
-        ],
+        codeHash: { in: uniqueHashes },
       },
       select: { code: true, codeHash: true },
     });
