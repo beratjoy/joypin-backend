@@ -1,4 +1,4 @@
-﻿import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -311,7 +311,7 @@ export class AdminCompatController {
       );
     }
 
-    return { success: true, updated: saved.length };
+    return { success: true, updated: saved.length, currencies: await this.getCurrencies() };
   }
 
   @Public()
@@ -1139,7 +1139,9 @@ export class AdminCompatController {
       ? { id: body.targetMemberTypeId }
       : await this.prisma.memberType.findFirst({ where: { name: body.targetMemberTypeName } });
 
-    if (!targetMemberType) return { message: 'Hedef Ã¼ye tipi bulunamadÄ±' };
+    if (!body.name?.trim()) throw new BadRequestException('Plan adı zorunludur');
+    if (!prices.length && !Number(body.price || 0)) throw new BadRequestException('En az bir fiyat girilmelidir');
+    if (!targetMemberType) throw new BadRequestException('Hedef üye tipi bulunamadı');
 
     const plan = await this.prisma.subscriptionPlan.create({
       data: {
@@ -1696,19 +1698,17 @@ export class AdminCompatController {
   @Public()
   @Get('points/lootboxes')
   async getPointLootBoxes() {
+    for (const preset of this.getDefaultLootBoxes()) {
+      await this.getOrCreatePresetLootBox(preset.id);
+    }
+
     const boxes = await this.prisma.lootBox.findMany({
       where: { isActive: true },
       include: { rewards: true },
       orderBy: { sortOrder: 'asc' },
     });
 
-    if (boxes.length) return boxes.map((box: any) => this.formatLootBox(box));
-
-    const created = [];
-    for (const preset of this.getDefaultLootBoxes()) {
-      created.push(await this.getOrCreatePresetLootBox(preset.id));
-    }
-    return created.map((box: any) => this.formatLootBox(box));
+    return boxes.map((box: any) => this.formatLootBox(box));
   }
 
   @Public()

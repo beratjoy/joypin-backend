@@ -136,12 +136,25 @@ export class PricingService {
       `Döviz kuru güncellendi: ${fromCurrency}→${toCurrency} = ${newRate}`,
     );
 
+    const existing = await this.prisma.exchangeRate.findUnique({
+      where: {
+        fromCurrency_toCurrency: { fromCurrency, toCurrency },
+      },
+    });
+
+    if (existing?.source === 'manual') {
+      this.logger.log(
+        `Manuel döviz override aktif, otomatik güncelleme atlandı: ${fromCurrency}→${toCurrency}`,
+      );
+      return;
+    }
+
     await this.prisma.exchangeRate.upsert({
       where: {
         fromCurrency_toCurrency: { fromCurrency, toCurrency },
       },
-      update: { rate: newRate },
-      create: { fromCurrency, toCurrency, rate: newRate },
+      update: { rate: newRate, rawRate: newRate, source: 'auto' },
+      create: { fromCurrency, toCurrency, rate: newRate, rawRate: newRate, source: 'auto' },
     });
 
     // TODO: Event emit → cache invalidation + WebSocket push
