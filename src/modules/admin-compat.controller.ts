@@ -367,7 +367,30 @@ export class AdminCompatController {
   @Public()
   @Patch('referrals/rules/:id')
   async updateReferralRule(@Param('id') id: string, @Body() body: any) {
-    return this.prisma.referralRule.update({ where: { id }, data: body as any });
+    return this.prisma.referralRule.update({
+      where: { id },
+      data: {
+        name: body.name,
+        description: body.description === undefined ? undefined : body.description || null,
+        incomeModel: body.incomeModel,
+        referralModel: body.referralModel,
+        calculationMethod: body.calculationMethod,
+        calculationBasis: body.calculationBasis,
+        commissionPercent: body.commissionPercent === undefined ? undefined : Number(body.commissionPercent || 0),
+        fixedCommission: body.fixedCommission === undefined ? undefined : Number(body.fixedCommission || 0),
+        tierLevel: body.tierLevel === undefined ? undefined : Number(body.tierLevel || 1),
+        earnerCustomerType: body.earnerCustomerType === undefined ? undefined : body.earnerCustomerType || null,
+        minPurchaseAmount: body.minPurchaseAmount === undefined ? undefined : Number(body.minPurchaseAmount || 0),
+        maxPurchaseAmount: body.maxPurchaseAmount === undefined ? undefined : Number(body.maxPurchaseAmount || 0),
+        minSalesAmount: body.minSalesAmount === undefined ? undefined : Number(body.minSalesAmount || 0),
+        maxCommission: body.maxCommission === undefined ? undefined : Number(body.maxCommission || 0),
+        orderCountLimit: body.orderCountLimit === undefined ? undefined : Number(body.orderCountLimit || 0),
+        selfEarningEnabled: body.selfEarningEnabled === undefined ? undefined : Boolean(body.selfEarningEnabled),
+        applicableCategoryIds: Array.isArray(body.applicableCategoryIds) ? body.applicableCategoryIds : undefined,
+        applicableProductIds: Array.isArray(body.applicableProductIds) ? body.applicableProductIds : undefined,
+        isActive: body.isActive === undefined ? undefined : Boolean(body.isActive),
+      } as any,
+    });
   }
 
   @Public()
@@ -405,7 +428,28 @@ export class AdminCompatController {
   @Public()
   @Patch('referrals/missions/:id')
   async updateReferralMission(@Param('id') id: string, @Body() body: any) {
-    return this.prisma.mission.update({ where: { id }, data: body as any });
+    return this.prisma.mission.update({
+      where: { id },
+      data: {
+        title: body.title,
+        description: body.description === undefined ? undefined : body.description || null,
+        type: body.type,
+        targetValue: body.targetValue === undefined ? undefined : Number(body.targetValue || 0),
+        rewardType: body.rewardType,
+        rewardAmount: body.rewardAmount === undefined ? undefined : Number(body.rewardAmount || 0),
+        minTier: body.minTier === undefined ? undefined : body.minTier || null,
+        isActive: body.isActive === undefined ? undefined : Boolean(body.isActive),
+        startDate: body.startDate === undefined ? undefined : body.startDate ? new Date(body.startDate) : null,
+        endDate: body.endDate === undefined ? undefined : body.endDate ? new Date(body.endDate) : null,
+      } as any,
+    });
+  }
+
+  @Public()
+  @Delete('referrals/missions/:id')
+  async deleteReferralMission(@Param('id') id: string) {
+    await this.prisma.mission.delete({ where: { id } });
+    return { success: true };
   }
 
   @Public()

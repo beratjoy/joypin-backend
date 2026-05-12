@@ -132,6 +132,7 @@ export class CustomerCompatController {
         calculationMethod: rule.calculationMethod,
         calculationBasis: rule.calculationBasis,
         maxCommission: Number(rule.maxCommission || 0),
+        minSalesAmount: Number(rule.minSalesAmount || 0),
         orderCountLimit: rule.orderCountLimit,
       })),
       referrals: referrals.map((referral: any) => ({
