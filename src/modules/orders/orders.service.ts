@@ -22,6 +22,7 @@ interface OrderItemInput {
   unitPrice: number;
   unitCost: number;
   deliveryType: DeliveryType;
+  topupFieldData?: Record<string, string>;
 }
 
 @Injectable()
@@ -102,6 +103,24 @@ export class OrdersService {
       (sum, item) => sum + item.unitPrice * item.quantity,
       0,
     );
+    const normalizedItems = params.items.map((item) => {
+      const requestedDeliveryType = String(item.deliveryType || 'EPIN').toUpperCase();
+      const deliveryType = requestedDeliveryType === 'TOPUP'
+        ? DeliveryType.API_TOPUP
+        : requestedDeliveryType === 'API_TOPUP'
+          ? DeliveryType.API_TOPUP
+          : requestedDeliveryType === 'MANUAL'
+            ? DeliveryType.MANUAL
+            : DeliveryType.EPIN;
+
+      return {
+        ...item,
+        quantity: Number(item.quantity || 1),
+        unitPrice: Number(item.unitPrice || 0),
+        unitCost: Number(item.unitCost || 0),
+        deliveryType,
+      };
+    });
     const isWalletPayment = params.paymentMethod?.toUpperCase() === 'WALLET';
 
     if (isWalletPayment && params.isGuest) {
@@ -139,7 +158,7 @@ export class OrdersService {
           ipAddress: params.ipAddress,
           customerNote: params.customerNote,
           subOrders: {
-            create: params.items.map((item) => ({
+            create: normalizedItems.map((item) => ({
               productId: item.productId,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
@@ -147,6 +166,7 @@ export class OrdersService {
               totalPrice: item.unitPrice * item.quantity,
               currency: params.currency,
               deliveryType: item.deliveryType,
+              topupFieldData: item.topupFieldData || undefined,
               status: isWalletPayment ? 'PROCESSING' as SubOrderStatus : 'PENDING' as SubOrderStatus,
             })),
           },

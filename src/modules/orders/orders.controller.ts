@@ -42,6 +42,7 @@ export class OrdersController {
         unitPrice: number;
         unitCost: number;
         deliveryType: DeliveryType;
+        topupFieldData?: Record<string, string>;
       }>;
     },
   ) {
@@ -83,6 +84,7 @@ export class OrdersController {
         unitPrice: number;
         unitCost: number;
         deliveryType: DeliveryType;
+        topupFieldData?: Record<string, string>;
       }>;
     },
   ) {

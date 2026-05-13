@@ -317,13 +317,16 @@ export class AdminCompatController {
   @Public()
   @Patch('settings/:key')
   async updateSetting(@Param('key') key: string, @Body() body: any) {
+    const inferredGroup = key.startsWith('legal_') || key.startsWith('about_') || key.startsWith('contact_') || key.startsWith('faq_')
+      ? 'static_pages'
+      : 'general';
     return this.prisma.siteSettings.upsert({
       where: { key },
       update: { value: String(body.value ?? '') },
       create: {
         key,
         value: String(body.value ?? ''),
-        group: body.group || 'general',
+        group: body.group || inferredGroup,
         description: body.description || key,
       },
     });
@@ -960,6 +963,7 @@ export class AdminCompatController {
       description: product.description,
       categoryId: product.categoryId,
       categoryName: product.category?.name || '',
+      type: product.type || 'EPIN',
       sku: product.slug,
       costPrice: Number(product.baseCost || 0),
       sellingPrice: Number(product.fixedPrice || product.baseCost || 0),
@@ -1692,6 +1696,7 @@ export class AdminCompatController {
         slug: body.slug,
         description: body.description || null,
         categoryId: body.categoryId,
+        type: body.type || 'EPIN',
         baseCost: body.costPrice ?? body.baseCost ?? 0,
         fixedPrice: body.sellingPrice ?? body.fixedPrice ?? 0,
         baseCurrency: body.currency || 'TRY',
@@ -1722,6 +1727,7 @@ export class AdminCompatController {
           slug: body.slug,
           description: body.description,
           categoryId: body.categoryId,
+          type: body.type,
           baseCost: body.costPrice ?? body.baseCost,
           fixedPrice: body.sellingPrice ?? body.fixedPrice,
           baseCurrency: body.currency,

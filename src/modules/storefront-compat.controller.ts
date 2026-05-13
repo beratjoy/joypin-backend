@@ -105,6 +105,7 @@ export class StorefrontCompatController {
         baseCost: Number(product.fixedPrice || product.baseCost || 0),
         marginPercent: Number(product.marginPercent || 0),
         pricingModel: product.pricingModel,
+        type: product.type || 'EPIN',
         iconUrl: product.iconUrl || product.merchantImageUrl || category.imageUrl || undefined,
       })),
     };
