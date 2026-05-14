@@ -1764,10 +1764,11 @@ export class AdminCompatController {
   @Public()
   @Get('orders')
   async getOrders() {
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       include: { user: true, subOrders: { include: { product: true } } },
       orderBy: { createdAt: 'desc' },
     });
+    return { orders };
   }
 
   @Public()
@@ -2076,7 +2077,7 @@ export class AdminCompatController {
   @Get('orders/processing')
   async getOrdersForProcessing() {
     const subOrders = await this.prisma.subOrder.findMany({
-      where: { status: { in: ['PENDING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any } },
+      where: { status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any } },
       include: { parentOrder: { include: { user: true } }, product: true, items: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -2087,7 +2088,7 @@ export class AdminCompatController {
       customerName: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || 'Misafir',
       customerEmail: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || '',
       productName: subOrder.product?.name || '',
-      productType: subOrder.deliveryType,
+      productType: subOrder.deliveryType === 'API_TOPUP' || subOrder.topupFieldData ? 'TOPUP' : 'EPIN',
       quantity: subOrder.quantity,
       totalAmount: Number(subOrder.totalPrice || 0),
       currency: subOrder.currency,

@@ -55,6 +55,7 @@ export class OrdersController {
     return this.ordersService.findByUserId(userId);
   }
 
+  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Sipariş detayı' })
   @ApiParam({ name: 'id', description: 'Sipariş UUID' })
