@@ -1772,6 +1772,63 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Get('orders/:orderId')
+  async getOrderById(@Param('orderId') orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: true,
+        subOrders: {
+          include: { product: true, items: true },
+        },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException('Sipariş bulunamadı');
+    }
+    return order;
+  }
+
+  @Public()
+  @Post('orders/:orderId/claim')
+  async claimOrder(@Param('orderId') orderId: string) {
+    const order = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        assignedStaffId: 'current-staff', // TODO: Get from JWT
+        status: 'PROCESSING' as any,
+      },
+    });
+
+    // Notify via WebSocket
+    const socket = (global as any).io;
+    if (socket) {
+      socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber });
+    }
+
+    return { success: true, message: 'Sipariş işleme alındı' };
+  }
+
+  @Public()
+  @Post('orders/:orderId/release')
+  async releaseOrder(@Param('orderId') orderId: string) {
+    const order = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        assignedStaffId: null,
+      },
+    });
+
+    // Notify via WebSocket
+    const socket = (global as any).io;
+    if (socket) {
+      socket.emit('order:released', { orderId, orderNumber: order.orderNumber });
+    }
+
+    return { success: true, message: 'Sipariş serbest bırakıldı' };
+  }
+
+  @Public()
   @Post('orders/:subOrderId/complete-topup')
   async completeTopupOrder(@Param('subOrderId') subOrderId: string) {
     const subOrder = await this.prisma.subOrder.update({
