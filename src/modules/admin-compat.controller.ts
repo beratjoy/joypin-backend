@@ -81,6 +81,39 @@ export class AdminCompatController {
   }
 
   private async dispatchProviderOrder(provider: any, link: any, subOrder: any) {
+    if (provider.name?.toLowerCase().includes('1epin')) {
+      const result = await this.oneEpinRequest('addOrder', {
+        product: Number(link.providerProductCode),
+        user: this.pickTopupUserValue(subOrder.topupFieldData),
+        quantity: Number(subOrder.quantity || 1),
+        orderNumber: subOrder.id,
+      }, provider);
+
+      if (result.ResultCode !== '00') {
+        return {
+          accepted: false,
+          delivered: false,
+          externalRef: subOrder.id,
+          status: result.ResultMessage || `1epin ${result.ResultCode}`,
+        };
+      }
+
+      if (result.Balance !== undefined) {
+        await this.prisma.botProvider.update({
+          where: { id: provider.id },
+          data: { balance: Number(result.Balance), lastBalanceSync: new Date() },
+        });
+      }
+
+      return {
+        accepted: true,
+        delivered: false,
+        externalRef: subOrder.id,
+        status: result.ResultMessage || '1epin accepted',
+        balanceSynced: result.Balance !== undefined,
+      };
+    }
+
     if (provider.type === 'MANUAL' || !provider.apiUrl) {
       return { accepted: true, delivered: false, externalRef: null, status: 'manual' };
     }
@@ -195,7 +228,7 @@ export class AdminCompatController {
         }
 
         const nextStatus = result.delivered ? 'DELIVERED' : 'PROCESSING';
-        await this.prisma.$transaction([
+        const transactionOps = [
           this.prisma.subOrder.update({
             where: { id: subOrder.id },
             data: {
@@ -205,11 +238,14 @@ export class AdminCompatController {
               deliveryNote: this.providerRouteNote(provider.name, result.externalRef, result.status),
             },
           }),
-          this.prisma.botProvider.update({
+        ];
+        if (!result.balanceSynced) {
+          transactionOps.push(this.prisma.botProvider.update({
             where: { id: provider.id },
             data: { balance: { decrement: totalCost } },
-          }),
-        ]);
+          }));
+        }
+        await this.prisma.$transaction(transactionOps);
         await this.recalculateOrderStatus(subOrder.parentOrderId);
         return {
           success: true,
@@ -465,11 +501,35 @@ export class AdminCompatController {
     return this.prisma.ticket.update({ where: { id }, data });
   }
 
-  private async oneEpinRequest(path: string, body: Record<string, any> = {}) {
-    const emailAddress = process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
-    const password = process.env.ONEEPIN_PASSWORD;
-    const mode = process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test';
-    const baseUrl = process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+  private getOneEpinCredentials(provider?: any) {
+    const config = provider?.config || {};
+    return {
+      emailAddress: provider?.encryptedApiKey || config.emailAddress || process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS,
+      password: provider?.encryptedApiSecret || config.password || process.env.ONEEPIN_PASSWORD,
+    };
+  }
+
+  private getOneEpinBaseUrl(provider?: any) {
+    const config = provider?.config || {};
+    const mode = config.mode || (process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test');
+    const baseUrl = provider?.apiUrl || config.baseUrl || process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+    return String(baseUrl).replace(/\/(checkBalance|categories|products|allproducts|addOrder|checkOrder|addOrderLocal|checkOrderLocal|localStocks)\/?$/i, '');
+  }
+
+  private pickTopupUserValue(data: any) {
+    if (!data || typeof data !== 'object') return data ? String(data) : '';
+    const keys = ['user', 'playerId', 'player_id', 'userId', 'uid', 'id', 'gameId', 'game_id'];
+    for (const key of keys) {
+      const value = data[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    const firstValue = Object.values(data).find((value) => value !== undefined && value !== null && String(value).trim());
+    return firstValue ? String(firstValue).trim() : '';
+  }
+
+  private async oneEpinRequest(path: string, body: Record<string, any> = {}, provider?: any) {
+    const { emailAddress, password } = this.getOneEpinCredentials(provider);
+    const baseUrl = this.getOneEpinBaseUrl(provider);
 
     if (!emailAddress || !password) {
       return { ResultCode: 'CONFIG_ERROR', ResultMessage: 'ONEEPIN_EMAIL and ONEEPIN_PASSWORD are required' };
@@ -1890,7 +1950,7 @@ export class AdminCompatController {
     let balance = Number(provider?.balance || 0);
 
     if (provider?.name?.toLowerCase().includes('1epin')) {
-      const result = await this.oneEpinRequest('checkBalance');
+      const result = await this.oneEpinRequest('checkBalance', {}, provider);
       if (result.ResultCode === '00') balance = Number(result.Balance || 0);
     }
 
@@ -1904,8 +1964,9 @@ export class AdminCompatController {
 
   @Public()
   @Get('1epin/products')
-  async getOneEpinProducts() {
-    const result = await this.oneEpinRequest('allproducts');
+  async getOneEpinProducts(@Query('providerId') providerId?: string) {
+    const provider = providerId ? await this.prisma.botProvider.findUnique({ where: { id: providerId } }) : null;
+    const result = await this.oneEpinRequest('allproducts', {}, provider);
     return {
       success: result.ResultCode === '00',
       message: result.ResultMessage,

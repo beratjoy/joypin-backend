@@ -142,7 +142,7 @@ export class SmartRouterService {
     try {
       if (provider.type === 'API') {
         if (provider.name?.toLowerCase().includes('1epin')) {
-          return this.dispatchToOneEpin(pp, ctx);
+          return this.dispatchToOneEpin(provider, pp, ctx);
         }
 
         // HTTP POST to API endpoint
@@ -201,13 +201,16 @@ export class SmartRouterService {
   }
 
   private async dispatchToOneEpin(
+    provider: any,
     pp: any,
     ctx: FulfillmentContext,
   ): Promise<{ success: boolean; externalRef?: string; error?: string }> {
-    const emailAddress = process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
-    const password = process.env.ONEEPIN_PASSWORD;
-    const mode = process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test';
-    const baseUrl = process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+    const config = provider?.config || {};
+    const emailAddress = provider?.encryptedApiKey || config.emailAddress || process.env.ONEEPIN_EMAIL || process.env.ONEEPIN_EMAIL_ADDRESS;
+    const password = provider?.encryptedApiSecret || config.password || process.env.ONEEPIN_PASSWORD;
+    const mode = config.mode || (process.env.ONEEPIN_MODE === 'live' ? 'live' : 'test');
+    const rawBaseUrl = provider?.apiUrl || config.baseUrl || process.env.ONEEPIN_API_URL || `https://www.1epin.com/api/${mode}`;
+    const baseUrl = String(rawBaseUrl).replace(/\/(checkBalance|categories|products|allproducts|addOrder|checkOrder|addOrderLocal|checkOrderLocal|localStocks)\/?$/i, '');
 
     if (!emailAddress || !password) {
       return { success: false, error: 'ONEEPIN_EMAIL and ONEEPIN_PASSWORD are required' };
@@ -220,7 +223,7 @@ export class SmartRouterService {
         emailAddress,
         password,
         product: Number(pp.providerProductCode),
-        user: JSON.stringify(ctx.topupFieldData || {}),
+        user: this.pickTopupUserValue(ctx.topupFieldData),
         quantity: ctx.quantity,
         orderNumber: ctx.subOrderId,
       }),
@@ -233,6 +236,17 @@ export class SmartRouterService {
     }
 
     return { success: false, error: data.ResultMessage || `1epin error ${data.ResultCode}` };
+  }
+
+  private pickTopupUserValue(data: any): string {
+    if (!data || typeof data !== 'object') return data ? String(data) : '';
+    const keys = ['user', 'playerId', 'player_id', 'userId', 'uid', 'id', 'gameId', 'game_id'];
+    for (const key of keys) {
+      const value = data[key];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    const firstValue = Object.values(data).find((value) => value !== undefined && value !== null && String(value).trim());
+    return firstValue ? String(firstValue).trim() : '';
   }
 
   // Siparişi MANUAL_INTERVENTION_REQUIRED durumuna al
