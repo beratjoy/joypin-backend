@@ -298,6 +298,52 @@ export class AdminCompatController {
     });
   }
 
+  @Get('notifications/summary')
+  async getNotificationSummary() {
+    const [
+      pendingOrders,
+      pendingPayments,
+      pendingBalanceDeposits,
+      pendingWithdrawals,
+      pendingReviews,
+      pendingTickets,
+    ] = await Promise.all([
+      this.prisma.order.count({
+        where: { status: { in: ['PENDING', 'PROCESSING', 'PARTIALLY_DELIVERED'] as any } },
+      }),
+      this.prisma.paymentTransaction.count({
+        where: {
+          status: 'PENDING' as any,
+          NOT: { gateway: 'BANK_TRANSFER' as any },
+        },
+      }),
+      this.prisma.paymentTransaction.count({
+        where: {
+          status: 'PENDING' as any,
+          gateway: 'BANK_TRANSFER' as any,
+        },
+      }),
+      this.prisma.withdrawalRequest.count({
+        where: { status: { in: ['PENDING', 'UNDER_REVIEW'] as any } },
+      }),
+      this.prisma.productReview.count({
+        where: { status: 'PENDING' as any },
+      }),
+      this.prisma.ticket.count({
+        where: { status: { in: ['OPEN', 'AWAITING_REPLY'] as any } },
+      }),
+    ]);
+
+    return {
+      pendingOrders,
+      pendingPayments,
+      pendingBalances: pendingBalanceDeposits + pendingWithdrawals,
+      pendingReviews,
+      pendingTickets,
+      pendingApplications: 0,
+    };
+  }
+
   @Public()
   @Get('settings/currencies')
   async getCurrencies() {
