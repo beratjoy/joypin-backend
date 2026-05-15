@@ -1932,6 +1932,79 @@ export class AdminCompatController {
     return { success: true, message: 'Sipariş serbest bırakıldı' };
   }
 
+  @Post('orders/:orderId/deliver')
+  async deliverOrder(@Param('orderId') orderId: string, @Body() body: any) {
+    const note = String(body?.note || body?.reason || '').trim();
+    if (!note) {
+      throw new BadRequestException('Teslim sebebi/notu zorunludur');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Sipariş bulunamadı');
+    }
+
+    const deliverable = order.subOrders.filter((subOrder: any) => !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status));
+    const updatedSubOrders = [];
+    for (const subOrder of deliverable) {
+      const updated = await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: 'DELIVERED' as any,
+          deliveredCount: subOrder.quantity,
+          deliveryNote: note,
+        },
+        include: { parentOrder: true, product: true },
+      });
+      updatedSubOrders.push(updated);
+      await this.awardPointsForDeliveredSubOrder(updated);
+    }
+
+    await this.recalculateOrderStatus(orderId);
+
+    return {
+      success: true,
+      message: 'Sipariş teslim edildi',
+      updated: updatedSubOrders.length,
+    };
+  }
+
+  @Post('orders/:orderId/cancel')
+  async cancelOrder(@Param('orderId') orderId: string, @Body() body: any) {
+    const reason = String(body?.reason || body?.note || '').trim();
+    if (!reason) {
+      throw new BadRequestException('İptal sebebi zorunludur');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Sipariş bulunamadı');
+    }
+
+    const cancellable = order.subOrders.filter((subOrder: any) => !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status));
+    await this.prisma.subOrder.updateMany({
+      where: { id: { in: cancellable.map((subOrder: any) => subOrder.id) } },
+      data: {
+        status: 'CANCELLED' as any,
+        cancelReason: reason,
+      },
+    });
+
+    await this.recalculateOrderStatus(orderId);
+
+    return {
+      success: true,
+      message: 'Sipariş iptal edildi',
+      updated: cancellable.length,
+    };
+  }
+
   @Public()
   @Post('orders/:subOrderId/complete-topup')
   async completeTopupOrder(@Param('subOrderId') subOrderId: string) {
