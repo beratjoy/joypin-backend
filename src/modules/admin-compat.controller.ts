@@ -1,10 +1,29 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
+import { NotFoundException, Req, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('admin')
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async attachAssignedStaff<T extends { assignedStaffId?: string | null }>(orders: T[]): Promise<Array<T & { assignedStaff: any }>> {
+    const staffIds = Array.from(new Set(orders.map((order) => order.assignedStaffId).filter(Boolean))) as string[];
+    if (staffIds.length === 0) {
+      return orders.map((order) => ({ ...order, assignedStaff: null }));
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: staffIds } },
+      select: { id: true, firstName: true, lastName: true, email: true, role: true },
+    });
+    const userMap = new Map(users.map((user) => [user.id, user]));
+
+    return orders.map((order) => ({
+      ...order,
+      assignedStaff: order.assignedStaffId ? userMap.get(order.assignedStaffId) || null : null,
+    }));
+  }
 
   private async recalculateOrderStatus(orderId: string) {
     const order = await this.prisma.order.findUnique({
@@ -1795,17 +1814,15 @@ export class AdminCompatController {
     return this.prisma.product.delete({ where: { id } });
   }
 
-  @Public()
   @Get('orders')
   async getOrders() {
     const orders = await this.prisma.order.findMany({
       include: { user: true, subOrders: { include: { product: true } } },
       orderBy: { createdAt: 'desc' },
     });
-    return { orders };
+    return { orders: await this.attachAssignedStaff(orders) };
   }
 
-  @Public()
   @Get('orders/:orderId')
   async getOrderById(@Param('orderId') orderId: string) {
     const order = await this.prisma.order.findUnique({
@@ -1820,31 +1837,36 @@ export class AdminCompatController {
     if (!order) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
-    return order;
+    const [withStaff] = await this.attachAssignedStaff([order]);
+    return withStaff;
   }
 
-  @Public()
   @Post('orders/:orderId/claim')
-  async claimOrder(@Param('orderId') orderId: string) {
+  async claimOrder(@Param('orderId') orderId: string, @Req() req: any) {
+    const staffId = req.user?.id;
+    if (!staffId) {
+      throw new UnauthorizedException('Personel oturumu bulunamadı');
+    }
     const order = await this.prisma.order.update({
       where: { id: orderId },
       data: {
-        assignedStaffId: 'current-staff', // TODO: Get from JWT
+        assignedStaffId: staffId,
         staffLockedAt: new Date(),
         status: 'PROCESSING' as any,
       },
+      include: { user: true, subOrders: { include: { product: true } } },
     });
+    const [withStaff] = await this.attachAssignedStaff([order]);
 
     // Notify via WebSocket
     const socket = (global as any).io;
     if (socket) {
-      socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber });
+      socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber, assignedStaff: withStaff.assignedStaff });
     }
 
-    return { success: true, message: 'Sipariş işleme alındı' };
+    return { success: true, message: 'Sipariş işleme alındı', order: withStaff };
   }
 
-  @Public()
   @Post('orders/:orderId/release')
   async releaseOrder(@Param('orderId') orderId: string) {
     const order = await this.prisma.order.update({
@@ -2193,6 +2215,9 @@ export class AdminCompatController {
       orderBy: { createdAt: 'desc' },
     });
 
+    const parentOrders = await this.attachAssignedStaff(subOrders.map((subOrder: any) => subOrder.parentOrder).filter(Boolean));
+    const parentMap = new Map(parentOrders.map((order: any) => [order.id, order]));
+
     return subOrders.map((subOrder: any) => ({
       id: subOrder.id,
       parentOrderId: subOrder.parentOrderId,
@@ -2205,6 +2230,9 @@ export class AdminCompatController {
       totalAmount: Number(subOrder.totalPrice || 0),
       currency: subOrder.currency,
       status: subOrder.status,
+      assignedStaffId: subOrder.parentOrder?.assignedStaffId || null,
+      assignedStaff: parentMap.get(subOrder.parentOrderId)?.assignedStaff || null,
+      staffLockedAt: subOrder.parentOrder?.staffLockedAt || null,
       topupFieldData: subOrder.topupFieldData,
       epinCodes: [],
       createdAt: subOrder.createdAt,
