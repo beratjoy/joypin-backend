@@ -4,13 +4,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EpinUnlockService } from './epin-unlock.service';
 import { RequirePermissions } from './rbac.guard';
 import { RbacSeedService } from './rbac-seed.service';
-import { Public } from '../auth/decorators/public.decorator';
 
 /**
  * Security & Staff Management Controller
  * /api/admin/security
  */
-@Public()
 @Controller('admin/security')
 export class SecurityController {
   constructor(
@@ -133,6 +131,7 @@ export class SecurityController {
     email?: string;
     firstName?: string;
     lastName?: string;
+    password?: string;
     roleId: string;
     department?: string;
     phone?: string;
@@ -143,6 +142,9 @@ export class SecurityController {
     }
     if (!body.roleId) {
       throw new BadRequestException('Personel rolu secilmelidir.');
+    }
+    if (!body.password || body.password.length < 8) {
+      throw new BadRequestException('Personel sifresi en az 8 karakter olmalidir.');
     }
 
     const role = await this.prisma.staffRole.findUnique({
@@ -164,17 +166,23 @@ export class SecurityController {
           firstName: body.firstName || firstNameFromEmail || 'Personel',
           lastName: body.lastName || '',
           email,
-          passwordHash: await bcrypt.hash(`${Date.now()}-${email}`, 12),
+          passwordHash: await bcrypt.hash(body.password, 12),
           phone: body.phone || null,
           role: 'STAFF',
           status: 'ACTIVE',
           emailVerified: true,
         } as any,
       });
-    } else if (!['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'].includes(user.role)) {
+    } else {
+      const updateData: any = {
+        passwordHash: await bcrypt.hash(body.password, 12),
+      };
+      if (!['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'].includes(user.role)) {
+        updateData.role = 'STAFF';
+      }
       user = await this.prisma.user.update({
         where: { id: user.id },
-        data: { role: 'STAFF' },
+        data: updateData,
       });
     }
 
@@ -213,6 +221,7 @@ export class SecurityController {
     roleId?: string;
     department?: string;
     isActive?: boolean;
+    password?: string;
   }) {
     if (body.roleId) {
       const role = await this.prisma.staffRole.findUnique({
@@ -223,6 +232,9 @@ export class SecurityController {
         throw new BadRequestException('Secilen personel rolu bulunamadi.');
       }
     }
+    if (body.password && body.password.length < 8) {
+      throw new BadRequestException('Personel sifresi en az 8 karakter olmalidir.');
+    }
 
     const profile = await this.prisma.staffProfile.update({
       where: { id },
@@ -232,6 +244,14 @@ export class SecurityController {
         isActive: body.isActive,
       },
     });
+
+    if (body.password) {
+      await this.prisma.user.update({
+        where: { id: profile.userId },
+        data: { passwordHash: await bcrypt.hash(body.password, 12) },
+      });
+    }
+
     return { profile };
   }
 
