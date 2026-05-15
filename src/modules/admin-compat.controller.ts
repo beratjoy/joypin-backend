@@ -240,6 +240,20 @@ export class AdminCompatController {
     return { success: false, subOrderId, error: lastError || 'Uygun tedarikci bulunamadi', attempts };
   }
 
+  private async findOrderForAction(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { subOrders: true },
+    });
+    if (order) return order;
+
+    const subOrder = await this.prisma.subOrder.findUnique({
+      where: { id },
+      include: { parentOrder: { include: { subOrders: true } } },
+    });
+    return subOrder?.parentOrder || null;
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -2147,6 +2161,7 @@ export class AdminCompatController {
     return { success: true, message: 'Sipariş serbest bırakıldı' };
   }
 
+  @Public()
   @Post('orders/:orderId/deliver')
   async deliverOrder(@Param('orderId') orderId: string, @Body() body: any) {
     const note = String(body?.note || body?.reason || '').trim();
@@ -2154,10 +2169,7 @@ export class AdminCompatController {
       throw new BadRequestException('Teslim sebebi/notu zorunludur');
     }
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { subOrders: true },
-    });
+    const order = await this.findOrderForAction(orderId);
     if (!order) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
@@ -2175,10 +2187,14 @@ export class AdminCompatController {
         include: { parentOrder: true, product: true },
       });
       updatedSubOrders.push(updated);
-      await this.awardPointsForDeliveredSubOrder(updated);
+      try {
+        await this.awardPointsForDeliveredSubOrder(updated);
+      } catch (error) {
+        console.warn('[AdminCompat] award points skipped:', error);
+      }
     }
 
-    await this.recalculateOrderStatus(orderId);
+    await this.recalculateOrderStatus(order.id);
 
     return {
       success: true,
@@ -2187,6 +2203,7 @@ export class AdminCompatController {
     };
   }
 
+  @Public()
   @Post('orders/:orderId/cancel')
   async cancelOrder(@Param('orderId') orderId: string, @Body() body: any) {
     const reason = String(body?.reason || body?.note || '').trim();
@@ -2194,10 +2211,7 @@ export class AdminCompatController {
       throw new BadRequestException('İptal sebebi zorunludur');
     }
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { subOrders: true },
-    });
+    const order = await this.findOrderForAction(orderId);
     if (!order) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
@@ -2211,7 +2225,7 @@ export class AdminCompatController {
       },
     });
 
-    await this.recalculateOrderStatus(orderId);
+    await this.recalculateOrderStatus(order.id);
 
     return {
       success: true,
