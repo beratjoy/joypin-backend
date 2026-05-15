@@ -6,6 +6,40 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async recalculateOrderStatus(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: { select: { status: true } } },
+    });
+    if (!order) return;
+
+    const statuses = order.subOrders.map((subOrder) => subOrder.status);
+    const allDelivered = statuses.length > 0 && statuses.every((status) => status === 'DELIVERED');
+    const allCancelled = statuses.length > 0 && statuses.every((status) => status === 'CANCELLED');
+    const allRefunded = statuses.length > 0 && statuses.every((status) => status === 'REFUNDED');
+    const someDelivered = statuses.some((status) => status === 'DELIVERED');
+    const someProcessing = statuses.some((status) => status === 'PROCESSING' || status === 'AWAITING_FALLBACK');
+
+    const nextStatus = allDelivered
+      ? 'COMPLETED'
+      : allCancelled
+        ? 'CANCELLED'
+        : allRefunded
+          ? 'REFUNDED'
+          : someDelivered
+            ? 'PARTIALLY_DELIVERED'
+            : someProcessing
+              ? 'PROCESSING'
+              : 'PENDING';
+
+    if (order.status !== nextStatus) {
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: { status: nextStatus as any },
+      });
+    }
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -1796,6 +1830,7 @@ export class AdminCompatController {
       where: { id: orderId },
       data: {
         assignedStaffId: 'current-staff', // TODO: Get from JWT
+        staffLockedAt: new Date(),
         status: 'PROCESSING' as any,
       },
     });
@@ -1816,6 +1851,7 @@ export class AdminCompatController {
       where: { id: orderId },
       data: {
         assignedStaffId: null,
+        staffLockedAt: null,
       },
     });
 
@@ -1831,16 +1867,25 @@ export class AdminCompatController {
   @Public()
   @Post('orders/:subOrderId/complete-topup')
   async completeTopupOrder(@Param('subOrderId') subOrderId: string) {
-    const subOrder = await this.prisma.subOrder.update({
+    const subOrder = await this.prisma.subOrder.findUnique({
       where: { id: subOrderId },
+    });
+    if (!subOrder) {
+      throw new BadRequestException('SubOrder not found');
+    }
+
+    const updated = await this.prisma.subOrder.update({
+      where: { id: subOrder.id },
       data: {
         status: 'DELIVERED' as any,
-        deliveredCount: { increment: 1 },
+        deliveredCount: subOrder.quantity,
+        deliveryNote: 'Admin tarafindan manuel yukleme tamamlandi',
       },
-      include: { parentOrder: true },
+      include: { parentOrder: true, product: true },
     });
-    await this.awardPointsForDeliveredSubOrder(subOrder);
-    return subOrder;
+    await this.recalculateOrderStatus(subOrder.parentOrderId);
+    await this.awardPointsForDeliveredSubOrder(updated);
+    return updated;
   }
 
   @Public()
@@ -1853,27 +1898,36 @@ export class AdminCompatController {
     if (!subOrder) {
       return { success: false, error: 'SubOrder not found' };
     }
+    const codes = String(epinCode || '')
+      .split(/[\r\n,;]+/)
+      .map((code) => code.trim())
+      .filter(Boolean);
+    if (codes.length < subOrder.quantity) {
+      throw new BadRequestException(`Bu siparis icin ${subOrder.quantity} adet e-pin kodu gerekli.`);
+    }
 
-    const epin = await this.prisma.epinStock.create({
-      data: {
+    const epins = await this.prisma.epinStock.createMany({
+      data: codes.slice(0, subOrder.quantity).map((code) => ({
         productId: subOrder.productId,
-        code: epinCode,
+        code,
         isUsed: true,
         orderId: subOrder.parentOrderId,
         usedAt: new Date(),
-      },
+      })),
     });
 
     await this.prisma.subOrder.update({
       where: { id: subOrderId },
       data: {
         status: 'DELIVERED' as any,
-        deliveredCount: { increment: 1 },
+        deliveredCount: subOrder.quantity,
+        deliveryNote: `${subOrder.quantity} adet e-pin kodu admin tarafindan atandi`,
       },
     });
+    await this.recalculateOrderStatus(subOrder.parentOrderId);
     await this.awardPointsForDeliveredSubOrder(subOrder);
 
-    return { success: true, epin };
+    return { success: true, insertedCount: epins.count };
   }
 
   @Public()
@@ -2141,6 +2195,7 @@ export class AdminCompatController {
 
     return subOrders.map((subOrder: any) => ({
       id: subOrder.id,
+      parentOrderId: subOrder.parentOrderId,
       orderNumber: subOrder.parentOrder?.orderNumber || subOrder.parentOrderId,
       customerName: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || 'Misafir',
       customerEmail: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || '',
