@@ -50,7 +50,7 @@ export class SmartRouterService {
         provider: { status: 'ACTIVE' },
       },
       include: { provider: true },
-      orderBy: { priority: 'asc' },
+      orderBy: [{ costPrice: 'asc' }, { priority: 'asc' }],
     });
 
     if (productProviders.length === 0) {
@@ -66,10 +66,11 @@ export class SmartRouterService {
       attempts++;
       const provider = pp.provider;
 
-      this.logger.log(`[SmartRouter] Attempt #${attempts}: ${provider.name} (priority: ${pp.priority})`);
+      const totalCost = Number(pp.costPrice || 0) * Number(ctx.quantity || 1);
+      this.logger.log(`[SmartRouter] Attempt #${attempts}: ${provider.name} (cost: ${totalCost}, priority: ${pp.priority})`);
 
       // 2a. Bakiye kontrolü
-      const hasSufficientBalance = Number(provider.balance) >= Number(pp.costPrice);
+      const hasSufficientBalance = Number(provider.balance) >= totalCost;
       if (!hasSufficientBalance) {
         this.logger.warn(
           `[SmartRouter] ❌ ${provider.name}: Yetersiz bakiye ($${provider.balance} < $${pp.costPrice})`,
@@ -98,13 +99,13 @@ export class SmartRouterService {
             data: {
               status: 'DELIVERED',
               deliveredCount: ctx.quantity,
-              deliveryNote: `Provider: ${provider.name} | Ref: ${dispatchResult.externalRef}`,
+              deliveryNote: `Tedarikci: ${provider.name} | Islem tedarikcide | Ref: ${dispatchResult.externalRef}`,
             },
           }),
           // Provider bakiyesini düş
           this.prisma.botProvider.update({
             where: { id: provider.id },
-            data: { balance: { decrement: Number(pp.costPrice) } },
+            data: { balance: { decrement: totalCost } },
           }),
         ]);
 

@@ -59,6 +59,187 @@ export class AdminCompatController {
     }
   }
 
+  private providerRouteNote(providerName: string, externalRef?: string | null, status?: string | null) {
+    const parts = [`Tedarikci: ${providerName}`, 'Islem tedarikcide'];
+    if (externalRef) parts.push(`Ref: ${externalRef}`);
+    if (status) parts.push(`Durum: ${status}`);
+    return parts.join(' | ');
+  }
+
+  private providerAccepted(data: any) {
+    const status = String(data?.status || data?.Status || data?.ResultCode || data?.resultCode || '').toLowerCase();
+    const message = String(data?.message || data?.ResultMessage || '').toLowerCase();
+    if (data?.rejected === true || data?.success === false) return false;
+    if (['rejected', 'failed', 'cancelled', 'canceled', 'error'].includes(status)) return false;
+    if (message.includes('red') || message.includes('reject')) return false;
+    return true;
+  }
+
+  private providerDelivered(data: any) {
+    const status = String(data?.status || data?.Status || '').toLowerCase();
+    return ['delivered', 'completed', 'success', 'successful'].includes(status) || data?.delivered === true;
+  }
+
+  private async dispatchProviderOrder(provider: any, link: any, subOrder: any) {
+    if (provider.type === 'MANUAL' || !provider.apiUrl) {
+      return { accepted: true, delivered: false, externalRef: null, status: 'manual' };
+    }
+
+    const payload = {
+      product_code: link.providerProductCode,
+      quantity: subOrder.quantity,
+      player_data: subOrder.topupFieldData || {},
+      reference: subOrder.id,
+      order_id: subOrder.parentOrderId,
+    };
+
+    const response = await fetch(provider.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(provider.encryptedApiKey ? { Authorization: `Bearer ${provider.encryptedApiKey}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    let data: any = {};
+    try {
+      data = await response.json();
+    } catch {
+      data = { status: response.ok ? 'accepted' : 'failed' };
+    }
+
+    if (!response.ok || !this.providerAccepted(data)) {
+      return {
+        accepted: false,
+        delivered: false,
+        externalRef: data?.reference || data?.id || data?.task_id || null,
+        status: data?.status || data?.ResultMessage || `HTTP ${response.status}`,
+      };
+    }
+
+    return {
+      accepted: true,
+      delivered: this.providerDelivered(data),
+      externalRef: data?.reference || data?.id || data?.task_id || data?.orderId || null,
+      status: data?.status || data?.ResultMessage || 'accepted',
+    };
+  }
+
+  private async routeSubOrderToCheapestProvider(subOrderId: string) {
+    const subOrder = await this.prisma.subOrder.findUnique({
+      where: { id: subOrderId },
+      include: { product: true, botProvider: true },
+    });
+    if (!subOrder) throw new NotFoundException('Alt sipariş bulunamadı');
+    if (['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status)) {
+      return { success: true, skipped: true, subOrderId, status: subOrder.status };
+    }
+
+    const links = await this.prisma.productProvider.findMany({
+      where: {
+        productId: subOrder.productId,
+        isActive: true,
+        provider: { status: 'ACTIVE' as any },
+      },
+      include: { provider: true },
+      orderBy: [{ costPrice: 'asc' }, { priority: 'asc' }],
+    });
+
+    if (!links.length) {
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: 'MANUAL_INTERVENTION_REQUIRED' as any,
+          lastError: 'Bu urune bagli aktif tedarikci yok',
+        },
+      });
+      return { success: false, subOrderId, error: 'Bu urune bagli aktif tedarikci yok', attempts: 0 };
+    }
+
+    let attempts = 0;
+    let lastError = '';
+
+    for (const link of links) {
+      const provider = link.provider;
+      const totalCost = Number(link.costPrice || 0) * Number(subOrder.quantity || 1);
+      if (Number(provider.balance || 0) < totalCost) {
+        lastError = `${provider.name}: bakiye yetersiz`;
+        await this.prisma.subOrder.update({
+          where: { id: subOrder.id },
+          data: { fallbackAttempts: { increment: 1 }, lastError },
+        });
+        continue;
+      }
+
+      attempts += 1;
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: 'PROCESSING' as any,
+          botProviderId: provider.id,
+          deliveryNote: this.providerRouteNote(provider.name),
+          lastError: null,
+        },
+      });
+
+      try {
+        const result = await this.dispatchProviderOrder(provider, link, subOrder);
+        if (!result.accepted) {
+          lastError = `${provider.name}: ${result.status || 'reddedildi'}`;
+          await this.prisma.subOrder.update({
+            where: { id: subOrder.id },
+            data: { fallbackAttempts: { increment: 1 }, lastError },
+          });
+          continue;
+        }
+
+        const nextStatus = result.delivered ? 'DELIVERED' : 'PROCESSING';
+        await this.prisma.$transaction([
+          this.prisma.subOrder.update({
+            where: { id: subOrder.id },
+            data: {
+              status: nextStatus as any,
+              botProviderId: provider.id,
+              deliveredCount: result.delivered ? subOrder.quantity : subOrder.deliveredCount,
+              deliveryNote: this.providerRouteNote(provider.name, result.externalRef, result.status),
+            },
+          }),
+          this.prisma.botProvider.update({
+            where: { id: provider.id },
+            data: { balance: { decrement: totalCost } },
+          }),
+        ]);
+        await this.recalculateOrderStatus(subOrder.parentOrderId);
+        return {
+          success: true,
+          subOrderId,
+          providerId: provider.id,
+          providerName: provider.name,
+          status: nextStatus,
+          externalRef: result.externalRef,
+          attempts,
+        };
+      } catch (error: any) {
+        lastError = `${provider.name}: ${error?.message || 'API hatasi'}`;
+        await this.prisma.subOrder.update({
+          where: { id: subOrder.id },
+          data: { fallbackAttempts: { increment: 1 }, lastError },
+        });
+      }
+    }
+
+    await this.prisma.subOrder.update({
+      where: { id: subOrder.id },
+      data: {
+        status: 'MANUAL_INTERVENTION_REQUIRED' as any,
+        lastError: lastError || 'Uygun tedarikci bulunamadi',
+      },
+    });
+    await this.recalculateOrderStatus(subOrder.parentOrderId);
+    return { success: false, subOrderId, error: lastError || 'Uygun tedarikci bulunamadi', attempts };
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -1342,6 +1523,8 @@ export class AdminCompatController {
       balance: Number(provider.balance || 0),
       balanceCurrency: provider.balanceCurrency,
       apiUrl: provider.apiUrl,
+      hasApiKey: Boolean(provider.encryptedApiKey),
+      hasApiSecret: Boolean(provider.encryptedApiSecret),
       priority: provider.priority,
       lastBalanceSync: provider.lastBalanceSync,
     }));
@@ -1650,6 +1833,8 @@ export class AdminCompatController {
         type: body.type || 'API',
         status: body.status || 'ACTIVE',
         apiUrl: body.apiUrl || null,
+        encryptedApiKey: body.apiKey || body.encryptedApiKey || null,
+        encryptedApiSecret: body.apiSecret || body.encryptedApiSecret || null,
         balance: body.balance ?? 0,
         balanceCurrency: body.balanceCurrency || 'USD',
         priority: body.priority ?? 0,
@@ -1668,6 +1853,8 @@ export class AdminCompatController {
         type: body.type,
         status: body.status,
         apiUrl: body.apiUrl,
+        encryptedApiKey: body.apiKey !== undefined ? body.apiKey || null : undefined,
+        encryptedApiSecret: body.apiSecret !== undefined ? body.apiSecret || null : undefined,
         balance: body.balance,
         balanceCurrency: body.balanceCurrency,
         priority: body.priority,
@@ -1718,7 +1905,7 @@ export class AdminCompatController {
     const links = await this.prisma.productProvider.findMany({
       where: { productId },
       include: { provider: true },
-      orderBy: { priority: 'asc' },
+      orderBy: [{ costPrice: 'asc' }, { priority: 'asc' }],
     });
 
     return links.map((link: any) => ({
@@ -1863,7 +2050,7 @@ export class AdminCompatController {
   @Get('orders')
   async getOrders() {
     const orders = await this.prisma.order.findMany({
-      include: { user: true, subOrders: { include: { product: true } } },
+      include: { user: true, subOrders: { include: { product: true, items: true, botProvider: true } } },
       orderBy: { createdAt: 'desc' },
     });
     return { orders: await this.attachAssignedStaff(orders) };
@@ -1876,7 +2063,7 @@ export class AdminCompatController {
       include: {
         user: true,
         subOrders: {
-          include: { product: true, items: true },
+          include: { product: true, items: true, botProvider: true },
         },
       },
     });
@@ -1900,7 +2087,7 @@ export class AdminCompatController {
         staffLockedAt: new Date(),
         status: 'PROCESSING' as any,
       },
-      include: { user: true, subOrders: { include: { product: true } } },
+      include: { user: true, subOrders: { include: { product: true, items: true, botProvider: true } } },
     });
     const [withStaff] = await this.attachAssignedStaff([order]);
 
@@ -1911,6 +2098,34 @@ export class AdminCompatController {
     }
 
     return { success: true, message: 'Sipariş işleme alındı', order: withStaff };
+  }
+
+  @Post('orders/:orderId/route-providers')
+  async routeOrderProviders(@Param('orderId') orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: true },
+    });
+    if (!order) {
+      throw new NotFoundException('Sipariş bulunamadı');
+    }
+
+    const results = [];
+    for (const subOrder of order.subOrders) {
+      results.push(await this.routeSubOrderToCheapestProvider(subOrder.id));
+    }
+
+    const refreshed = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: true, items: true, botProvider: true } } },
+    });
+    const [withStaff] = await this.attachAssignedStaff(refreshed ? [refreshed] : []);
+
+    return {
+      success: results.some((result: any) => result.success),
+      results,
+      order: withStaff || null,
+    };
   }
 
   @Post('orders/:orderId/release')
@@ -2330,7 +2545,7 @@ export class AdminCompatController {
   async getOrdersForProcessing() {
     const subOrders = await this.prisma.subOrder.findMany({
       where: { status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any } },
-      include: { parentOrder: { include: { user: true } }, product: true, items: true },
+      include: { parentOrder: { include: { user: true } }, product: true, items: true, botProvider: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -2349,6 +2564,10 @@ export class AdminCompatController {
       totalAmount: Number(subOrder.totalPrice || 0),
       currency: subOrder.currency,
       status: subOrder.status,
+      providerName: subOrder.botProvider?.name || null,
+      providerStatus: subOrder.botProvider?.status || null,
+      deliveryNote: subOrder.deliveryNote,
+      lastError: subOrder.lastError,
       assignedStaffId: subOrder.parentOrder?.assignedStaffId || null,
       assignedStaff: parentMap.get(subOrder.parentOrderId)?.assignedStaff || null,
       staffLockedAt: subOrder.parentOrder?.staffLockedAt || null,
