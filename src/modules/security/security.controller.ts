@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Req, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Put, Delete, Body, Param, Req, Query } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EpinUnlockService } from './epin-unlock.service';
@@ -136,6 +136,21 @@ export class SecurityController {
     phone?: string;
   }) {
     const email = String(body.email || body.userId || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      throw new BadRequestException('Gecerli bir personel e-posta adresi girin.');
+    }
+    if (!body.roleId) {
+      throw new BadRequestException('Personel rolu secilmelidir.');
+    }
+
+    const role = await this.prisma.staffRole.findUnique({
+      where: { id: body.roleId },
+      select: { id: true },
+    });
+    if (!role) {
+      throw new BadRequestException('Secilen personel rolu bulunamadi.');
+    }
+
     let user = await this.prisma.user.findFirst({
       where: body.userId && !body.userId.includes('@') ? { id: body.userId } : { email },
     });
@@ -197,6 +212,16 @@ export class SecurityController {
     department?: string;
     isActive?: boolean;
   }) {
+    if (body.roleId) {
+      const role = await this.prisma.staffRole.findUnique({
+        where: { id: body.roleId },
+        select: { id: true },
+      });
+      if (!role) {
+        throw new BadRequestException('Secilen personel rolu bulunamadi.');
+      }
+    }
+
     const profile = await this.prisma.staffProfile.update({
       where: { id },
       data: {
