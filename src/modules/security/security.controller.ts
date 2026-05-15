@@ -4,11 +4,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EpinUnlockService } from './epin-unlock.service';
 import { RequirePermissions } from './rbac.guard';
 import { RbacSeedService } from './rbac-seed.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 /**
  * Security & Staff Management Controller
  * /api/admin/security
  */
+@Public()
 @Controller('admin/security')
 export class SecurityController {
   constructor(
