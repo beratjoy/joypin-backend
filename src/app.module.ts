@@ -23,6 +23,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { StocksModule } from './modules/stocks/stocks.module';
 import { SecurityModule } from './modules/security/security.module';
+import { RbacGuard } from './modules/security/rbac.guard';
 import { AdminCompatController } from './modules/admin-compat.controller';
 import { HealthController } from './health.controller';
 import { StorefrontCompatController } from './modules/storefront-compat.controller';
@@ -84,6 +85,8 @@ import { I18nCompatController } from './modules/i18n-compat.controller';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // 3. Role-Based Authorization
     { provide: APP_GUARD, useClass: RolesGuard },
+    // 4. Granular Staff Permissions
+    { provide: APP_GUARD, useClass: RbacGuard },
   ],
 })
 export class AppModule {}

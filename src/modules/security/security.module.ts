@@ -5,6 +5,7 @@ import { TelegramAlertService } from './telegram-alert.service';
 import { EpinUnlockService } from './epin-unlock.service';
 import { SecurityController } from './security.controller';
 import { RbacGuard } from './rbac.guard';
+import { RbacSeedService } from './rbac-seed.service';
 import { MailModule } from '../mail/mail.module';
 
 @Module({
@@ -14,8 +15,9 @@ import { MailModule } from '../mail/mail.module';
     CryptoService,
     TelegramAlertService,
     EpinUnlockService,
+    RbacSeedService,
     RbacGuard,
   ],
-  exports: [CryptoService, TelegramAlertService, EpinUnlockService, RbacGuard],
+  exports: [CryptoService, TelegramAlertService, EpinUnlockService, RbacGuard, RbacSeedService],
 })
 export class SecurityModule {}

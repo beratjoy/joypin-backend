@@ -3,7 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EpinUnlockService } from './epin-unlock.service';
 import { RequirePermissions } from './rbac.guard';
-import { Public } from '../auth/decorators/public.decorator';
+import { RbacSeedService } from './rbac-seed.service';
 
 /**
  * Security & Staff Management Controller
@@ -14,6 +14,7 @@ export class SecurityController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly unlockService: EpinUnlockService,
+    private readonly rbacSeed: RbacSeedService,
   ) {}
 
   // ═══════════════════════════════════════════════════════════
@@ -21,7 +22,6 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('roles')
-  @Public()
   async listRoles() {
     const roles = await this.prisma.staffRole.findMany({
       include: {
@@ -34,7 +34,6 @@ export class SecurityController {
   }
 
   @Post('roles')
-  @Public()
   @RequirePermissions('staff.manage_roles')
   async createRole(@Body() body: {
     name: string;
@@ -60,7 +59,6 @@ export class SecurityController {
   }
 
   @Put('roles/:id')
-  @Public()
   @RequirePermissions('staff.manage_roles')
   async updateRole(@Param('id') id: string, @Body() body: {
     displayName?: string;
@@ -76,7 +74,6 @@ export class SecurityController {
   }
 
   @Put('roles/:id/permissions')
-  @Public()
   @RequirePermissions('staff.manage_roles')
   async setRolePermissions(@Param('id') roleId: string, @Body() body: { permissionIds: string[] }) {
     // Mevcut izinleri sil ve yenilerini ekle
@@ -88,7 +85,6 @@ export class SecurityController {
   }
 
   @Delete('roles/:id')
-  @Public()
   @RequirePermissions('staff.manage_roles')
   async deleteRole(@Param('id') id: string) {
     const role = await this.prisma.staffRole.findUnique({ where: { id } });
@@ -104,7 +100,6 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('permissions')
-  @Public()
   async listPermissions() {
     const permissions = await this.prisma.permission.findMany({
       orderBy: [{ module: 'asc' }, { code: 'asc' }],
@@ -117,7 +112,7 @@ export class SecurityController {
   // ═══════════════════════════════════════════════════════════
 
   @Get('staff')
-  @Public()
+  @RequirePermissions('staff.manage_users')
   async listStaff() {
     const staff = await this.prisma.staffProfile.findMany({
       include: {
@@ -130,7 +125,6 @@ export class SecurityController {
   }
 
   @Post('staff')
-  @Public()
   @RequirePermissions('staff.manage_users')
   async createStaffProfile(@Body() body: {
     userId: string;
@@ -167,8 +161,15 @@ export class SecurityController {
       });
     }
 
-    const profile = await this.prisma.staffProfile.create({
-      data: {
+    const profile = await this.prisma.staffProfile.upsert({
+      where: { userId: user.id },
+      update: {
+        roleId: body.roleId,
+        department: body.department,
+        phone: body.phone,
+        isActive: true,
+      },
+      create: {
         userId: user.id,
         roleId: body.roleId,
         department: body.department,
@@ -182,8 +183,14 @@ export class SecurityController {
     return { profile };
   }
 
+  @Post('seed-defaults')
+  @RequirePermissions('staff.manage_roles')
+  async seedDefaults() {
+    const result = await this.rbacSeed.ensureDefaults();
+    return { success: true, ...result };
+  }
+
   @Put('staff/:id')
-  @Public()
   @RequirePermissions('staff.manage_users')
   async updateStaffProfile(@Param('id') id: string, @Body() body: {
     roleId?: string;
@@ -192,7 +199,11 @@ export class SecurityController {
   }) {
     const profile = await this.prisma.staffProfile.update({
       where: { id },
-      data: body,
+      data: {
+        roleId: body.roleId,
+        department: body.department,
+        isActive: body.isActive,
+      },
     });
     return { profile };
   }
