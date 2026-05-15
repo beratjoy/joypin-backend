@@ -1975,6 +1975,36 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Get('product-providers')
+  async getAllProductProviders(@Query('providerId') providerId?: string) {
+    const links = await this.prisma.productProvider.findMany({
+      where: providerId ? { providerId } : {},
+      include: { provider: true, product: { include: { category: true } } },
+      orderBy: [{ costPrice: 'asc' }, { priority: 'asc' }],
+      take: 5000,
+    });
+
+    return links.map((link: any) => ({
+      id: link.id,
+      productId: link.productId,
+      productName: link.product?.name || null,
+      productCategoryName: link.product?.category?.name || null,
+      productIconUrl: link.product?.iconUrl || link.product?.imageUrl || null,
+      productFixedPrice: Number(link.product?.fixedPrice || 0),
+      productStockCount: Number(link.product?.stockCount || 0),
+      productHasInfiniteStock: Boolean(link.product?.hasInfiniteStock),
+      providerId: link.providerId,
+      providerName: link.provider.name,
+      providerType: link.provider.type,
+      providerProductCode: link.providerProductCode,
+      costPrice: Number(link.costPrice || 0),
+      costCurrency: link.costCurrency,
+      priority: link.priority,
+      isActive: link.isActive,
+    }));
+  }
+
+  @Public()
   @Get('products/:id/providers')
   async getProductProviders(@Param('id') productId: string) {
     const links = await this.prisma.productProvider.findMany({
