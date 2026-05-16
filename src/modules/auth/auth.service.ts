@@ -112,7 +112,7 @@ export class AuthService {
   /**
    * E-posta + şifre ile giriş.
    */
-  async login(email: string, password: string): Promise<AuthTokens> {
+  async login(email: string, password: string, remember = false): Promise<AuthTokens> {
     const user = await this.prisma.user.findUnique({ where: { email } });
 
     if (!user || user.status === UserStatus.INACTIVE || user.status === UserStatus.SUSPENDED) {
@@ -132,7 +132,7 @@ export class AuthService {
 
     this.logger.log(`Giriş: ${user.email}`);
 
-    return this.generateTokens(user);
+    return this.generateTokens(user, remember);
   }
 
   /**
@@ -163,7 +163,7 @@ export class AuthService {
     firstName: string;
     lastName: string;
     role: UserRole;
-  }): AuthTokens {
+  }, remember = false): AuthTokens {
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
@@ -171,7 +171,9 @@ export class AuthService {
     };
 
     return {
-      accessToken: this.jwtService.sign(payload),
+      accessToken: this.jwtService.sign(payload, {
+        expiresIn: remember ? '30d' : '24h',
+      }),
       user: {
         id: user.id,
         email: user.email,

@@ -45,8 +45,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Kullanıcı girişi — JWT token döner' })
   @ApiResponse({ status: 200, description: 'JWT access token' })
   @ApiResponse({ status: 401, description: 'Email veya şifre hatalı' })
-  async login(@Body() body: { email: string; password: string }) {
-    return this.authService.login(body.email, body.password);
+  async login(@Body() body: { email: string; password: string; remember?: boolean }) {
+    return this.authService.login(body.email, body.password, Boolean(body.remember));
   }
 
   @Get('me')
