@@ -2628,6 +2628,33 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Delete('points/lootboxes/:id')
+  async deletePointLootBox(@Param('id') id: string) {
+    const presetNames = this.getDefaultLootBoxes().map((box) => box.name);
+    const dbBox = await this.prisma.lootBox.findFirst({
+      where: {
+        OR: [
+          { id },
+          ...(this.getDefaultLootBoxes().find((box) => box.id === id)
+            ? [{ name: this.getDefaultLootBoxes().find((box) => box.id === id)!.name }]
+            : []),
+        ],
+      },
+    });
+    if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+
+    await this.prisma.lootBox.update({
+      where: { id: dbBox.id },
+      data: { isActive: false },
+    });
+
+    return {
+      success: true,
+      message: presetNames.includes(dbBox.name) ? 'Varsayılan kasa gizlendi.' : 'Kasa silindi.',
+    };
+  }
+
+  @Public()
   @Post('points/lootboxes/:id/open')
   async openPointLootBox(@Param('id') id: string, @Body() body: any) {
     if (!body.userId) {
