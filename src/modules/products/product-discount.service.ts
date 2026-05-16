@@ -274,13 +274,19 @@ export class ProductDiscountService {
         minQuantity: { lte: quantity },
         OR: [{ maxQuantity: 0 }, { maxQuantity: { gte: quantity } }],
         minOrderAmount: { lte: orderAmount },
-        OR: [
-          { validFrom: null },
-          { validFrom: { lte: now } },
-        ],
-        OR: [
-          { validUntil: null },
-          { validUntil: { gte: now } },
+        AND: [
+          {
+            OR: [
+              { validFrom: null },
+              { validFrom: { lte: now } },
+            ],
+          },
+          {
+            OR: [
+              { validUntil: null },
+              { validUntil: { gte: now } },
+            ],
+          },
         ],
         ...(dealerGroupId && { dealerGroupId }),
       },

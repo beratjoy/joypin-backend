@@ -256,7 +256,7 @@ export class AdminCompatController {
         }
 
         const nextStatus = result.delivered ? 'DELIVERED' : 'PROCESSING';
-        const transactionOps = [
+        const transactionOps: any[] = [
           this.prisma.subOrder.update({
             where: { id: subOrder.id },
             data: {
@@ -1080,7 +1080,7 @@ export class AdminCompatController {
   @Public()
   @Get('customers/:id')
   async getCustomerDetail(@Param('id') id: string) {
-    const user = await this.prisma.user.findUnique({
+    const user: any = await this.prisma.user.findUnique({
       where: { id },
       include: {
         wallet: true,
