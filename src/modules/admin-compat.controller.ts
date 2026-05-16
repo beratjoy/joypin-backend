@@ -56,7 +56,7 @@ export class AdminCompatController {
   private async recalculateOrderStatus(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { subOrders: { select: { status: true } } },
+      include: { subOrders: { select: { status: true, deliveredCount: true } } },
     });
     if (!order) return;
 
@@ -64,7 +64,11 @@ export class AdminCompatController {
     const allDelivered = statuses.length > 0 && statuses.every((status) => status === 'DELIVERED');
     const allCancelled = statuses.length > 0 && statuses.every((status) => status === 'CANCELLED');
     const allRefunded = statuses.length > 0 && statuses.every((status) => status === 'REFUNDED');
-    const someDelivered = statuses.some((status) => status === 'DELIVERED');
+    const someDelivered = order.subOrders.some((subOrder: any) =>
+      subOrder.status === 'DELIVERED' ||
+      subOrder.status === 'PARTIALLY_DELIVERED' ||
+      Number(subOrder.deliveredCount || 0) > 0,
+    );
     const someProcessing = statuses.some((status) => status === 'PROCESSING' || status === 'AWAITING_FALLBACK');
 
     const nextStatus = allDelivered
@@ -85,6 +89,80 @@ export class AdminCompatController {
         data: { status: nextStatus as any },
       });
     }
+  }
+
+  private async creditPartialDeliveryRemainder(input: {
+    tx: any;
+    order: any;
+    subOrder: any;
+    refundQuantity: number;
+    note: string;
+  }) {
+    const { tx, order, subOrder, refundQuantity, note } = input;
+    if (!order.userId || order.isGuest) {
+      throw new BadRequestException('Kalan adet bakiyesi sadece uyelikli musteri siparislerinde iade edilebilir.');
+    }
+    if (refundQuantity <= 0) return { refunded: false, amount: 0 };
+
+    const existingRefund = await tx.walletTransaction.findFirst({
+      where: {
+        orderId: order.id,
+        referenceType: 'partial_delivery_refund',
+        referenceId: subOrder.id,
+      },
+    });
+    if (existingRefund) return { refunded: false, amount: 0, skipped: true };
+
+    const refundAmount = Number(subOrder.unitPrice || 0) * refundQuantity;
+    if (refundAmount <= 0) return { refunded: false, amount: 0 };
+
+    const wallet = await tx.wallet.upsert({
+      where: { userId: order.userId },
+      update: {},
+      create: { userId: order.userId, currency: subOrder.currency || order.currency || 'TRY' },
+    });
+    const balanceAfter = Number(wallet.balanceCurrent || 0) + refundAmount;
+
+    await tx.wallet.update({
+      where: { id: wallet.id },
+      data: { balanceCurrent: { increment: refundAmount } },
+    });
+    await tx.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        type: 'CREDIT' as any,
+        balanceField: 'CURRENT' as any,
+        amount: refundAmount,
+        balanceAfter,
+        orderId: order.id,
+        referenceType: 'partial_delivery_refund',
+        referenceId: subOrder.id,
+        description: `Kismi teslimat bakiye iadesi: ${refundQuantity} adet teslim edilemedi. ${note}`,
+      },
+    });
+    await tx.orderFinancialLog.create({
+      data: {
+        orderId: order.id,
+        subOrderId: subOrder.id,
+        type: 'PARTIAL_REFUND' as any,
+        grossAmount: -refundAmount,
+        netAmount: -refundAmount,
+        costAmount: 0,
+        profitAmount: -refundAmount,
+        currency: subOrder.currency || order.currency || 'TRY',
+        description: `Kismi teslimat: ${refundQuantity} adet bakiye iadesi`,
+        metadata: { refundQuantity, deliveredCount: subOrder.deliveredCount, note },
+      },
+    });
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        paymentStatus: 'PARTIALLY_REFUNDED' as any,
+        netAmount: { decrement: refundAmount },
+      },
+    });
+
+    return { refunded: true, amount: refundAmount };
   }
 
   private providerRouteNote(providerName: string, externalRef?: string | null, status?: string | null) {
@@ -1703,7 +1781,7 @@ export class AdminCompatController {
       isActive: plan.isActive,
       sortOrder: plan.sortOrder,
       subscriberCount: plan._count?.subscriptions || 0,
-      revenue: Number(plan.subscriptions?.reduce((sum: number, subscription: any) => sum + Number(subscription.pricePaid || 0), 0) || 0),
+      revenue: Number(plan.subscriptions?.reduce((sum: number, subscription: any) => sum + Number(subscription.paidAmount || subscription.pricePaid || 0), 0) || 0),
       prices: (plan.prices?.length ? plan.prices : [{ currency: plan.currency, price: plan.price, country: null }]).map((price: any) => ({
         id: price.id,
         currency: price.currency,
@@ -1721,7 +1799,7 @@ export class AdminCompatController {
       include: {
         targetMemberType: true,
         prices: true,
-        subscriptions: { select: { pricePaid: true } },
+        subscriptions: { select: { paidAmount: true } },
         _count: { select: { subscriptions: true } },
       },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
@@ -2350,24 +2428,75 @@ export class AdminCompatController {
       throw new BadRequestException('Teslim sebebi/notu zorunludur');
     }
 
-    const order = await this.findOrderForAction(orderId);
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: { include: { product: true } } },
+    }) || await this.findOrderForAction(orderId);
     if (!order) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
 
     const deliverable = order.subOrders.filter((subOrder: any) => !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status));
-    const updatedSubOrders = [];
-    for (const subOrder of deliverable) {
-      const updated = await this.prisma.subOrder.update({
-        where: { id: subOrder.id },
-        data: {
-          status: 'DELIVERED' as any,
-          deliveredCount: subOrder.quantity,
-          deliveryNote: note,
-        },
-        include: { parentOrder: true, product: true },
-      });
-      updatedSubOrders.push(updated);
+    const requestedQuantity = Number(body?.deliveredQuantity || body?.quantity || 0);
+    const refundRemainder = Boolean(body?.refundRemainder);
+    const updatedSubOrders: any[] = [];
+    const refunds: any[] = [];
+
+    await this.prisma.$transaction(async (tx) => {
+      for (let index = 0; index < deliverable.length; index += 1) {
+        const subOrder = deliverable[index];
+        const alreadyDelivered = Number(subOrder.deliveredCount || 0);
+        const remaining = Math.max(0, Number(subOrder.quantity || 0) - alreadyDelivered);
+        if (remaining <= 0) continue;
+
+        const deliveryQuantity = Math.min(
+          remaining,
+          requestedQuantity > 0 && deliverable.length === 1 ? requestedQuantity : remaining,
+        );
+        if (deliveryQuantity <= 0) continue;
+
+        const nextDeliveredCount = alreadyDelivered + deliveryQuantity;
+        const isFullyDelivered = nextDeliveredCount >= Number(subOrder.quantity || 0);
+        const deliveryNote = [
+          note,
+          `${deliveryQuantity} adet manuel teslim edildi.`,
+          !isFullyDelivered ? `${Number(subOrder.quantity || 0) - nextDeliveredCount} adet bekliyor.` : '',
+        ].filter(Boolean).join(' ');
+
+        const updated = await tx.subOrder.update({
+          where: { id: subOrder.id },
+          data: {
+            status: (isFullyDelivered ? 'DELIVERED' : 'PARTIALLY_DELIVERED') as any,
+            deliveredCount: nextDeliveredCount,
+            deliveryNote,
+          },
+          include: { parentOrder: true, product: true },
+        });
+        updatedSubOrders.push(updated);
+
+        if (!subOrder.product?.hasInfiniteStock && deliveryQuantity > 0) {
+          await tx.product.update({
+            where: { id: subOrder.productId },
+            data: { stockCount: { decrement: deliveryQuantity } },
+          }).catch(() => null);
+        }
+
+        if (!isFullyDelivered && refundRemainder) {
+          const refundQuantity = Number(subOrder.quantity || 0) - nextDeliveredCount;
+          const refund = await this.creditPartialDeliveryRemainder({
+            tx,
+            order,
+            subOrder: updated,
+            refundQuantity,
+            note,
+          });
+          refunds.push({ subOrderId: subOrder.id, ...refund });
+        }
+      }
+    });
+
+    await this.recalculateOrderStatus(order.id);
+    for (const updated of updatedSubOrders.filter((subOrder) => subOrder.status === 'DELIVERED')) {
       try {
         await this.awardPointsForDeliveredSubOrder(updated);
       } catch (error) {
@@ -2375,12 +2504,13 @@ export class AdminCompatController {
       }
     }
 
-    await this.recalculateOrderStatus(order.id);
-
     return {
       success: true,
-      message: 'Sipariş teslim edildi',
+      message: updatedSubOrders.some((subOrder) => subOrder.status === 'PARTIALLY_DELIVERED')
+        ? 'Sipariş kısmen teslim edildi'
+        : 'Sipariş teslim edildi',
       updated: updatedSubOrders.length,
+      refunds,
     };
   }
 

@@ -506,14 +506,18 @@ export class OrdersService {
   async recalculateParentStatus(orderId: string) {
     const order = await this.prisma.order.findUniqueOrThrow({
       where: { id: orderId },
-      include: { subOrders: { select: { status: true } } },
+      include: { subOrders: { select: { status: true, deliveredCount: true } } },
     });
 
     const statuses = order.subOrders.map((so) => so.status);
     const allDelivered = statuses.every((s) => s === 'DELIVERED');
     const allCancelled = statuses.every((s) => s === 'CANCELLED');
     const allRefunded = statuses.every((s) => s === 'REFUNDED');
-    const someDelivered = statuses.some((s) => s === 'DELIVERED');
+    const someDelivered = order.subOrders.some((so) =>
+      so.status === 'DELIVERED' ||
+      so.status === 'PARTIALLY_DELIVERED' ||
+      Number(so.deliveredCount || 0) > 0,
+    );
     const someProcessing = statuses.some(
       (s) => s === 'PROCESSING' || s === 'AWAITING_FALLBACK',
     );

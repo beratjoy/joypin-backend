@@ -96,6 +96,7 @@ enum ParentOrderStatus {
 enum SubOrderStatus {
   PENDING
   PROCESSING
+  PARTIALLY_DELIVERED
   DELIVERED
   CANCELLED
   REFUNDED
