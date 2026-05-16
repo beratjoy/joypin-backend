@@ -7,6 +7,73 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Public()
+  @Get('payment-methods')
+  async listPaymentMethods() {
+    const paymentMethods = await this.prisma.paymentMethod.findMany({
+      orderBy: { sortOrder: 'asc' },
+    });
+    return {
+      paymentMethods: paymentMethods.map((method: any) => ({
+        ...method,
+        minAmount: Number(method.minAmount || 0),
+        maxAmount: Number(method.maxAmount || 0),
+        feePercent: Number(method.feePercent || 0),
+        fixedFee: Number(method.fixedFee || 0),
+      })),
+    };
+  }
+
+  @Public()
+  @Post('payment-methods')
+  async createPaymentMethod(@Body() body: any) {
+    const paymentMethod = await this.prisma.paymentMethod.create({
+      data: {
+        name: body.name,
+        code: String(body.code || '').toUpperCase(),
+        description: body.description || null,
+        iconUrl: body.iconUrl || null,
+        gatewayConfig: body.gatewayConfig || {},
+        minAmount: Number(body.minAmount || 0),
+        maxAmount: Number(body.maxAmount || 0),
+        feePercent: Number(body.feePercent || 0),
+        fixedFee: Number(body.fixedFee || 0),
+        sortOrder: Number(body.sortOrder || 0),
+        isActive: body.isActive !== false,
+      },
+    });
+    return { success: true, paymentMethod };
+  }
+
+  @Public()
+  @Patch('payment-methods/:id')
+  async updatePaymentMethod(@Param('id') id: string, @Body() body: any) {
+    const paymentMethod = await this.prisma.paymentMethod.update({
+      where: { id },
+      data: {
+        name: body.name,
+        code: body.code ? String(body.code).toUpperCase() : undefined,
+        description: body.description,
+        iconUrl: body.iconUrl,
+        gatewayConfig: body.gatewayConfig || {},
+        minAmount: body.minAmount !== undefined ? Number(body.minAmount || 0) : undefined,
+        maxAmount: body.maxAmount !== undefined ? Number(body.maxAmount || 0) : undefined,
+        feePercent: body.feePercent !== undefined ? Number(body.feePercent || 0) : undefined,
+        fixedFee: body.fixedFee !== undefined ? Number(body.fixedFee || 0) : undefined,
+        sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder || 0) : undefined,
+        isActive: body.isActive,
+      },
+    });
+    return { success: true, paymentMethod };
+  }
+
+  @Public()
+  @Delete('payment-methods/:id')
+  async deletePaymentMethod(@Param('id') id: string) {
+    await this.prisma.paymentMethod.delete({ where: { id } });
+    return { success: true };
+  }
+
   private async attachAssignedStaff<T extends { assignedStaffId?: string | null }>(orders: T[]): Promise<Array<T & { assignedStaff: any }>> {
     const staffIds = Array.from(new Set(orders.map((order) => order.assignedStaffId).filter(Boolean))) as string[];
     if (staffIds.length === 0) {

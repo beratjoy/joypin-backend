@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizeCountryCode, normalizeCurrency } from '../../common/locale-currency';
 
 @Injectable()
 export class PaymentsService {
@@ -13,6 +14,63 @@ export class PaymentsService {
       where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
     });
+  }
+
+  async findAvailableForCustomer(params: {
+    user?: any;
+    countryCode?: string;
+    currency?: string;
+    amount?: number;
+  }) {
+    const countryCode = normalizeCountryCode(params.user?.countryCode || params.countryCode);
+    const currency = normalizeCurrency(params.user?.preferredCurrency || params.currency, countryCode);
+    const amount = Number(params.amount || 0);
+    const dealerGroupId = params.user?.dealerGroupId;
+
+    const methods = await this.prisma.paymentMethod.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      include: {
+        dealerGroupMappings: dealerGroupId
+          ? { where: { dealerGroupId } }
+          : false,
+      },
+    });
+
+    return methods
+      .filter((method: any) => {
+        const mapping = method.dealerGroupMappings?.[0];
+        if (mapping && !mapping.isAllowed) return false;
+        if (amount > 0 && Number(method.minAmount || 0) > 0 && amount < Number(method.minAmount)) return false;
+        if (amount > 0 && Number(method.maxAmount || 0) > 0 && amount > Number(method.maxAmount)) return false;
+
+        const config = (method.gatewayConfig || {}) as any;
+        const allowedCountries = (config.allowedCountries || config.countries || []) as string[];
+        const allowedCurrencies = (config.allowedCurrencies || config.currencies || []) as string[];
+        const countryList = allowedCountries.map((item) => String(item).toUpperCase());
+        const currencyList = allowedCurrencies.map((item) => String(item).toUpperCase());
+
+        if (countryList.length && !countryList.includes(countryCode)) return false;
+        if (currencyList.length && !currencyList.includes(currency)) return false;
+
+        const code = String(method.code || '').toUpperCase();
+        if (!countryList.length && !currencyList.length) {
+          if ((code.includes('PAYTR') || code.includes('LIDIO') || code.includes('BANK')) && countryCode !== 'TR') return false;
+          if (code.includes('STRIPE') && countryCode === 'TR') return false;
+        }
+
+        return true;
+      })
+      .map((method: any) => {
+        const { dealerGroupMappings, ...rest } = method;
+        return {
+          ...rest,
+          feePercent: Number(method.feePercent || 0) + Number(dealerGroupMappings?.[0]?.additionalFeePercent || 0),
+          fixedFee: Number(method.fixedFee || 0),
+          minAmount: Number(method.minAmount || 0),
+          maxAmount: Number(method.maxAmount || 0),
+        };
+      });
   }
 
   /**

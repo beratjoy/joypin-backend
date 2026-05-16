@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UserRole, UserStatus } from '@prisma/client';
+import { normalizeCountryCode, normalizeCurrency, walletCanChangeCurrency } from '../../common/locale-currency';
 
 export interface JwtPayload {
   sub: string;
@@ -45,6 +46,8 @@ export class AuthService {
     lastName: string;
     phone?: string;
     referralCode?: string;
+    countryCode?: string;
+    preferredCurrency?: string;
   }): Promise<AuthTokens> {
     // E-posta benzersizlik kontrolü
     const existing = await this.prisma.user.findUnique({
@@ -67,6 +70,9 @@ export class AuthService {
     }
 
     // Kullanıcı oluştur
+    const countryCode = normalizeCountryCode(params.countryCode);
+    const preferredCurrency = normalizeCurrency(params.preferredCurrency, countryCode);
+
     const user = await this.prisma.user.create({
       data: {
         email: params.email,
@@ -78,12 +84,14 @@ export class AuthService {
         status: 'ACTIVE',
         referralCode: this.generateReferralCode(),
         referredById: referrerId,
+        countryCode,
+        preferredCurrency,
       },
     });
 
     // Cüzdan otomatik oluştur
     await this.prisma.wallet.create({
-      data: { userId: user.id, currency: 'USD' },
+      data: { userId: user.id, currency: preferredCurrency },
     });
 
     // Referans ilişkisi oluştur
@@ -112,8 +120,16 @@ export class AuthService {
   /**
    * E-posta + şifre ile giriş.
    */
-  async login(email: string, password: string, remember = false): Promise<AuthTokens> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+  async login(
+    email: string,
+    password: string,
+    remember = false,
+    locale?: { countryCode?: string; preferredCurrency?: string },
+  ): Promise<AuthTokens> {
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+      include: { wallet: true },
+    });
 
     if (!user || user.status === UserStatus.INACTIVE || user.status === UserStatus.SUSPENDED) {
       throw new UnauthorizedException('Geçersiz kimlik bilgileri.');
@@ -125,9 +141,28 @@ export class AuthService {
     }
 
     // Son giriş zamanını güncelle
-    await this.prisma.user.update({
+    const countryCode = locale?.countryCode ? normalizeCountryCode(locale.countryCode) : undefined;
+    const preferredCurrency = countryCode
+      ? normalizeCurrency(locale?.preferredCurrency || user.preferredCurrency, countryCode)
+      : undefined;
+
+    user = await this.prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date() },
+      data: {
+        lastLoginAt: new Date(),
+        ...(countryCode ? { countryCode } : {}),
+        ...(preferredCurrency ? { preferredCurrency } : {}),
+        ...(preferredCurrency && walletCanChangeCurrency(user.wallet)
+          ? {
+              wallet: {
+                upsert: {
+                  create: { currency: preferredCurrency },
+                  update: { currency: preferredCurrency },
+                },
+              },
+            }
+          : {}),
+      },
     });
 
     this.logger.log(`Giriş: ${user.email}`);

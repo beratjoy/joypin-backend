@@ -34,6 +34,8 @@ export class AuthController {
       lastName: string;
       phone?: string;
       referralCode?: string;
+      countryCode?: string;
+      preferredCurrency?: string;
     },
   ) {
     return this.authService.register(body);
@@ -45,8 +47,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Kullanıcı girişi — JWT token döner' })
   @ApiResponse({ status: 200, description: 'JWT access token' })
   @ApiResponse({ status: 401, description: 'Email veya şifre hatalı' })
-  async login(@Body() body: { email: string; password: string; remember?: boolean }) {
-    return this.authService.login(body.email, body.password, Boolean(body.remember));
+  async login(@Body() body: { email: string; password: string; remember?: boolean; countryCode?: string; preferredCurrency?: string }) {
+    return this.authService.login(body.email, body.password, Boolean(body.remember), {
+      countryCode: body.countryCode,
+      preferredCurrency: body.preferredCurrency,
+    });
   }
 
   @Get('me')
@@ -61,6 +66,8 @@ export class AuthController {
       lastName: user.lastName,
       role: user.role,
       dealerGroup: user.dealerGroup,
+      countryCode: user.countryCode,
+      preferredCurrency: user.preferredCurrency,
     };
   }
 

@@ -291,6 +291,8 @@ export class CustomerCompatController {
       email: user.email,
       phone: user.phone,
       role: user.role,
+      countryCode: user.countryCode,
+      preferredCurrency: user.preferredCurrency,
       memberTypeName: user.memberType?.name || null,
       memberTypeColor: user.memberType?.colorCode || null,
       balance: walletSummary.balanceCurrent,

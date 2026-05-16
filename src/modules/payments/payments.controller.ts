@@ -1,12 +1,36 @@
 import { Controller, Get, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { SmartRoutingService } from './smart-routing.service';
+import { PaymentsService } from './payments.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('Payments')
 @ApiBearerAuth('JWT')
 @Controller('payments')
 export class PaymentsController {
-  constructor(private readonly smartRouting: SmartRoutingService) {}
+  constructor(
+    private readonly smartRouting: SmartRoutingService,
+    private readonly paymentsService: PaymentsService,
+  ) {}
+
+  @Public()
+  @Get('methods')
+  @ApiOperation({ summary: 'Müşteriye açık ödeme yöntemleri (ülke/para birimi bazlı)' })
+  async getAvailablePaymentMethods(@Req() req: any) {
+    const headerCountry = req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'];
+    const countryCode = req.user?.countryCode || req.query?.country || headerCountry || 'TR';
+    const currency = req.user?.preferredCurrency || req.query?.currency;
+    return {
+      countryCode,
+      currency,
+      paymentMethods: await this.paymentsService.findAvailableForCustomer({
+        user: req.user,
+        countryCode: req.query?.country || headerCountry,
+        currency: req.query?.currency,
+        amount: req.query?.amount,
+      }),
+    };
+  }
 
   /**
    * Kullanıcının lokasyon ve para birimine göre uygun ödeme sağlayıcılarını döndürür.
