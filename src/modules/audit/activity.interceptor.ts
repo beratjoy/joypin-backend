@@ -52,6 +52,7 @@ export class ActivityInterceptor implements NestInterceptor {
         data: {
           userId: user.id || null,
           action,
+          category: this.categoryFor(method, path, user.role),
           entityType: this.entityTypeFor(path),
           entityId: this.entityIdFor(path),
           details: {
@@ -79,6 +80,19 @@ export class ActivityInterceptor implements NestInterceptor {
     if (method === 'POST') return path.includes('/orders') ? 'ORDER_PLACED' : 'CREATE';
     if (method === 'DELETE') return 'DELETE';
     return 'UPDATE';
+  }
+
+  private categoryFor(method: string, path: string, role?: string): string {
+    const clean = path.toLowerCase();
+    if (clean.includes('/auth') || clean.includes('/login') || clean.includes('/register')) return 'AUTH';
+    if (clean.includes('/orders') || clean.includes('/checkout')) return 'ORDER';
+    if (clean.includes('/payments') || clean.includes('/wallet') || clean.includes('/balance') || clean.includes('/finance')) return 'FINANCE';
+    if (clean.includes('/admin/security') || clean.includes('/staff') || ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'].includes(String(role || ''))) return 'STAFF';
+    if (clean.includes('/products') || clean.includes('/categories') || clean.includes('/stocks') || clean.includes('/providers')) return 'CATALOG';
+    if (clean.includes('/tickets') || clean.includes('/reviews') || clean.includes('/comments')) return 'SUPPORT';
+    if (clean.includes('/settings') || clean.includes('/admin')) return 'ADMIN';
+    if (method === 'GET') return 'VIEW';
+    return 'SYSTEM';
   }
 
   private entityTypeFor(path: string): string {

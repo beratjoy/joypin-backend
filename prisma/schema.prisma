@@ -1237,6 +1237,7 @@ model AuditLog {
   userId     String?
   user       User?       @relation(fields: [userId], references: [id])
   action     AuditAction
+  category   String      @default("SYSTEM") @db.VarChar(40)
   entityType String?     @db.VarChar(50)
   entityId   String?
 
@@ -1250,7 +1251,9 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([userId, createdAt])
   @@index([action])
+  @@index([category, createdAt])
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")

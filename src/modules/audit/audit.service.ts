@@ -9,6 +9,7 @@ export class AuditService {
   async log(params: {
     userId?: string;
     action: AuditAction;
+    category?: string;
     entityType?: string;
     entityId?: string;
     details?: Record<string, any>;
@@ -17,7 +18,12 @@ export class AuditService {
     ipAddress?: string;
     userAgent?: string;
   }) {
-    return this.prisma.auditLog.create({ data: params as any });
+    return this.prisma.auditLog.create({
+      data: {
+        ...params,
+        category: params.category || this.categoryFor(params.action, params.entityType),
+      } as any,
+    });
   }
 
   async findByEntity(entityType: string, entityId: string) {
@@ -34,5 +40,14 @@ export class AuditService {
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
+  }
+
+  private categoryFor(action: AuditAction, entityType?: string): string {
+    const entity = String(entityType || '').toLowerCase();
+    if (String(action).includes('ORDER') || entity.includes('order')) return 'ORDER';
+    if (String(action).includes('BALANCE') || entity.includes('wallet') || entity.includes('payment')) return 'FINANCE';
+    if (String(action).includes('STAFF') || entity.includes('staff')) return 'STAFF';
+    if (entity.includes('product') || entity.includes('category') || entity.includes('stock')) return 'CATALOG';
+    return 'SYSTEM';
   }
 }

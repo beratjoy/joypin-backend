@@ -784,6 +784,8 @@ export class AdminCompatController {
     @Query('userId') userId?: string,
     @Query('action') action?: string,
     @Query('entityType') entityType?: string,
+    @Query('category') category?: string,
+    @Query('actorType') actorType?: string,
   ) {
     const currentPage = Math.max(Number(page) || 1, 1);
     const perPage = Math.min(Math.max(Number(limit) || 50, 10), 100);
@@ -791,8 +793,17 @@ export class AdminCompatController {
     if (userId) where.userId = userId;
     if (action && action !== 'all') where.action = action;
     if (entityType && entityType !== 'all') where.entityType = entityType;
+    if (category && category !== 'all') where.category = category;
+    if (actorType && actorType !== 'all') {
+      where.user = actorType === 'staff'
+        ? { role: { in: ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'] as any } }
+        : { role: { notIn: ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'] as any } };
+    }
 
-    const [total, logs] = await Promise.all([
+    const categoryWhere = { ...where };
+    delete categoryWhere.category;
+
+    const [total, logs, categoryCounts] = await Promise.all([
       this.prisma.auditLog.count({ where }),
       this.prisma.auditLog.findMany({
         where,
@@ -801,10 +812,16 @@ export class AdminCompatController {
         skip: (currentPage - 1) * perPage,
         take: perPage,
       }),
+      this.prisma.auditLog.groupBy({
+        by: ['category'],
+        where: categoryWhere,
+        _count: { _all: true },
+      }),
     ]);
 
     return {
       logs,
+      categories: categoryCounts.map((item: any) => ({ key: item.category, count: item._count._all })),
       pagination: {
         page: currentPage,
         limit: perPage,
