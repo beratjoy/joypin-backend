@@ -25,6 +25,34 @@ export class AdminCompatController {
     }));
   }
 
+  private normalizeAdminOrder(order: any) {
+    const customerName = order.user
+      ? `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim() || order.user.email
+      : order.guestEmail || 'Misafir Musteri';
+    const customerEmail = order.user?.email || order.guestEmail || '';
+    const normalizedSubOrders = (order.subOrders || []).map((subOrder: any) => ({
+      ...subOrder,
+      productName: subOrder.product?.name || subOrder.productName || 'Urun adi yok',
+      productIconUrl: subOrder.product?.iconUrl || subOrder.product?.merchantImageUrl || null,
+      productCategoryName: subOrder.product?.category?.name || null,
+      providerName: subOrder.botProvider?.name || null,
+      quantity: Number(subOrder.quantity || 0),
+      unitPrice: Number(subOrder.unitPrice || 0),
+      totalPrice: Number(subOrder.totalPrice || 0),
+      unitCost: Number(subOrder.unitCost || 0),
+    }));
+
+    return {
+      ...order,
+      customerName,
+      customerEmail,
+      customerType: order.user?.customerType || (order.isGuest ? 'guest' : 'individual'),
+      totalAmount: Number(order.totalAmount || 0),
+      netAmount: Number(order.netAmount || 0),
+      subOrders: normalizedSubOrders,
+    };
+  }
+
   private async recalculateOrderStatus(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -2155,10 +2183,11 @@ export class AdminCompatController {
   @Get('orders')
   async getOrders() {
     const orders = await this.prisma.order.findMany({
-      include: { user: true, subOrders: { include: { product: true, items: true, botProvider: true } } },
+      include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
       orderBy: { createdAt: 'desc' },
     });
-    return { orders: await this.attachAssignedStaff(orders) };
+    const withStaff = await this.attachAssignedStaff(orders);
+    return { orders: withStaff.map((order) => this.normalizeAdminOrder(order)) };
   }
 
   @Get('orders/:orderId')
@@ -2168,7 +2197,7 @@ export class AdminCompatController {
       include: {
         user: true,
         subOrders: {
-          include: { product: true, items: true, botProvider: true },
+          include: { product: { include: { category: true } }, items: true, botProvider: true },
         },
       },
     });
@@ -2176,7 +2205,7 @@ export class AdminCompatController {
       throw new NotFoundException('Sipariş bulunamadı');
     }
     const [withStaff] = await this.attachAssignedStaff([order]);
-    return withStaff;
+    return this.normalizeAdminOrder(withStaff);
   }
 
   @Get('orders/:orderId/fraud-doc')
