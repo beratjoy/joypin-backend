@@ -8,6 +8,19 @@ export class StorefrontCompatController {
 
   private readonly fallbackImage = '/uploads/e33a4974-bf03-4cfd-9753-cc70ca381215.webp';
 
+  private normalizeCountry(country?: string | null) {
+    return (country || '').trim().toUpperCase();
+  }
+
+  private visibleForCountry(item: { allowedCountries?: unknown }, country?: string | null) {
+    const normalized = this.normalizeCountry(country);
+    if (!normalized) return true;
+    const allowed = Array.isArray(item.allowedCountries)
+      ? item.allowedCountries.map((code) => this.normalizeCountry(String(code))).filter(Boolean)
+      : [];
+    return allowed.length === 0 || allowed.includes(normalized);
+  }
+
   private toCdnUrl(pathname: string) {
     const cdnBase = (process.env.CDN_PUBLIC_URL || '').replace(/\/$/, '');
     return cdnBase && pathname.startsWith('/') ? `${cdnBase}${pathname}` : pathname;
@@ -89,17 +102,19 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('categories')
-  async getCategories() {
+  async getCategories(@Query('country') country?: string) {
     const categories = await this.prisma.$queryRawUnsafe<any[]>(
-      'SELECT id, name, slug, "imageUrl", "sortOrder" FROM product_categories WHERE "isActive" = true ORDER BY "sortOrder" ASC',
+      'SELECT id, name, slug, "imageUrl", "sortOrder", "allowedCountries" FROM product_categories WHERE "isActive" = true ORDER BY "sortOrder" ASC',
     );
+    const visibleCategories = categories.filter((category: any) => this.visibleForCountry(category, country));
 
     return Promise.all(
-      categories.map(async (category: any) => ({
+      visibleCategories.map(async (category: any) => ({
         id: category.id,
         name: category.name,
         slug: category.slug,
         imageUrl: this.normalizeImageUrl(category.imageUrl, category.slug),
+        allowedCountries: category.allowedCountries || [],
         productCount: Number(
           (
             await this.prisma.$queryRawUnsafe<any[]>(
@@ -115,15 +130,15 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('categories/:slug')
-  async getCategoryBySlug(@Param('slug') slug: string) {
+  async getCategoryBySlug(@Param('slug') slug: string, @Query('country') country?: string) {
     const category = (
       await this.prisma.$queryRawUnsafe<any[]>(
-        'SELECT id, name, slug, description, "imageUrl", layout, badges, "paymentMethods", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
+        'SELECT id, name, slug, description, "imageUrl", layout, badges, "paymentMethods", "allowedCountries", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
         slug,
       )
     )[0];
 
-    if (!category) {
+    if (!category || !this.visibleForCountry(category, country)) {
       throw new NotFoundException('Category not found');
     }
 
@@ -141,6 +156,7 @@ export class StorefrontCompatController {
       layout: category.layout || 'jollymax',
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
+      allowedCountries: category.allowedCountries || [],
       requiresUserId: category.requiresUserId ?? products.some((product: any) => product.type === 'TOPUP'),
       userIdLabel: category.userIdLabel || 'Oyuncu ID',
       userIdPlaceholder: category.userIdPlaceholder || 'Oyuncu ID giriniz',
@@ -165,7 +181,7 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('products')
-  async getProducts(@Query('limit') limit?: string) {
+  async getProducts(@Query('limit') limit?: string, @Query('country') country?: string) {
     const take = Math.min(Number(limit || 60), 100);
     const products = await this.prisma.product.findMany({
       where: { isActive: true },
@@ -174,7 +190,7 @@ export class StorefrontCompatController {
       take,
     });
 
-    return products.map((product: any) => {
+    return products.filter((product: any) => this.visibleForCountry(product.category || {}, country)).map((product: any) => {
       const basePrice = Number(product.fixedPrice || product.baseCost || 0);
       const discount = Number(product.discountPercent || 0);
       return {
@@ -197,7 +213,7 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('products/:slug')
-  async getProductBySlug(@Param('slug') slug: string) {
+  async getProductBySlug(@Param('slug') slug: string, @Query('country') country?: string) {
     const product = await this.prisma.product.findFirst({
       where: { slug, isActive: true },
       include: {
@@ -206,7 +222,7 @@ export class StorefrontCompatController {
       },
     });
 
-    if (!product) {
+    if (!product || !this.visibleForCountry(product.category || {}, country)) {
       throw new NotFoundException('Product not found');
     }
 

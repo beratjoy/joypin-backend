@@ -438,6 +438,7 @@ model ProductCategory {
   layout      String  @default("jollymax") @db.VarChar(50)
   badges      Json?
   paymentMethods Json?
+  allowedCountries Json?
   requiresUserId Boolean @default(false)
   userIdLabel String? @db.VarChar(100)
   userIdPlaceholder String? @db.VarChar(200)
