@@ -133,7 +133,7 @@ export class StorefrontCompatController {
   async getCategoryBySlug(@Param('slug') slug: string, @Query('country') country?: string) {
     const category = (
       await this.prisma.$queryRawUnsafe<any[]>(
-        'SELECT id, name, slug, description, "imageUrl", layout, badges, "paymentMethods", "allowedCountries", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
+        'SELECT id, name, slug, description, "imageUrl", "logoUrl", layout, badges, "paymentMethods", "allowedCountries", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
         slug,
       )
     )[0];
@@ -153,6 +153,7 @@ export class StorefrontCompatController {
       name: category.name,
       description: category.description || '',
       imageUrl: this.normalizeImageUrl(category.imageUrl, category.slug),
+      logoUrl: this.normalizeImageUrl(category.logoUrl || category.imageUrl, category.slug),
       layout: category.layout || 'jollymax',
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],

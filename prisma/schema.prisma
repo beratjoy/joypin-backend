@@ -435,6 +435,7 @@ model ProductCategory {
   slug        String  @unique @db.VarChar(120)
   description String?
   imageUrl    String? @db.VarChar(500)
+  logoUrl     String? @db.VarChar(500)
   layout      String  @default("jollymax") @db.VarChar(50)
   badges      Json?
   paymentMethods Json?
