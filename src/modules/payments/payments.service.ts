@@ -54,6 +54,7 @@ export class PaymentsService {
         if (currencyList.length && !currencyList.includes(currency)) return false;
 
         const code = String(method.code || '').toUpperCase();
+        if (code.includes('WALLET')) return false;
         if (!countryList.length && !currencyList.length) {
           if ((code.includes('PAYTR') || code.includes('LIDIO') || code.includes('BANK')) && countryCode !== 'TR') return false;
           if (code.includes('STRIPE') && countryCode === 'TR') return false;
