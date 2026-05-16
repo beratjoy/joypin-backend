@@ -141,17 +141,21 @@ export class StorefrontCompatController {
       userIdLabel: category.userIdLabel || 'Oyuncu ID',
       userIdPlaceholder: category.userIdPlaceholder || 'Oyuncu ID giriniz',
       zoneIdLabel: category.zoneIdLabel || null,
-      products: products.map((product: any) => ({
-        id: product.id,
-        name: product.name,
-        slug: product.slug,
-        shortName: product.shortName || product.name,
-        baseCost: Number(product.fixedPrice || product.baseCost || 0),
-        marginPercent: Number(product.marginPercent || 0),
-        pricingModel: product.pricingModel,
-        type: product.type || 'EPIN',
-        iconUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || category.imageUrl, category.slug),
-      })),
+      products: products.map((product: any) => {
+        const productImage = this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || category.imageUrl, category.slug);
+        return {
+          id: product.id,
+          name: product.name,
+          slug: product.slug,
+          shortName: product.shortName || product.name,
+          baseCost: Number(product.fixedPrice || product.baseCost || 0),
+          marginPercent: Number(product.marginPercent || 0),
+          pricingModel: product.pricingModel,
+          type: product.type || 'EPIN',
+          iconUrl: productImage,
+          imageUrl: productImage,
+        };
+      }),
     };
   }
 
