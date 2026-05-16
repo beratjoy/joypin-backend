@@ -2,10 +2,14 @@
 import { Public } from './auth/decorators/public.decorator';
 import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from './mail/mail.service';
 
 @Controller('admin')
 export class AdminCompatController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService,
+  ) {}
 
   @Public()
   @Get('payment-methods')
@@ -857,6 +861,18 @@ export class AdminCompatController {
         description: body.description || key,
       },
     });
+  }
+
+  @Public()
+  @Post('settings/mail/test')
+  async sendMailSettingsTest(@Body() body: any) {
+    const to = String(body?.to || '').trim();
+    if (!to || !to.includes('@')) {
+      throw new BadRequestException('Valid test email is required');
+    }
+
+    await this.mailService.sendTestEmail(to);
+    return { success: true };
   }
 
 

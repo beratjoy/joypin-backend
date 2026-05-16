@@ -37,22 +37,11 @@ interface TemplateVars {
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: nodemailer.Transporter;
 
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
-  ) {
-    this.transporter = nodemailer.createTransport({
-      host: this.config.get('SMTP_HOST', 'smtp.resend.com'),
-      port: this.config.get('SMTP_PORT', 465),
-      secure: true,
-      auth: {
-        user: this.config.get('SMTP_USER', 'resend'),
-        pass: this.config.get('SMTP_PASS', ''),
-      },
-    });
-  }
+  ) {}
 
   // ═══════════════════════════════════════════════════════
   // 1. TRANSACTIONAL EMAILS
@@ -484,6 +473,33 @@ export class MailService {
   // ═══════════════════════════════════════════════════════
 
   /** Tracking pixel açıldığında çağrılır */
+  async sendTestEmail(to: string): Promise<void> {
+    const html = this.wrapTemplate(`
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="display:inline-block;width:56px;height:56px;border-radius:18px;background:linear-gradient(135deg,#7c3aed,#06b6d4);line-height:56px;color:#ffffff;font-size:26px;font-weight:900;box-shadow:0 18px 45px rgba(124,58,237,0.35);">J</div>
+        <h2 style="color:#f8fafc;margin:18px 0 8px;font-size:26px;line-height:1.2;">Mail sistemi aktif</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.7;margin:0;">Bu test maili admin panelindeki SMTP ayarlari kullanilarak gonderildi.</p>
+      </div>
+
+      <div style="background:rgba(15,23,42,0.72);border:1px solid rgba(99,102,241,0.22);border-radius:18px;padding:18px;margin:0 0 22px;">
+        <p style="color:#c4b5fd;font-size:11px;letter-spacing:1.8px;text-transform:uppercase;margin:0 0 10px;font-weight:800;">Durum</p>
+        <p style="color:#f8fafc;font-size:15px;line-height:1.7;margin:0;">SMTP baglantisi, gonderici bilgileri ve modern koyu tema sablonu calisiyor.</p>
+      </div>
+
+      <a href="${this.getSiteUrl()}" style="display:block;background:linear-gradient(135deg,#7c3aed,#2563eb 55%,#06b6d4);color:#ffffff;padding:15px 22px;border-radius:14px;text-decoration:none;font-size:14px;font-weight:800;text-align:center;box-shadow:0 18px 40px rgba(37,99,235,0.32);">
+        Siteyi Ac
+      </a>
+    `);
+
+    await this.send({
+      to,
+      subject: 'JoyPin mail sistemi test edildi',
+      html,
+      emailType: 'CAMPAIGN',
+      metadata: { source: 'admin_mail_settings_test' },
+    });
+  }
+
   async recordOpen(trackingId: string): Promise<void> {
     try {
       await this.prisma.emailLog.updateMany({
@@ -543,6 +559,12 @@ export class MailService {
   // ═══════════════════════════════════════════════════════
 
   private async send(payload: MailPayload): Promise<void> {
+    const mailConfig = await this.getMailConfig();
+    if (!mailConfig.enabled) {
+      this.logger.warn(`Email disabled. Skipped: ${payload.to} / ${payload.subject}`);
+      return;
+    }
+
     const trackingId = payload.trackingId || randomUUID();
 
     // Inject tracking pixel into HTML
@@ -553,9 +575,20 @@ export class MailService {
     );
 
     try {
-      await this.transporter.sendMail({
-        from: `"JoyPin" <${this.config.get('SMTP_FROM', 'noreply@joypin.com')}>`,
+      const transporter = nodemailer.createTransport({
+        host: mailConfig.host,
+        port: mailConfig.port,
+        secure: mailConfig.secure,
+        auth: mailConfig.user && mailConfig.pass ? {
+          user: mailConfig.user,
+          pass: mailConfig.pass,
+        } : undefined,
+      });
+
+      await transporter.sendMail({
+        from: `"${mailConfig.fromName}" <${mailConfig.fromEmail}>`,
         to: payload.to,
+        replyTo: mailConfig.replyTo || undefined,
         subject: payload.subject,
         html: htmlWithPixel,
       });
@@ -600,6 +633,42 @@ export class MailService {
     return this.config.get('SITE_URL', 'https://joypin.com');
   }
 
+  private async getMailConfig() {
+    const keys = [
+      'mail_enabled',
+      'mail_smtp_host',
+      'mail_smtp_port',
+      'mail_smtp_secure',
+      'mail_smtp_user',
+      'mail_smtp_pass',
+      'mail_from_email',
+      'mail_from_name',
+      'mail_reply_to',
+      'mail_brand_name',
+      'mail_footer_company',
+    ];
+    const rows = await this.prisma.siteSettings.findMany({ where: { key: { in: keys } } });
+    const settings = rows.reduce<Record<string, string>>((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    const port = Number(settings.mail_smtp_port || this.config.get('SMTP_PORT', 465));
+
+    return {
+      enabled: (settings.mail_enabled || this.config.get('MAIL_ENABLED', 'true')) !== 'false',
+      host: settings.mail_smtp_host || this.config.get('SMTP_HOST', 'smtp.resend.com'),
+      port: Number.isFinite(port) ? port : 465,
+      secure: (settings.mail_smtp_secure || this.config.get('SMTP_SECURE', 'true')) !== 'false',
+      user: settings.mail_smtp_user || this.config.get('SMTP_USER', 'resend'),
+      pass: settings.mail_smtp_pass || this.config.get('SMTP_PASS', ''),
+      fromEmail: settings.mail_from_email || this.config.get('SMTP_FROM', 'noreply@joypin.com'),
+      fromName: settings.mail_from_name || settings.mail_brand_name || this.config.get('SMTP_FROM_NAME', 'JoyPin'),
+      replyTo: settings.mail_reply_to || this.config.get('SMTP_REPLY_TO', ''),
+      brandName: settings.mail_brand_name || 'JoyPin',
+      footerCompany: settings.mail_footer_company || 'Joy Bilisim Yazilim E-Ticaret Danismanlik Limited Sirketi',
+    };
+  }
+
   /** Mustache-style template rendering */
   renderTemplate(template: string, vars: TemplateVars): string {
     return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
@@ -625,15 +694,15 @@ export class MailService {
   <style>table,td{font-family:Arial,sans-serif;}</style>
   <![endif]-->
 </head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#0f172a;padding:40px 16px;">
+<body style="margin:0;padding:0;background:#020617;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#020617;padding:42px 16px;">
     <tr>
       <td align="center">
-        <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;">
+        <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:620px;">
           <!-- Header with neon glow -->
           <tr>
-            <td style="padding:0 0 32px;text-align:center;">
-              <span style="font-size:28px;font-weight:900;color:#f1f5f9;text-shadow:0 0 30px rgba(99,102,241,0.3);">
+            <td style="padding:0 0 24px;text-align:center;">
+              <span style="display:inline-block;background:#0f172a;border:1px solid rgba(148,163,184,0.16);border-radius:999px;padding:10px 18px;color:#f8fafc;font-size:22px;font-weight:900;letter-spacing:.2px;box-shadow:0 20px 60px rgba(79,70,229,0.2);">
                 Joy<span style="color:#6366f1;">Pin</span>
               </span>
             </td>
@@ -641,14 +710,15 @@ export class MailService {
 
           <!-- Body Card — Glass morphism effect -->
           <tr>
-            <td style="background:linear-gradient(180deg,#0f172a 0%,#1e1b4b 100%);border:1px solid rgba(99,102,241,0.15);border-radius:20px;padding:36px 28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+            <td style="background:linear-gradient(180deg,#0f172a 0%,#111827 58%,#1e1b4b 100%);border:1px solid rgba(129,140,248,0.22);border-radius:28px;padding:34px 30px;box-shadow:0 32px 80px rgba(0,0,0,0.58);">
+              <div style="height:3px;width:100%;background:linear-gradient(90deg,#8b5cf6,#06b6d4,#22c55e);border-radius:999px;margin:0 0 28px;"></div>
               ${bodyContent}
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="padding:32px 0 0;text-align:center;">
+            <td style="padding:28px 8px 0;text-align:center;">
               <p style="color:#475569;font-size:11px;line-height:1.6;margin:0 0 8px;">
                 Bu e-posta <strong style="color:#6366f1;">JoyPin</strong> platformu tarafından otomatik olarak gönderilmiştir.
               </p>
@@ -656,7 +726,7 @@ export class MailService {
                 Joy Bilişim Yazılım E-Ticaret Danışmanlık Limited Şirketi<br>
                 Tüm hakları saklıdır. &copy; ${new Date().getFullYear()}
               </p>
-              <p style="color:#1e293b;font-size:9px;margin:0;">
+              <p style="color:#334155;font-size:9px;margin:0;">
                 <a href="${this.getSiteUrl()}/unsubscribe" style="color:#475569;text-decoration:underline;">Abonelikten çık</a>
               </p>
             </td>
