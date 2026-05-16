@@ -15,11 +15,28 @@ interface MailPayload {
   campaignId?: string;
   orderId?: string;
   metadata?: Record<string, unknown>;
+  templateVars?: TemplateVars;
 }
 
 interface TemplateVars {
   [key: string]: string | number | boolean | undefined;
 }
+
+const MAIL_EVENTS = [
+  { emailType: 'WELCOME', slug: 'welcome', name: 'Hoş Geldin', description: 'Yeni üyelik ve e-posta doğrulama maili' },
+  { emailType: 'EMAIL_VERIFICATION', slug: 'email-verification', name: 'Doğrulama Kodu', description: 'OTP ve güvenlik doğrulama kodları' },
+  { emailType: 'ORDER_CONFIRMATION', slug: 'order-confirmation', name: 'Sipariş Onayı', description: 'Ödeme sonrası sipariş alındı maili' },
+  { emailType: 'ORDER_DELIVERY', slug: 'order-delivery', name: 'Teslimat', description: 'E-pin veya sipariş teslim maili' },
+  { emailType: 'GUEST_ORDER_INFO', slug: 'guest-order-info', name: 'Misafir Sipariş', description: 'Üyeliksiz sipariş takip maili' },
+  { emailType: 'PASSWORD_RESET', slug: 'password-reset', name: 'Şifre Sıfırlama', description: 'Şifre yenileme bağlantısı' },
+  { emailType: 'ACCOUNT_DELETION', slug: 'account-deletion', name: 'Üyelik İptali', description: 'Üyelik silme/onay bilgilendirmesi' },
+  { emailType: 'BALANCE_LOADED', slug: 'balance-loaded', name: 'Bakiye Yüklendi', description: 'Cüzdan bakiye yükleme bildirimi' },
+  { emailType: 'ABANDONED_CART_1H', slug: 'abandoned-cart-1h', name: 'Sepet Hatırlatma 1 Saat', description: 'Terk edilen sepet ilk hatırlatma' },
+  { emailType: 'ABANDONED_CART_24H', slug: 'abandoned-cart-24h', name: 'Sepet Hatırlatma 24 Saat', description: 'Terk edilen sepet indirimli hatırlatma' },
+  { emailType: 'RE_ENGAGEMENT', slug: 're-engagement', name: 'Geri Kazanım', description: 'Uzun süredir alışveriş yapmayan kullanıcı' },
+  { emailType: 'CAMPAIGN', slug: 'campaign', name: 'Kampanya', description: 'Manuel kampanya ve sistem test mailleri' },
+  { emailType: 'REFERRAL_EARNED', slug: 'referral-earned', name: 'Referans Kazancı', description: 'Referans komisyonu bilgilendirmesi' },
+] as const;
 
 /**
  * Kurumsal E-Posta Servisi — v2 (Marketing Engine)
@@ -78,6 +95,7 @@ export class MailService {
     await this.send({
       to, subject: `Hoş Geldin ${data.firstName}! E-postanı doğrula 🎮`, html,
       emailType: 'WELCOME', userId: data.userId,
+      templateVars: { firstName: data.firstName, otpCode: data.otpCode, verifyUrl: `${this.getSiteUrl()}/verify?email=${encodeURIComponent(to)}` },
     });
   }
 
@@ -121,6 +139,7 @@ export class MailService {
     await this.send({
       to, subject: `Sipariş Onayı — #${data.orderId.slice(0, 8).toUpperCase()}`, html,
       emailType: 'ORDER_CONFIRMATION', userId: data.userId, orderId: data.orderId,
+      templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), productName: data.productName, quantity: data.quantity, totalAmount: data.totalAmount, currency: data.currency, orderUrl: `${this.getSiteUrl()}/account/orders` },
     });
   }
 
@@ -169,6 +188,7 @@ export class MailService {
     await this.send({
       to, subject: `E-Pin Kodlarınız Hazır — ${data.productName}`, html,
       emailType: 'ORDER_DELIVERY', userId: data.userId, orderId: data.orderId,
+      templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), productName: data.productName, codes: data.codes.join(', '), codeList: data.codes.join('<br>') },
     });
   }
 
@@ -212,6 +232,7 @@ export class MailService {
     await this.send({
       to, subject: `Sipariş Takip Linkiniz — #${data.orderId.slice(0, 8).toUpperCase()}`, html,
       emailType: 'GUEST_ORDER_INFO', orderId: data.orderId,
+      templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), trackingToken: data.trackingToken, productName: data.productName, totalAmount: data.totalAmount, currency: data.currency, trackUrl },
     });
   }
 
@@ -238,6 +259,7 @@ export class MailService {
     await this.send({
       to, subject: 'Şifre Sıfırlama — JoyPin', html,
       emailType: 'PASSWORD_RESET', userId: data.userId,
+      templateVars: { firstName: data.firstName, resetUrl: data.resetUrl },
     });
   }
 
@@ -268,6 +290,7 @@ export class MailService {
     await this.send({
       to, subject: 'Üyelik İptali Onayı — Seni özleyeceğiz!', html,
       emailType: 'ACCOUNT_DELETION', userId: data.userId,
+      templateVars: { firstName: data.firstName, reactivateUrl: `${this.getSiteUrl()}/reactivate` },
     });
   }
 
@@ -291,6 +314,7 @@ export class MailService {
     await this.send({
       to, subject: `Doğrulama Kodu: ${data.code}`, html,
       emailType: 'EMAIL_VERIFICATION', userId: data.userId,
+      templateVars: { code: data.code, purpose: data.purpose },
     });
   }
 
@@ -329,6 +353,7 @@ export class MailService {
     await this.send({
       to, subject: 'Bakiye Yüklendi — JoyPin', html,
       emailType: 'BALANCE_LOADED', userId: data.userId,
+      templateVars: { amount: data.amount, currency: data.currency, balanceType: data.balanceType, newBalance: data.newBalance, walletUrl: `${this.getSiteUrl()}/account/wallet` },
     });
   }
 
@@ -377,6 +402,7 @@ export class MailService {
       to, subject: '🛒 Sepetinde ürün var — Kaçırma!', html,
       emailType: 'ABANDONED_CART_1H', userId: data.userId,
       metadata: { couponCode: data.couponCode },
+      templateVars: { firstName: data.firstName, couponCode: data.couponCode || '', checkoutUrl: `${this.getSiteUrl()}/checkout` },
     });
   }
 
@@ -409,6 +435,7 @@ export class MailService {
       to, subject: '⏰ Son Şans! Sepetindeki ürünler tükeniyor', html,
       emailType: 'ABANDONED_CART_24H', userId: data.userId,
       metadata: { couponCode: data.couponCode },
+      templateVars: { firstName: data.firstName, couponCode: data.couponCode, checkoutUrl: `${this.getSiteUrl()}/checkout` },
     });
   }
 
@@ -447,6 +474,7 @@ export class MailService {
       to, subject: '💜 Seni çok özledik! İşte sana özel %20 indirim', html,
       emailType: 'RE_ENGAGEMENT', userId: data.userId,
       metadata: { couponCode: data.couponCode },
+      templateVars: { firstName: data.firstName, couponCode: data.couponCode, siteUrl: this.getSiteUrl() },
     });
   }
 
@@ -465,6 +493,7 @@ export class MailService {
     await this.send({
       to, subject: data.subject, html,
       emailType: 'CAMPAIGN', userId: data.userId, campaignId: data.campaignId,
+      templateVars: { bodyHtml: data.bodyHtml, siteUrl: this.getSiteUrl() },
     });
   }
 
@@ -497,7 +526,102 @@ export class MailService {
       html,
       emailType: 'CAMPAIGN',
       metadata: { source: 'admin_mail_settings_test' },
+      templateVars: { siteUrl: this.getSiteUrl() },
     });
+  }
+
+  async listManagedTemplates() {
+    const [templates, settings] = await Promise.all([
+      this.prisma.emailTemplate.findMany({
+        where: { languageCode: 'tr' },
+        orderBy: [{ emailType: 'asc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.siteSettings.findMany({
+        where: { key: { in: MAIL_EVENTS.map((event) => this.eventSettingKey(event.emailType)) } },
+      }),
+    ]);
+    const settingMap = new Map(settings.map((setting) => [setting.key, setting.value]));
+
+    return MAIL_EVENTS.map((event) => {
+      const template = templates.find((item: any) => item.emailType === event.emailType);
+      return {
+        ...event,
+        isEnabled: settingMap.get(this.eventSettingKey(event.emailType)) !== 'false',
+        template: template || {
+          id: null,
+          slug: event.slug,
+          name: event.name,
+          subject: this.defaultSubjectFor(event.emailType),
+          bodyHtml: this.defaultBodyFor(event.emailType),
+          description: event.description,
+          emailType: event.emailType,
+          isActive: true,
+          languageCode: 'tr',
+          version: 1,
+        },
+        variables: this.variablesFor(event.emailType),
+      };
+    });
+  }
+
+  async saveManagedTemplate(emailType: string, input: {
+    subject?: string;
+    bodyHtml?: string;
+    name?: string;
+    description?: string;
+    isActive?: boolean;
+    isEnabled?: boolean;
+  }) {
+    const event = MAIL_EVENTS.find((item) => item.emailType === emailType);
+    if (!event) throw new Error('Unsupported email type');
+
+    if (input.isEnabled !== undefined) {
+      await this.prisma.siteSettings.upsert({
+        where: { key: this.eventSettingKey(emailType) },
+        update: { value: input.isEnabled ? 'true' : 'false' },
+        create: {
+          key: this.eventSettingKey(emailType),
+          value: input.isEnabled ? 'true' : 'false',
+          group: 'mail_events',
+          description: `${event.name} mail gönderimi aktif mi?`,
+        },
+      });
+    }
+
+    const template = await this.prisma.emailTemplate.upsert({
+      where: { slug_languageCode: { slug: event.slug, languageCode: 'tr' } },
+      update: {
+        name: input.name || event.name,
+        subject: input.subject || this.defaultSubjectFor(emailType),
+        bodyHtml: input.bodyHtml || this.defaultBodyFor(emailType),
+        description: input.description || event.description,
+        isActive: input.isActive !== false,
+        version: { increment: 1 },
+      },
+      create: {
+        slug: event.slug,
+        name: input.name || event.name,
+        subject: input.subject || this.defaultSubjectFor(emailType),
+        bodyHtml: input.bodyHtml || this.defaultBodyFor(emailType),
+        description: input.description || event.description,
+        emailType: emailType as any,
+        isActive: input.isActive !== false,
+        languageCode: 'tr',
+      },
+    });
+
+    return { template, isEnabled: input.isEnabled !== false };
+  }
+
+  async previewManagedTemplate(emailType: string, input?: { subject?: string; bodyHtml?: string }) {
+    const vars = this.sampleVarsFor(emailType);
+    const subject = this.renderTemplate(input?.subject || this.defaultSubjectFor(emailType), vars);
+    const bodyHtml = this.renderTemplate(input?.bodyHtml || this.defaultBodyFor(emailType), vars);
+    return {
+      subject,
+      html: this.isFullHtml(bodyHtml) ? bodyHtml : this.wrapTemplate(bodyHtml),
+      variables: this.variablesFor(emailType),
+    };
   }
 
   async recordOpen(trackingId: string): Promise<void> {
@@ -564,12 +688,17 @@ export class MailService {
       this.logger.warn(`Email disabled. Skipped: ${payload.to} / ${payload.subject}`);
       return;
     }
+    if (payload.emailType && !(await this.isEventEnabled(payload.emailType))) {
+      this.logger.warn(`Email event disabled. Skipped: ${payload.emailType} / ${payload.to}`);
+      return;
+    }
 
     const trackingId = payload.trackingId || randomUUID();
+    const rendered = await this.applyManagedTemplate(payload);
 
     // Inject tracking pixel into HTML
     const pixelUrl = `${this.getSiteUrl()}/api/track/open/${trackingId}`;
-    const htmlWithPixel = payload.html.replace(
+    const htmlWithPixel = rendered.html.replace(
       '</body>',
       `<img src="${pixelUrl}" width="1" height="1" style="display:none;" alt="" /></body>`,
     );
@@ -589,7 +718,7 @@ export class MailService {
         from: `"${mailConfig.fromName}" <${mailConfig.fromEmail}>`,
         to: payload.to,
         replyTo: mailConfig.replyTo || undefined,
-        subject: payload.subject,
+        subject: rendered.subject,
         html: htmlWithPixel,
       });
 
@@ -599,8 +728,8 @@ export class MailService {
           trackingId,
           email: payload.to,
           emailType: (payload.emailType as any) || 'CAMPAIGN',
-          subject: payload.subject,
-          templateSlug: payload.emailType?.toLowerCase().replace(/_/g, '-'),
+          subject: rendered.subject,
+          templateSlug: rendered.templateSlug || payload.emailType?.toLowerCase().replace(/_/g, '-'),
           userId: payload.userId || null,
           campaignId: payload.campaignId || null,
           orderId: payload.orderId || null,
@@ -610,7 +739,7 @@ export class MailService {
         },
       });
 
-      this.logger.log(`Email sent to ${payload.to}: ${payload.subject} [${trackingId}]`);
+      this.logger.log(`Email sent to ${payload.to}: ${rendered.subject} [${trackingId}]`);
     } catch (error) {
       this.logger.error(`Failed to send email to ${payload.to}:`, error);
 
@@ -666,6 +795,125 @@ export class MailService {
       replyTo: settings.mail_reply_to || this.config.get('SMTP_REPLY_TO', ''),
       brandName: settings.mail_brand_name || 'JoyPin',
       footerCompany: settings.mail_footer_company || 'Joy Bilisim Yazilim E-Ticaret Danismanlik Limited Sirketi',
+    };
+  }
+
+  private async isEventEnabled(emailType: string): Promise<boolean> {
+    const setting = await this.prisma.siteSettings.findUnique({ where: { key: this.eventSettingKey(emailType) } });
+    return setting?.value !== 'false';
+  }
+
+  private async applyManagedTemplate(payload: MailPayload): Promise<{ subject: string; html: string; templateSlug?: string }> {
+    if (!payload.emailType) return { subject: payload.subject, html: payload.html };
+    const template = await this.prisma.emailTemplate.findFirst({
+      where: { emailType: payload.emailType as any, languageCode: 'tr', isActive: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!template) return { subject: payload.subject, html: payload.html };
+
+    const vars = { ...this.sampleVarsFor(payload.emailType), ...(payload.templateVars || {}) };
+    const subject = this.renderTemplate(template.subject, vars);
+    const html = this.renderTemplate(template.bodyHtml, vars);
+    return {
+      subject,
+      html: this.isFullHtml(html) ? html : this.wrapTemplate(html),
+      templateSlug: template.slug,
+    };
+  }
+
+  private eventSettingKey(emailType: string): string {
+    return `mail_event_${emailType.toLowerCase()}`;
+  }
+
+  private isFullHtml(html: string): boolean {
+    return /^\s*<!doctype|^\s*<html/i.test(html);
+  }
+
+  private defaultSubjectFor(emailType: string): string {
+    const subjects: Record<string, string> = {
+      WELCOME: 'Hoş geldin {{firstName}}! Doğrulama kodun: {{otpCode}}',
+      EMAIL_VERIFICATION: 'Doğrulama kodun: {{code}}',
+      ORDER_CONFIRMATION: 'Siparişin alındı: #{{orderNo}}',
+      ORDER_DELIVERY: 'Teslimat hazır: {{productName}}',
+      GUEST_ORDER_INFO: 'Sipariş takip linkin: #{{orderNo}}',
+      PASSWORD_RESET: 'Şifre sıfırlama bağlantın',
+      ACCOUNT_DELETION: 'Üyelik iptali talebin alındı',
+      BALANCE_LOADED: 'Cüzdanına {{amount}} {{currency}} yüklendi',
+      ABANDONED_CART_1H: 'Sepetin seni bekliyor',
+      ABANDONED_CART_24H: 'Son şans: {{couponCode}} indirimin hazır',
+      RE_ENGAGEMENT: 'Seni özledik {{firstName}}',
+      CAMPAIGN: 'JoyPin kampanya duyurusu',
+      REFERRAL_EARNED: 'Referans kazancın yüklendi',
+    };
+    return subjects[emailType] || 'JoyPin bilgilendirme';
+  }
+
+  private defaultBodyFor(emailType: string): string {
+    const bodies: Record<string, string> = {
+      WELCOME: '<h2 style="color:#f8fafc;margin:0 0 10px;">Hoş geldin, {{firstName}}</h2><p style="color:#94a3b8;line-height:1.7;">Hesabını doğrulamak için kodun:</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#ffffff;background:#1e1b4b;border:1px solid #6366f1;border-radius:18px;padding:22px;text-align:center;">{{otpCode}}</div>',
+      EMAIL_VERIFICATION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Doğrulama kodu</h2><p style="color:#94a3b8;line-height:1.7;">{{purpose}}</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#ffffff;background:#1e1b4b;border:1px solid #6366f1;border-radius:18px;padding:22px;text-align:center;">{{code}}</div>',
+      ORDER_CONFIRMATION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparişin alındı</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı {{productName}} siparişin işleme alındı.</p><p style="color:#60a5fa;font-size:22px;font-weight:900;">{{totalAmount}} {{currency}}</p>',
+      ORDER_DELIVERY: '<h2 style="color:#f8fafc;margin:0 0 10px;">Teslimat hazır</h2><p style="color:#94a3b8;line-height:1.7;">{{productName}} için teslimat kodların:</p><div style="color:#f8fafc;background:#020617;border:1px solid #334155;border-radius:16px;padding:18px;font-family:monospace;">{{codeList}}</div>',
+      GUEST_ORDER_INFO: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparişin alındı</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı siparişini takip edebilirsin.</p><a href="{{trackUrl}}" style="display:block;background:#6366f1;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Siparişi Takip Et</a>',
+      PASSWORD_RESET: '<h2 style="color:#f8fafc;margin:0 0 10px;">Şifre sıfırlama</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, yeni şifre belirlemek için aşağıdaki butonu kullan.</p><a href="{{resetUrl}}" style="display:block;background:#ef4444;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Şifremi Sıfırla</a>',
+      ACCOUNT_DELETION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Talebin alındı</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, üyelik iptali talebin işleme alındı.</p>',
+      BALANCE_LOADED: '<h2 style="color:#f8fafc;margin:0 0 10px;">Bakiye yüklendi</h2><p style="color:#94a3b8;line-height:1.7;">Cüzdanına <strong style="color:#22c55e;">{{amount}} {{currency}}</strong> yüklendi. Yeni bakiye: {{newBalance}} {{currency}}</p>',
+      ABANDONED_CART_1H: '<h2 style="color:#f8fafc;margin:0 0 10px;">Sepetin seni bekliyor</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, seçtiğin ürünler hala hazır.</p><a href="{{checkoutUrl}}" style="display:block;background:#6366f1;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Alışverişi Tamamla</a>',
+      ABANDONED_CART_24H: '<h2 style="color:#f8fafc;margin:0 0 10px;">Son şans</h2><p style="color:#94a3b8;line-height:1.7;">{{couponCode}} kodu ile alışverişini tamamlayabilirsin.</p>',
+      RE_ENGAGEMENT: '<h2 style="color:#f8fafc;margin:0 0 10px;">Seni özledik, {{firstName}}</h2><p style="color:#94a3b8;line-height:1.7;">{{couponCode}} kodu hesabında hazır.</p>',
+      CAMPAIGN: '<h2 style="color:#f8fafc;margin:0 0 10px;">JoyPin duyurusu</h2><div style="color:#94a3b8;line-height:1.7;">{{bodyHtml}}</div>',
+      REFERRAL_EARNED: '<h2 style="color:#f8fafc;margin:0 0 10px;">Referans kazancın hazır</h2><p style="color:#94a3b8;line-height:1.7;">Yeni referans kazancın hesabına işlendi.</p>',
+    };
+    return bodies[emailType] || '<h2 style="color:#f8fafc;">JoyPin</h2><p style="color:#94a3b8;">Bilgilendirme maili.</p>';
+  }
+
+  private variablesFor(emailType: string): string[] {
+    const map: Record<string, string[]> = {
+      WELCOME: ['firstName', 'otpCode', 'verifyUrl'],
+      EMAIL_VERIFICATION: ['code', 'purpose'],
+      ORDER_CONFIRMATION: ['orderId', 'orderNo', 'productName', 'quantity', 'totalAmount', 'currency', 'orderUrl'],
+      ORDER_DELIVERY: ['orderId', 'orderNo', 'productName', 'codes', 'codeList'],
+      GUEST_ORDER_INFO: ['orderId', 'orderNo', 'trackingToken', 'productName', 'totalAmount', 'currency', 'trackUrl'],
+      PASSWORD_RESET: ['firstName', 'resetUrl'],
+      ACCOUNT_DELETION: ['firstName', 'reactivateUrl'],
+      BALANCE_LOADED: ['amount', 'currency', 'balanceType', 'newBalance', 'walletUrl'],
+      ABANDONED_CART_1H: ['firstName', 'couponCode', 'checkoutUrl'],
+      ABANDONED_CART_24H: ['firstName', 'couponCode', 'checkoutUrl'],
+      RE_ENGAGEMENT: ['firstName', 'couponCode', 'siteUrl'],
+      CAMPAIGN: ['bodyHtml', 'siteUrl'],
+      REFERRAL_EARNED: ['firstName', 'amount', 'currency'],
+    };
+    return map[emailType] || [];
+  }
+
+  private sampleVarsFor(emailType: string): TemplateVars {
+    return {
+      firstName: 'Berat',
+      otpCode: '482913',
+      code: '482913',
+      purpose: 'Güvenlik doğrulaması için bu kodu kullan.',
+      orderId: 'ORD-20260517-0012',
+      orderNo: '20260517-0012',
+      productName: 'PUBG Mobile 660 UC',
+      quantity: 2,
+      totalAmount: '363.00',
+      currency: 'TRY',
+      codes: 'ABCD-1234, EFGH-5678',
+      codeList: 'ABCD-1234<br>EFGH-5678',
+      trackingToken: 'trk_demo_123',
+      couponCode: 'JOY20',
+      amount: '250.00',
+      balanceType: 'Ana bakiye',
+      newBalance: '620.00',
+      verifyUrl: `${this.getSiteUrl()}/verify`,
+      orderUrl: `${this.getSiteUrl()}/tr/dashboard/orders`,
+      trackUrl: `${this.getSiteUrl()}/tr/track`,
+      resetUrl: `${this.getSiteUrl()}/tr/forgot-password`,
+      walletUrl: `${this.getSiteUrl()}/tr/dashboard/balance`,
+      checkoutUrl: `${this.getSiteUrl()}/tr/checkout`,
+      reactivateUrl: `${this.getSiteUrl()}/reactivate`,
+      siteUrl: this.getSiteUrl(),
+      bodyHtml: 'Yeni kampanyalar ve özel fırsatlar hesabında seni bekliyor.',
     };
   }
 

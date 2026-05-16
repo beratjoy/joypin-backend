@@ -875,6 +875,24 @@ export class AdminCompatController {
     return { success: true };
   }
 
+  @Public()
+  @Get('mail/templates')
+  async listMailTemplates() {
+    return { templates: await this.mailService.listManagedTemplates() };
+  }
+
+  @Public()
+  @Put('mail/templates/:emailType')
+  async saveMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
+    return this.mailService.saveManagedTemplate(emailType, body);
+  }
+
+  @Public()
+  @Post('mail/templates/:emailType/preview')
+  async previewMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
+    return this.mailService.previewManagedTemplate(emailType, body);
+  }
+
 
   @Public()
   @Get('referrals/rules')
