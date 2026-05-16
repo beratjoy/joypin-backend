@@ -11,7 +11,12 @@ RUN npm ci
 # ─── Stage 2: Build ────────────────────────────────────────
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates locales fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji && \
+    sed -i '/tr_TR.UTF-8/s/^# //g; /en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen && \
+    rm -rf /var/lib/apt/lists/*
+ENV LANG=tr_TR.UTF-8
+ENV LANGUAGE=tr_TR:tr
+ENV LC_ALL=tr_TR.UTF-8
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 RUN npm ci
@@ -22,7 +27,9 @@ RUN npx prisma generate && npm run build
 # ─── Stage 3: Production ───────────────────────────────────
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates wget && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates wget locales fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji && \
+    sed -i '/tr_TR.UTF-8/s/^# //g; /en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen && \
+    rm -rf /var/lib/apt/lists/*
 
 # Security: non-root user
 RUN groupadd --system --gid 1001 nestjs && \
@@ -43,5 +50,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 4000
 ENV NODE_ENV=production
 ENV PORT=4000
+ENV LANG=tr_TR.UTF-8
+ENV LANGUAGE=tr_TR:tr
+ENV LC_ALL=tr_TR.UTF-8
 
 CMD ["sh", "-c", "npx prisma migrate deploy && su nestjs -s /bin/sh -c 'node dist/main.js'"]
