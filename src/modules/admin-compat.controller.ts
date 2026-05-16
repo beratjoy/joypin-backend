@@ -777,6 +777,44 @@ export class AdminCompatController {
   }
 
   @Public()
+  @Get('logs/audit')
+  async listAuditLogs(
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+    @Query('userId') userId?: string,
+    @Query('action') action?: string,
+    @Query('entityType') entityType?: string,
+  ) {
+    const currentPage = Math.max(Number(page) || 1, 1);
+    const perPage = Math.min(Math.max(Number(limit) || 50, 10), 100);
+    const where: any = {};
+    if (userId) where.userId = userId;
+    if (action && action !== 'all') where.action = action;
+    if (entityType && entityType !== 'all') where.entityType = entityType;
+
+    const [total, logs] = await Promise.all([
+      this.prisma.auditLog.count({ where }),
+      this.prisma.auditLog.findMany({
+        where,
+        include: { user: { select: { id: true, email: true, firstName: true, lastName: true, role: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (currentPage - 1) * perPage,
+        take: perPage,
+      }),
+    ]);
+
+    return {
+      logs,
+      pagination: {
+        page: currentPage,
+        limit: perPage,
+        total,
+        totalPages: Math.max(Math.ceil(total / perPage), 1),
+      },
+    };
+  }
+
+  @Public()
   @Get('settings/currencies')
   async getCurrencies() {
     const meta: Record<string, { name: string; symbol: string; flag: string }> = {

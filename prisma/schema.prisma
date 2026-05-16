@@ -158,6 +158,8 @@ enum BotProviderStatus {
 }
 
 enum AuditAction {
+  ACTIVITY
+  PAGE_VIEW
   CREATE
   UPDATE
   DELETE

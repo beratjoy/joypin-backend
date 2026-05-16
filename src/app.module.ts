@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -19,6 +20,7 @@ import { ReferralsModule } from './modules/referrals/referrals.module';
 import { BotsModule } from './modules/bots/bots.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { ActivityInterceptor } from './modules/audit/activity.interceptor';
 import { MailModule } from './modules/mail/mail.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { StocksModule } from './modules/stocks/stocks.module';
@@ -87,6 +89,8 @@ import { I18nCompatController } from './modules/i18n-compat.controller';
     { provide: APP_GUARD, useClass: RolesGuard },
     // 4. Granular Staff Permissions
     { provide: APP_GUARD, useClass: RbacGuard },
+    // 5. Customer/staff/admin activity audit trail
+    { provide: APP_INTERCEPTOR, useClass: ActivityInterceptor },
   ],
 })
 export class AppModule {}
