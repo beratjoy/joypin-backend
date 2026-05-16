@@ -8,6 +8,11 @@ export class StorefrontCompatController {
 
   private readonly fallbackImage = '/uploads/e33a4974-bf03-4cfd-9753-cc70ca381215.webp';
 
+  private toCdnUrl(pathname: string) {
+    const cdnBase = (process.env.CDN_PUBLIC_URL || '').replace(/\/$/, '');
+    return cdnBase && pathname.startsWith('/') ? `${cdnBase}${pathname}` : pathname;
+  }
+
   private normalizeImageUrl(url?: string | null, slug?: string | null) {
     const value = (url || '').trim();
     const knownSlug = (slug || '').toLowerCase();
@@ -28,12 +33,16 @@ export class StorefrontCompatController {
       spotify: '/images/games/spotify.webp',
     };
 
-    if (value.startsWith('/')) return value;
+    if (value.startsWith('/')) return this.toCdnUrl(value);
+    if (/^https?:\/\/(www\.)?epin365\.com\/(uploads|images)\//i.test(value)) {
+      const parsed = new URL(value);
+      return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
+    }
     if (value.includes('cdn.joypin.com')) {
       const fileSlug = value.split('/').pop()?.replace(/\.(webp|png|jpe?g|avif)$/i, '').toLowerCase();
-      return localGameImages[fileSlug || ''] || localGameImages[knownSlug] || this.fallbackImage;
+      return this.toCdnUrl(localGameImages[fileSlug || ''] || localGameImages[knownSlug] || this.fallbackImage);
     }
-    return value || localGameImages[knownSlug] || this.fallbackImage;
+    return value || this.toCdnUrl(localGameImages[knownSlug] || this.fallbackImage);
   }
 
   @Public()
