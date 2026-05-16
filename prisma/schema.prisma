@@ -337,7 +337,6 @@ model Permission {
   code        String   @unique @db.VarChar(100) // ör: "epin.decrypt", "order.cancel"
   name        String   @db.VarChar(150)
   description String?
-  sliderImageUrl     String? @db.VarChar(500)  // Ana sayfa/slider gorseli
   module      String   @db.VarChar(50)          // ör: "products", "orders", "epins"
 
   users       UserPermission[]
@@ -508,6 +507,7 @@ model Product {
   shortName   String? @db.VarChar(120)
   slug        String  @unique @db.VarChar(220)
   description String?
+  sliderImageUrl     String? @db.VarChar(500)  // Ana sayfa/slider gorseli
   iconUrl            String? @db.VarChar(500)  // Site kartı ikonu (128×128)
   merchantImageUrl   String? @db.VarChar(500)  // Merchant resmi (yüksek çözünürlük)
 
