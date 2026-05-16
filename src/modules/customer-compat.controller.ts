@@ -216,10 +216,73 @@ export class CustomerCompatController {
 
     if (!user) return null;
 
-    const spent = await this.prisma.order.aggregate({
-      where: { userId, paymentStatus: 'PAID' },
-      _sum: { totalAmount: true },
-    });
+    const [
+      spent,
+      ordersByStatus,
+      activeCoupons,
+      supportCounts,
+      recentTransactions,
+      referralStats,
+    ] = await Promise.all([
+      this.prisma.order.aggregate({
+        where: { userId, paymentStatus: 'PAID' },
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.order.groupBy({
+        by: ['status'],
+        where: { userId },
+        _count: { _all: true },
+      }),
+      this.prisma.userCoupon.findMany({
+        where: {
+          userId,
+          isUsed: false,
+        },
+        include: { coupon: true },
+      }),
+      this.prisma.ticket.groupBy({
+        by: ['status'],
+        where: { userId },
+        _count: { _all: true },
+      }),
+      user.wallet?.id
+        ? this.prisma.walletTransaction.findMany({
+            where: { walletId: user.wallet.id },
+            orderBy: { createdAt: 'desc' },
+            take: 8,
+          })
+        : Promise.resolve([]),
+      this.prisma.userReferral.aggregate({
+        where: { referrerId: userId },
+        _count: { _all: true },
+        _sum: { totalEarnings: true },
+      }),
+    ]);
+
+    const wallet = user.wallet;
+    const walletSummary = {
+      balanceCurrent: Number(wallet?.balanceCurrent || 0),
+      balanceBonus: Number(wallet?.balanceBonus || 0),
+      balanceWithdrawable: Number(wallet?.balanceWithdrawable || 0),
+      balanceCredit: Number(wallet?.balanceCredit || 0),
+      balanceFrozen: Number(wallet?.balanceFrozen || 0),
+      balanceLottery: Number(wallet?.balanceLottery || 0),
+      balanceCashback: Number(wallet?.balanceCashback || 0),
+      balanceCommission: Number(wallet?.balanceCommission || 0),
+    };
+    const usableBalance = walletSummary.balanceCurrent + walletSummary.balanceBonus + walletSummary.balanceCashback;
+    const activeCouponCount = activeCoupons.filter((item: any) => {
+      const expiresAt = item.expiresAt || item.coupon?.validUntil;
+      return !expiresAt || new Date(expiresAt).getTime() > Date.now();
+    }).length;
+    const orderStatusCounts = ordersByStatus.reduce((acc: Record<string, number>, row: any) => {
+      acc[row.status] = row._count._all;
+      return acc;
+    }, {});
+    const ticketStatusCounts = supportCounts.reduce((acc: Record<string, number>, row: any) => {
+      acc[row.status] = row._count._all;
+      return acc;
+    }, {});
 
     return {
       id: user.id,
@@ -230,10 +293,30 @@ export class CustomerCompatController {
       role: user.role,
       memberTypeName: user.memberType?.name || null,
       memberTypeColor: user.memberType?.colorCode || null,
-      balance: Number(user.wallet?.balanceCurrent || 0),
-      currency: user.wallet?.currency || user.preferredCurrency || 'TRY',
+      balance: walletSummary.balanceCurrent,
+      usableBalance,
+      wallet: walletSummary,
+      currency: wallet?.currency || user.preferredCurrency || 'TRY',
       totalOrders: user._count.orders,
       totalSpent: Number(spent._sum.totalAmount || 0),
+      pointsBalance: user.pointsBalance,
+      activeCouponCount,
+      openTicketCount: (ticketStatusCounts.OPEN || 0) + (ticketStatusCounts.AWAITING_REPLY || 0) + (ticketStatusCounts.REPLIED || 0),
+      orderStatusCounts,
+      ticketStatusCounts,
+      referralCount: referralStats._count._all,
+      referralEarnings: Number(referralStats._sum.totalEarnings || 0),
+      recentTransactions: recentTransactions.map((transaction: any) => ({
+        id: transaction.id,
+        type: transaction.type,
+        amount: Number(transaction.amount || 0),
+        balanceAfter: Number(transaction.balanceAfter || 0),
+        balanceField: transaction.balanceField,
+        description: transaction.description || null,
+        referenceType: transaction.referenceType || null,
+        referenceId: transaction.referenceId || null,
+        createdAt: transaction.createdAt,
+      })),
       apiKey: null,
       isDealer: user.role === 'RESELLER' || Boolean(user.dealerGroupId),
       createdAt: user.createdAt,
