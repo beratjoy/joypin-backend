@@ -1,6 +1,6 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { Public } from './auth/decorators/public.decorator';
-import { NotFoundException, Req, UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('admin')
@@ -2179,6 +2179,67 @@ export class AdminCompatController {
     return withStaff;
   }
 
+  @Get('orders/:orderId/fraud-doc')
+  async getOrderFraudDoc(@Param('orderId') orderId: string, @Res() res: any) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: { include: { memberType: true, dealerGroup: true, wallet: true } },
+        subOrders: {
+          include: {
+            product: { include: { category: true } },
+            items: { include: { epin: true } },
+            botProvider: true,
+          },
+        },
+        paymentTxs: true,
+        financialLogs: { orderBy: { createdAt: 'asc' } },
+        walletTransactions: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Sipariş bulunamadı');
+    }
+
+    const subOrderIds = order.subOrders.map((subOrder: any) => subOrder.id);
+    const [withStaff] = await this.attachAssignedStaff([order]);
+    const auditLogs = await this.prisma.auditLog.findMany({
+      where: {
+        OR: [
+          { entityType: 'order', entityId: order.id },
+          { entityType: 'Order', entityId: order.id },
+          ...(subOrderIds.length
+            ? [
+                { entityType: 'subOrder', entityId: { in: subOrderIds } },
+                { entityType: 'SubOrder', entityId: { in: subOrderIds } },
+              ]
+            : []),
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    });
+    const webhookLogs = await this.prisma.paymentWebhookLog.findMany({
+      where: { orderId: order.id },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+    });
+
+    const pdf = this.buildFraudEvidencePdf({
+      order: withStaff,
+      auditLogs,
+      webhookLogs,
+      generatedAt: new Date(),
+    });
+
+    const fileName = `fraud-belgesi-${order.orderNumber || order.id}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdf);
+  }
+
   @Post('orders/:orderId/claim')
   async claimOrder(@Param('orderId') orderId: string, @Req() req: any) {
     const staffId = req.user?.id;
@@ -2839,6 +2900,271 @@ export class AdminCompatController {
       <table><thead><tr><th>ÃœrÃ¼n</th><th>Adet</th><th>Birim</th><th>Tutar</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><p>Ara Toplam: ${Number(invoice.subtotal).toFixed(2)} ${invoice.currency}</p><p>KDV: ${Number(invoice.taxAmount).toFixed(2)} ${invoice.currency}</p><p class="total">Toplam: ${Number(invoice.totalAmount).toFixed(2)} ${invoice.currency}</p></div>
       </div></div></body></html>`;
+  }
+
+  private buildFraudEvidencePdf(input: { order: any; auditLogs: any[]; webhookLogs: any[]; generatedAt: Date }) {
+    const { order, auditLogs, webhookLogs, generatedAt } = input;
+    const customerName = order.user
+      ? `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim()
+      : 'Misafir Musteri';
+    const customerEmail = order.user?.email || order.guestEmail || '-';
+    const customerPhone = order.user?.phone || order.guestPhone || '-';
+    const staffName = order.assignedStaff
+      ? `${order.assignedStaff.firstName || ''} ${order.assignedStaff.lastName || ''}`.trim() || order.assignedStaff.email
+      : '-';
+    const successfulPayment = order.paymentTxs?.find((tx: any) => tx.status === 'COMPLETED') || order.paymentTxs?.[0];
+
+    const lines: Array<{ text: string; size?: number; bold?: boolean; gap?: boolean }> = [];
+    const add = (text = '', options: { size?: number; bold?: boolean; gap?: boolean } = {}) => lines.push({ text, ...options });
+    const addPair = (label: string, value: any) => add(`${label}: ${this.fraudText(value)}`);
+    const addSection = (title: string) => {
+      add('', { gap: true });
+      add(title, { size: 14, bold: true });
+      add('='.repeat(Math.min(72, title.length + 8)));
+    };
+
+    add('FRAUD / CHARGEBACK KANIT BELGESI', { size: 18, bold: true });
+    add(`Belge No: FRD-${order.orderNumber || order.id}`);
+    add(`Olusturma Zamani: ${this.fraudDate(generatedAt)}`);
+    add('Bu belge dijital urun siparisinde odeme itirazi/fraud incelemesi icin sistem kayitlarindan otomatik hazirlanmistir.');
+
+    addSection('1. Siparis Ozeti');
+    addPair('Siparis No', order.orderNumber);
+    addPair('Siparis ID', order.id);
+    addPair('Siparis Tarihi', this.fraudDate(order.createdAt));
+    addPair('Son Guncelleme', this.fraudDate(order.updatedAt));
+    addPair('Siparis Durumu', order.status);
+    addPair('Odeme Durumu', order.paymentStatus);
+    addPair('Odeme Yontemi', order.paymentMethod);
+    addPair('Odeme Referansi', order.paymentRef);
+    addPair('Toplam Tutar', this.fraudMoney(order.totalAmount, order.currency));
+    addPair('Net Tutar', this.fraudMoney(order.netAmount, order.currency));
+    addPair('Musteri IP', order.ipAddress);
+    addPair('Personel / Isleme Alan', staffName);
+    addPair('Personel Kilit Zamani', this.fraudDate(order.staffLockedAt));
+    addPair('Musteri Notu', order.customerNote);
+    addPair('Admin Notu', order.adminNote || order.staffNote);
+
+    addSection('2. Musteri ve Hesap Bilgileri');
+    addPair('Musteri Ad Soyad', customerName);
+    addPair('E-posta', customerEmail);
+    addPair('Telefon', customerPhone);
+    addPair('Kullanici ID', order.userId || 'Misafir');
+    addPair('Musteri Tipi', order.user?.customerType);
+    addPair('Hesap Durumu', order.user?.status);
+    addPair('E-posta Dogrulama', order.user?.emailVerified ? 'Evet' : 'Hayir');
+    addPair('SMS Dogrulama', order.user?.smsVerified ? 'Evet' : 'Hayir');
+    addPair('KYC Durumu', order.user?.kycStatus);
+    addPair('Ulke', order.user?.countryCode);
+    addPair('Son Giris IP', order.user?.lastLoginIp);
+    addPair('Son Giris Zamani', this.fraudDate(order.user?.lastLoginAt));
+    addPair('Bayi Grubu', order.user?.dealerGroup?.name);
+    addPair('Uye Tipi', order.user?.memberType?.name);
+
+    addSection('3. Odeme Kaniti');
+    if (successfulPayment) {
+      addPair('Gateway', successfulPayment.gateway);
+      addPair('Gateway Islem ID', successfulPayment.gatewayTransactionId);
+      addPair('Islem Durumu', successfulPayment.status);
+      addPair('Tutar', this.fraudMoney(successfulPayment.amount, successfulPayment.currency));
+      addPair('Komisyon', this.fraudMoney(successfulPayment.feeAmount, successfulPayment.currency));
+      addPair('Net', this.fraudMoney(successfulPayment.netAmount, successfulPayment.currency));
+      addPair('3D Secure', successfulPayment.is3DSecure ? 'Evet' : 'Hayir');
+      addPair('Risk Skoru', successfulPayment.riskScore ?? '-');
+      addPair('Baslatildi', this.fraudDate(successfulPayment.initiatedAt));
+      addPair('Tamamlandi', this.fraudDate(successfulPayment.completedAt));
+      addPair('Kripto Para', successfulPayment.cryptoCurrency);
+      addPair('Kripto Adres', successfulPayment.cryptoAddress);
+      addPair('Kripto TX Hash', successfulPayment.cryptoTxHash);
+      addPair('Hata Nedeni', successfulPayment.failureReason);
+    } else {
+      add('Odeme islem kaydi bulunamadi.');
+    }
+    if (order.walletTransactions?.length) {
+      add('Cuzdan Hareketleri:', { bold: true });
+      order.walletTransactions.slice(0, 12).forEach((tx: any) => {
+        add(`- ${this.fraudDate(tx.createdAt)} | ${tx.type}/${tx.balanceField} | ${this.fraudMoney(tx.amount, order.currency)} | ${tx.description || '-'}`);
+      });
+    }
+
+    addSection('4. Dijital Urun ve Teslimat Kaniti');
+    order.subOrders.forEach((subOrder: any, index: number) => {
+      add(`Urun ${index + 1}: ${subOrder.product?.name || subOrder.productName || subOrder.productId}`, { bold: true });
+      addPair('Alt Siparis ID', subOrder.id);
+      addPair('Kategori', subOrder.product?.category?.name);
+      addPair('Teslimat Tipi', subOrder.deliveryType);
+      addPair('Durum', subOrder.status);
+      addPair('Adet', subOrder.quantity);
+      addPair('Birim Fiyat', this.fraudMoney(subOrder.unitPrice, subOrder.currency));
+      addPair('Toplam', this.fraudMoney(subOrder.totalPrice, subOrder.currency));
+      addPair('Teslim Edilen Adet', subOrder.deliveredCount);
+      addPair('Tedarikci/Bot', subOrder.botProvider?.name);
+      addPair('Tedarikci Durumu', subOrder.deliveryNote);
+      addPair('Iptal Nedeni', subOrder.cancelReason);
+      addPair('Son Hata', subOrder.lastError);
+      addPair('Musteriden Alinan Alanlar', this.fraudJson(subOrder.topupFieldData));
+      if (subOrder.items?.length) {
+        add('Teslimat Kalemleri:', { bold: true });
+        subOrder.items.forEach((item: any) => {
+          add(`- Kalem ID ${item.id} | Teslim: ${item.isDelivered ? 'Evet' : 'Hayir'} | Tarih: ${this.fraudDate(item.deliveredAt)} | Ref: ${item.externalRef || item.epin?.serial || '-'}`);
+        });
+      }
+      add('');
+    });
+
+    addSection('5. Operasyon ve Log Kayitlari');
+    if (order.financialLogs?.length) {
+      add('Finans Loglari:', { bold: true });
+      order.financialLogs.slice(0, 16).forEach((log: any) => {
+        add(`- ${this.fraudDate(log.createdAt)} | ${log.type} | ${this.fraudMoney(log.grossAmount, log.currency)} | ${log.description || '-'}`);
+      });
+    }
+    if (auditLogs.length) {
+      add('Audit Loglari:', { bold: true });
+      auditLogs.forEach((log: any) => {
+        add(`- ${this.fraudDate(log.createdAt)} | ${log.action} | ${log.entityType || '-'}:${log.entityId || '-'} | IP ${log.ipAddress || '-'}`);
+      });
+    } else {
+      add('Audit log kaydi bulunamadi.');
+    }
+    if (webhookLogs.length) {
+      add('Odeme Webhook Loglari:', { bold: true });
+      webhookLogs.forEach((log: any) => {
+        add(`- ${this.fraudDate(log.createdAt)} | ${log.provider}/${log.eventType} | Gecerli: ${log.isValid ? 'Evet' : 'Hayir'} | Hata: ${log.errorMessage || '-'}`);
+      });
+    }
+
+    addSection('6. Fraud Incelemesi Icin Hazir Kontrol Listesi');
+    [
+      'Siparis numarasi, tarih ve tutar kaydi eklendi.',
+      'Musteri hesabi, e-posta, telefon, IP ve dogrulama durumlari eklendi.',
+      'Gateway islem ID, odeme durumu, 3D Secure ve risk bilgisi eklendi.',
+      'Dijital urun teslimat durumu, oyuncu/hesap alanlari ve tedarikci kaydi eklendi.',
+      'Teslim/iptal notlari, finans loglari, webhook ve audit izleri eklendi.',
+      'Urun/hizmet dijital oldugu icin fiziksel kargo bilgisi beklenmez; teslimat kaniti sistem ve tedarikci kayitlariyla sunulur.',
+    ].forEach((item) => add(`- ${item}`));
+
+    add('', { gap: true });
+    add('Yasal Not: Bu belge, JoyPin admin panelindeki kayitlardan uretilen operasyonel kanit ozetidir. Ham gateway, tedarikci ve log kayitlari istenirse ek dokuman olarak sunulabilir.');
+
+    return this.createTextPdf(lines);
+  }
+
+  private createTextPdf(lines: Array<{ text: string; size?: number; bold?: boolean; gap?: boolean }>) {
+    const pageWidth = 595;
+    const pageHeight = 842;
+    const margin = 42;
+    const lineHeight = 14;
+    const bottom = 52;
+    const pages: string[][] = [[]];
+    let y = pageHeight - margin;
+
+    const addLine = (line: { text: string; size?: number; bold?: boolean; gap?: boolean }) => {
+      const size = line.size || 10;
+      if (line.gap) y -= 8;
+      const wrapped = this.wrapPdfText(line.text || ' ', size >= 14 ? 72 : 96);
+      wrapped.forEach((part) => {
+        if (y < bottom) {
+          pages.push([]);
+          y = pageHeight - margin;
+        }
+        const font = line.bold ? 'F2' : 'F1';
+        pages[pages.length - 1].push(`BT /${font} ${size} Tf ${margin} ${y} Td (${this.escapePdfText(part)}) Tj ET`);
+        y -= Math.max(lineHeight, size + 4);
+      });
+    };
+
+    lines.forEach(addLine);
+
+    const objects: string[] = [];
+    const addObject = (body: string) => {
+      objects.push(body);
+      return objects.length;
+    };
+
+    const catalogId = addObject('<< /Type /Catalog /Pages 2 0 R >>');
+    const pagesId = addObject('<< /Type /Pages /Kids [] /Count 0 >>');
+    const fontRegularId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    const fontBoldId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>');
+    const pageIds: number[] = [];
+
+    pages.forEach((contentLines) => {
+      const content = contentLines.join('\n');
+      const contentId = addObject(`<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`);
+      const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontRegularId} 0 R /F2 ${fontBoldId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+      pageIds.push(pageId);
+    });
+
+    objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+    objects[catalogId - 1] = '<< /Type /Catalog /Pages 2 0 R >>';
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach((body, index) => {
+      offsets.push(Buffer.byteLength(pdf, 'latin1'));
+      pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    const xrefOffset = Buffer.byteLength(pdf, 'latin1');
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    offsets.slice(1).forEach((offset) => {
+      pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+    return Buffer.from(pdf, 'latin1');
+  }
+
+  private wrapPdfText(text: string, maxChars: number) {
+    const normalized = this.fraudText(text);
+    const words = normalized.split(/\s+/);
+    const lines: string[] = [];
+    let current = '';
+    words.forEach((word) => {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxChars && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    });
+    if (current) lines.push(current);
+    return lines.length ? lines : [''];
+  }
+
+  private escapePdfText(text: string) {
+    return this.fraudText(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+  }
+
+  private fraudText(value: any) {
+    if (value === undefined || value === null || value === '') return '-';
+    return String(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 1400);
+  }
+
+  private fraudDate(value: any) {
+    if (!value) return '-';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+  }
+
+  private fraudMoney(amount: any, currency = 'TRY') {
+    const number = Number(amount || 0);
+    return `${number.toFixed(2)} ${currency || 'TRY'}`;
+  }
+
+  private fraudJson(value: any) {
+    if (!value) return '-';
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   private async getPointsUser(userId?: string) {
