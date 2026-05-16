@@ -538,6 +538,7 @@ model Product {
 
   isActive  Boolean @default(true)
   sortOrder Int     @default(0)
+  allowedCountries Json?
   metadata  Json?   // bölge, platform vb.
 
   // SEO (madde #30 — toplu SEO ayarı, flat URL: /pubg — #33)

@@ -143,9 +143,10 @@ export class StorefrontCompatController {
     }
 
     const products = await this.prisma.$queryRawUnsafe<any[]>(
-      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
+      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl", "allowedCountries" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
       category.id,
     );
+    const visibleProducts = products.filter((product: any) => this.visibleForCountry(product, country));
 
     return {
       id: category.id,
@@ -158,11 +159,11 @@ export class StorefrontCompatController {
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
       allowedCountries: category.allowedCountries || [],
-      requiresUserId: category.requiresUserId ?? products.some((product: any) => product.type === 'TOPUP'),
+      requiresUserId: category.requiresUserId ?? visibleProducts.some((product: any) => product.type === 'TOPUP'),
       userIdLabel: category.userIdLabel || 'Oyuncu ID',
       userIdPlaceholder: category.userIdPlaceholder || 'Oyuncu ID giriniz',
       zoneIdLabel: category.zoneIdLabel || null,
-      products: products.map((product: any) => {
+      products: visibleProducts.map((product: any) => {
         const productImage = this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || category.imageUrl, category.slug);
         const sliderImage = this.normalizeImageUrl(product.sliderImageUrl || product.merchantImageUrl || product.iconUrl || category.imageUrl, category.slug);
         return {
@@ -193,7 +194,7 @@ export class StorefrontCompatController {
       take,
     });
 
-    return products.filter((product: any) => this.visibleForCountry(product.category || {}, country)).map((product: any) => {
+    return products.filter((product: any) => this.visibleForCountry(product.category || {}, country) && this.visibleForCountry(product, country)).map((product: any) => {
       const basePrice = Number(product.fixedPrice || product.baseCost || 0);
       const discount = Number(product.discountPercent || 0);
       return {
@@ -226,7 +227,7 @@ export class StorefrontCompatController {
       },
     });
 
-    if (!product || !this.visibleForCountry(product.category || {}, country)) {
+    if (!product || !this.visibleForCountry(product.category || {}, country) || !this.visibleForCountry(product, country)) {
       throw new NotFoundException('Product not found');
     }
 
