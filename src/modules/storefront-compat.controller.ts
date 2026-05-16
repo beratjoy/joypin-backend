@@ -38,6 +38,10 @@ export class StorefrontCompatController {
       const parsed = new URL(value);
       return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
     }
+    if (/^https?:\/\/cdn\.epin365\.com\/(uploads|images)\//i.test(value)) {
+      const parsed = new URL(value);
+      return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
+    }
     if (value.includes('cdn.joypin.com')) {
       const fileSlug = value.split('/').pop()?.replace(/\.(webp|png|jpe?g|avif)$/i, '').toLowerCase();
       return this.toCdnUrl(localGameImages[fileSlug || ''] || localGameImages[knownSlug] || this.fallbackImage);
