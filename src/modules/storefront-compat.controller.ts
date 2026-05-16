@@ -6,6 +6,36 @@ import { PrismaService } from '../prisma/prisma.service';
 export class StorefrontCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private readonly fallbackImage = '/uploads/e33a4974-bf03-4cfd-9753-cc70ca381215.webp';
+
+  private normalizeImageUrl(url?: string | null, slug?: string | null) {
+    const value = (url || '').trim();
+    const knownSlug = (slug || '').toLowerCase();
+    const localGameImages: Record<string, string> = {
+      pubg: '/images/games/pubg.webp',
+      'pubg-mobile': '/images/games/pubg.webp',
+      mlbb: '/images/games/mlbb.webp',
+      'mobile-legends': '/images/games/mlbb.webp',
+      genshin: '/images/games/genshin.webp',
+      'genshin-impact': '/images/games/genshin.webp',
+      valorant: '/images/games/valorant.webp',
+      roblox: '/images/games/roblox.webp',
+      steam: '/images/games/steam.webp',
+      freefire: '/images/games/freefire.webp',
+      'free-fire': '/images/games/freefire.webp',
+      fortnite: '/images/games/fortnite.webp',
+      supercell: '/images/games/supercell.webp',
+      spotify: '/images/games/spotify.webp',
+    };
+
+    if (value.startsWith('/')) return value;
+    if (value.includes('cdn.joypin.com')) {
+      const fileSlug = value.split('/').pop()?.replace(/\.(webp|png|jpe?g|avif)$/i, '').toLowerCase();
+      return localGameImages[fileSlug || ''] || localGameImages[knownSlug] || this.fallbackImage;
+    }
+    return value || localGameImages[knownSlug] || this.fallbackImage;
+  }
+
   @Public()
   @Get('debug')
   async debugStorefront() {
@@ -32,11 +62,16 @@ export class StorefrontCompatController {
   @Public()
   @Get('sliders')
   async getSliders() {
-    return this.prisma.slider.findMany({
+    const sliders = await this.prisma.slider.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
       select: { id: true, title: true, imageUrl: true, mobileImageUrl: true, linkUrl: true },
     });
+    return sliders.map((slider) => ({
+      ...slider,
+      imageUrl: this.normalizeImageUrl(slider.imageUrl),
+      mobileImageUrl: this.normalizeImageUrl(slider.mobileImageUrl || slider.imageUrl),
+    }));
   }
 
   @Public()
@@ -51,7 +86,7 @@ export class StorefrontCompatController {
         id: category.id,
         name: category.name,
         slug: category.slug,
-        imageUrl: category.imageUrl,
+        imageUrl: this.normalizeImageUrl(category.imageUrl, category.slug),
         productCount: Number(
           (
             await this.prisma.$queryRawUnsafe<any[]>(
@@ -89,7 +124,7 @@ export class StorefrontCompatController {
       slug: category.slug,
       name: category.name,
       description: category.description || '',
-      imageUrl: category.imageUrl || '',
+      imageUrl: this.normalizeImageUrl(category.imageUrl, category.slug),
       layout: category.layout || 'jollymax',
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
@@ -106,7 +141,7 @@ export class StorefrontCompatController {
         marginPercent: Number(product.marginPercent || 0),
         pricingModel: product.pricingModel,
         type: product.type || 'EPIN',
-        iconUrl: product.iconUrl || product.merchantImageUrl || category.imageUrl || undefined,
+        iconUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || category.imageUrl, category.slug),
       })),
     };
   }
@@ -131,7 +166,7 @@ export class StorefrontCompatController {
         slug: product.category?.slug || product.slug,
         productSlug: product.slug,
         categoryName: product.category?.name || '',
-        imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.imageUrl || null,
+        imageUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || product.category?.imageUrl, product.category?.slug || product.slug),
         basePrice,
         memberPrice: null,
         vipPrice: discount > 0 ? Number((basePrice * (1 - discount / 100)).toFixed(2)) : null,
@@ -172,7 +207,7 @@ export class StorefrontCompatController {
       memberPrice: discount > 0 ? Number((basePrice * (1 - discount / 100)).toFixed(2)) : null,
       currency: product.baseCurrency || 'TRY',
       inStock: product.hasInfiniteStock || product.stockCount > 0,
-      imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.imageUrl || null,
+      imageUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || product.category?.imageUrl, product.category?.slug || product.slug),
       categoryName: product.category?.name || '',
       topupFields: product.topupFields.map((field: any) => ({
         id: field.id,
@@ -204,7 +239,7 @@ export class StorefrontCompatController {
       title: post.title,
       slug: post.slug,
       excerpt: post.excerpt,
-      coverImage: post.coverImage || post.imageUrl,
+      coverImage: this.normalizeImageUrl(post.coverImage || post.imageUrl, post.category?.slug),
       publishedAt: post.publishedAt,
       categoryName: post.category?.name || null,
     }));
