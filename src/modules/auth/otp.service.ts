@@ -115,6 +115,12 @@ export class OtpService {
     return true;
   }
 
+  async verifyEpinViewToken(userId: string, token: string | string[]): Promise<boolean> {
+    const normalized = Array.isArray(token) ? token[0] : token;
+    if (!normalized) return false;
+    return this.isOtpVerified(userId);
+  }
+
   /**
    * 6 haneli kriptografik güvenli kod üretir.
    */

@@ -55,7 +55,7 @@ export class DashboardService {
    * Dashboard ana istatistikleri (30s cached)
    */
   async getStats(): Promise<DashboardStats> {
-    const cached = this.getFromCache('dashboard:stats');
+    const cached = this.getFromCache<DashboardStats>('dashboard:stats');
     if (cached) return cached;
 
     const today = new Date();
@@ -135,7 +135,7 @@ export class DashboardService {
    * Bakiye dağılımı (60s cached)
    */
   async getBalanceDistribution(): Promise<BalanceDistribution> {
-    const cached = this.getFromCache('dashboard:balance');
+    const cached = this.getFromCache<BalanceDistribution>('dashboard:balance');
     if (cached) return cached;
 
     const agg = await this.prisma.wallet.aggregate({

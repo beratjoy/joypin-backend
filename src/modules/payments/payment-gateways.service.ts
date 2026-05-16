@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaymentGateway, PaymentTransactionStatus } from '@prisma/client';
+import { PaymentTransactionStatus, type Currency, type PaymentGateway } from '@prisma/client';
 
 interface GatewayConfig {
   apiKey: string;
@@ -33,7 +33,7 @@ interface PaymentResult {
 }
 
 interface CryptoPaymentInput {
-  gateway: PaymentGateway.BINANCE_PAY | PaymentGateway.CRYPTOMUS;
+  gateway: Extract<PaymentGateway, 'BINANCE_PAY' | 'CRYPTOMUS'>;
   amount: number;
   currency: string;
   cryptoCurrency: string; // USDT, BTC, ETH
@@ -52,13 +52,13 @@ export class PaymentGatewaysService {
     const config = await this.getGatewayConfig(input.gateway);
 
     switch (input.gateway) {
-      case PaymentGateway.STRIPE:
+      case 'STRIPE':
         return this.initiateStripePayment(input, config);
-      case PaymentGateway.MERCURY:
+      case 'MERCURY':
         return this.initiateMercuryPayment(input, config);
-      case PaymentGateway.BINANCE_PAY:
+      case 'BINANCE_PAY':
         return this.initiateBinancePay(input as CryptoPaymentInput, config);
-      case PaymentGateway.CRYPTOMUS:
+      case 'CRYPTOMUS':
         return this.initiateCryptomus(input as CryptoPaymentInput, config);
       default:
         throw new Error(`Unsupported gateway: ${input.gateway}`);
@@ -76,12 +76,12 @@ export class PaymentGatewaysService {
   ): Promise<{ feeAmount: number; feePercent: number; total: number }> {
     // Temel komisyon oranları
     const baseFees: Record<PaymentGateway, number> = {
-      [PaymentGateway.STRIPE]: 2.9,
-      [PaymentGateway.MERCURY]: 2.5,
-      [PaymentGateway.BINANCE_PAY]: 1.0,
-      [PaymentGateway.CRYPTOMUS]: 0.8,
-      [PaymentGateway.BANK_TRANSFER]: 0,
-      [PaymentGateway.WALLET]: 0,
+      STRIPE: 2.9,
+      MERCURY: 2.5,
+      BINANCE_PAY: 1.0,
+      CRYPTOMUS: 0.8,
+      BANK_TRANSFER: 0,
+      WALLET: 0,
     };
 
     let feePercent = baseFees[gateway] || 0;
@@ -285,7 +285,7 @@ export class PaymentGatewaysService {
         orderId: input.orderId,
         gateway: input.gateway,
         amount: input.amount,
-        currency: input.currency,
+        currency: input.currency as Currency,
         feeAmount: feeCalc.feeAmount,
         netAmount: input.amount - feeCalc.feeAmount,
         status: PaymentTransactionStatus.PENDING,

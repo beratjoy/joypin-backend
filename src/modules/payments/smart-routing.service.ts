@@ -1,16 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-type PaymentProvider = 'STRIPE' | 'CRYPTOMUS' | 'PAYTR' | 'LIDIO';
-type Currency = 'USD' | 'EUR' | 'TRY' | 'GBP' | 'AED' | 'SAR';
+export type PaymentProvider = 'STRIPE' | 'CRYPTOMUS' | 'PAYTR' | 'LIDIO';
+export type Currency = 'USD' | 'EUR' | 'TRY' | 'GBP' | 'AED' | 'SAR';
 
-interface RoutingContext {
+export interface RoutingContext {
   currency: Currency;
   countryCode?: string;
   ipAddress?: string;
   amount: number;
 }
 
-interface AvailableGateway {
+export interface AvailableGateway {
   provider: PaymentProvider;
   label: string;
   icon: string;

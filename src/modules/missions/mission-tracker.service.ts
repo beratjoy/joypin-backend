@@ -82,18 +82,20 @@ export class MissionTrackerService {
       case 'CASH_BALANCE': {
         const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
         if (wallet) {
+          const balanceAfter = Number(wallet.balanceBonus) + Number(mission.rewardAmount);
           await this.prisma.wallet.update({
             where: { id: wallet.id },
-            data: { balance: { increment: mission.rewardAmount } },
+            data: { balanceBonus: { increment: mission.rewardAmount } },
           });
           await this.prisma.walletTransaction.create({
             data: {
               walletId: wallet.id,
-              type: 'BONUS',
+              type: 'CREDIT',
+              balanceField: 'BONUS',
               amount: mission.rewardAmount,
-              balanceAfter: 0,
+              balanceAfter,
               description: `Görev ödülü: ${mission.title}`,
-              referenceType: 'MISSION',
+              referenceType: 'mission',
               referenceId: missionId,
               performedById: userId,
             },
@@ -188,7 +190,7 @@ export class MissionTrackerService {
     await this.prisma.userNotification.create({
       data: {
         userId,
-        type: 'SYSTEM',
+        type: 'SYSTEM_ANNOUNCEMENT',
         title: '🎯 Görev Tamamlandı!',
         message: `"${missionTitle}" görevini başarıyla tamamladın! Ödülünü almak için panelini kontrol et.`,
         isRead: false,

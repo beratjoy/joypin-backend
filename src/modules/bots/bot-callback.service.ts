@@ -50,7 +50,7 @@ export class BotCallbackService {
     // 1. SubOrder doğrula
     const subOrder = await this.prisma.subOrder.findUnique({
       where: { id: dto.subOrderId },
-      include: { order: true },
+      include: { parentOrder: true },
     });
 
     if (!subOrder) {
@@ -79,22 +79,49 @@ export class BotCallbackService {
 
     // 3. E-pin kodlarını şifrele ve kaydet
     if (dto.codes && dto.codes.length > 0) {
+      const supplier = await this.prisma.supplier.upsert({
+        where: { code: 'BOT-CALLBACK' },
+        update: { isActive: true },
+        create: {
+          code: 'BOT-CALLBACK',
+          name: 'Bot Callback',
+          notes: 'Auto-created supplier for external bot delivered codes.',
+        },
+      });
+
       const encryptedCodes = dto.codes.map((code) => ({
         code: this.encryption.encrypt(code),
         productId: subOrder.productId,
         subOrderId: subOrder.id,
-        status: 'ASSIGNED' as const,
-        assignedAt: new Date(),
+        soldAt: new Date(),
       }));
 
-      // Toplu e-pin ekleme
-      await this.prisma.ePin.createMany({
-        data: encryptedCodes.map((ec) => ({
-          encryptedCode: ec.code,
-          productId: ec.productId,
-          status: ec.status,
-          assignedAt: ec.assignedAt,
-        })),
+      await this.prisma.$transaction(async (tx) => {
+        for (const ec of encryptedCodes) {
+          const epin = await tx.ePin.create({
+            data: {
+              encryptedCode: ec.code.encryptedCode,
+              encryptionIv: ec.code.iv,
+              productId: ec.productId,
+              status: 'SOLD',
+              supplierId: supplier.id,
+              purchaseCost: subOrder.unitCost,
+              purchaseCurrency: subOrder.currency,
+              supplierRef: dto.transactionRef,
+              soldAt: ec.soldAt,
+            },
+          });
+
+          await tx.subOrderItem.create({
+            data: {
+              subOrderId: ec.subOrderId,
+              epinId: epin.id,
+              externalRef: dto.transactionRef,
+              isDelivered: true,
+              deliveredAt: ec.soldAt,
+            },
+          });
+        }
       });
 
       this.logger.log(
@@ -107,17 +134,17 @@ export class BotCallbackService {
     await this.prisma.subOrder.update({
       where: { id: dto.subOrderId },
       data: {
-        status: dto.status === 'partial' ? 'PARTIAL' : 'DELIVERED',
+        status: dto.status === 'partial' ? 'PROCESSING' : 'DELIVERED',
         deliveredCount: { increment: deliveredCount },
-        externalRef: dto.transactionRef || undefined,
+        deliveryNote: dto.transactionRef ? `Bot ref: ${dto.transactionRef}` : undefined,
       },
     });
 
     // 5. Tüm SubOrder'lar tamamlandıysa → Order'ı COMPLETED yap
-    await this.checkAndCompleteOrder(subOrder.orderId);
+    await this.checkAndCompleteOrder(subOrder.parentOrderId);
 
     // 6. WebSocket bildirim gönder (müşteriye canlı)
-    await this.sendRealtimeNotification(subOrder.orderId, dto.subOrderId, deliveredCount);
+    await this.sendRealtimeNotification(subOrder.parentOrderId, dto.subOrderId, deliveredCount);
 
     this.logger.log(
       `✅ SubOrder ${dto.subOrderId} teslim edildi — ${deliveredCount} e-pin`,
@@ -148,7 +175,7 @@ export class BotCallbackService {
    */
   private async checkAndCompleteOrder(orderId: string): Promise<void> {
     const subOrders = await this.prisma.subOrder.findMany({
-      where: { orderId },
+      where: { parentOrderId: orderId },
       select: { status: true },
     });
 

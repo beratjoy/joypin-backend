@@ -124,23 +124,26 @@ export class AffiliateService {
       return;
     }
 
+    const balanceAfter = Number(wallet.balanceCommission) + Number(tx.commissionAmount);
+
     await this.prisma.$transaction([
       // Wallet balance artır
       this.prisma.wallet.update({
         where: { id: wallet.id },
-        data: { balance: { increment: tx.commissionAmount } },
+        data: { balanceCommission: { increment: tx.commissionAmount } },
       }),
       // Wallet transaction kaydı
       this.prisma.walletTransaction.create({
         data: {
           walletId: wallet.id,
-          type: 'COMMISSION',
+          type: 'CREDIT',
+          balanceField: 'COMMISSION',
           amount: tx.commissionAmount,
-          balanceAfter: 0, // Recalculated
+          balanceAfter,
           description: `Affiliate komisyon — Sipariş: ${tx.orderId}`,
-          referenceType: 'AFFILIATE',
+          referenceType: 'affiliate',
           referenceId: transactionId,
-          performedById: tx.referrerUserId,
+          performedById: adminUserId,
         },
       }),
       // Transaction güncelle

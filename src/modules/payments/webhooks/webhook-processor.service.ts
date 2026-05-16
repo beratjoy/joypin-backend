@@ -253,8 +253,9 @@ export class WebhookProcessorService {
           userId,
           title: 'Payment Confirmed',
           message: `Your payment via ${provider} has been confirmed. Order ${orderId} is being processed.`,
-          type: 'PAYMENT_CONFIRMED',
-          metadata: { orderId, provider },
+          type: 'PAYMENT_RECEIVED',
+          relatedEntityType: 'order',
+          relatedEntityId: orderId,
         },
       });
     }

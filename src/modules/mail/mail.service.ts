@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../../prisma/prisma.service';
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 
 interface MailPayload {
   to: string;
@@ -572,7 +573,7 @@ export class MailService {
           orderId: payload.orderId || null,
           status: 'SENT',
           sentAt: new Date(),
-          metadata: payload.metadata || undefined,
+          metadata: (payload.metadata as Prisma.InputJsonValue) || undefined,
         },
       });
 

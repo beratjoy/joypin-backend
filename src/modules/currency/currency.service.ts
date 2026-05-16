@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-interface ExchangeRates {
+export interface ExchangeRates {
   USD: number;
   EUR: number;
   TRY: number;

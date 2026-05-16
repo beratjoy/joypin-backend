@@ -144,10 +144,10 @@ export class BotAlertService {
     try {
       await this.prisma.auditLog.create({
         data: {
-          action: 'BOT_ALERT',
+          action: 'UPDATE',
           entityType: 'BotProvider',
           entityId: alert.providerId || 'system',
-          metadata: {
+          details: {
             severity: alert.severity,
             title: alert.title,
             message: alert.message,
@@ -186,7 +186,7 @@ export class BotAlertService {
    */
   private async getAdminEmails(): Promise<string[]> {
     const admins = await this.prisma.user.findMany({
-      where: { role: { in: ['ADMIN', 'OWNER'] }, isActive: true },
+      where: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'STAFF', 'SUPPORT'] }, status: 'ACTIVE' },
       select: { email: true },
     });
     return admins.map((a) => a.email);
