@@ -337,6 +337,7 @@ model Permission {
   code        String   @unique @db.VarChar(100) // ör: "epin.decrypt", "order.cancel"
   name        String   @db.VarChar(150)
   description String?
+  sliderImageUrl     String? @db.VarChar(500)  // Ana sayfa/slider gorseli
   module      String   @db.VarChar(50)          // ör: "products", "orders", "epins"
 
   users       UserPermission[]

@@ -143,7 +143,7 @@ export class StorefrontCompatController {
     }
 
     const products = await this.prisma.$queryRawUnsafe<any[]>(
-      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
+      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
       category.id,
     );
 
@@ -163,6 +163,7 @@ export class StorefrontCompatController {
       zoneIdLabel: category.zoneIdLabel || null,
       products: products.map((product: any) => {
         const productImage = this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || category.imageUrl, category.slug);
+        const sliderImage = this.normalizeImageUrl(product.sliderImageUrl || product.merchantImageUrl || product.iconUrl || category.imageUrl, category.slug);
         return {
           id: product.id,
           name: product.name,
@@ -174,6 +175,7 @@ export class StorefrontCompatController {
           type: product.type || 'EPIN',
           iconUrl: productImage,
           imageUrl: productImage,
+          sliderImageUrl: sliderImage,
         };
       }),
     };
@@ -200,6 +202,7 @@ export class StorefrontCompatController {
         productSlug: product.slug,
         categoryName: product.category?.name || '',
         imageUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || product.category?.imageUrl, product.category?.slug || product.slug),
+        sliderImageUrl: this.normalizeImageUrl(product.sliderImageUrl || product.merchantImageUrl || product.iconUrl || product.category?.imageUrl, product.category?.slug || product.slug),
         basePrice,
         memberPrice: null,
         vipPrice: discount > 0 ? Number((basePrice * (1 - discount / 100)).toFixed(2)) : null,
@@ -241,6 +244,7 @@ export class StorefrontCompatController {
       currency: product.baseCurrency || 'TRY',
       inStock: product.hasInfiniteStock || product.stockCount > 0,
       imageUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || product.category?.imageUrl, product.category?.slug || product.slug),
+      sliderImageUrl: this.normalizeImageUrl(product.sliderImageUrl || product.merchantImageUrl || product.iconUrl || product.category?.imageUrl, product.category?.slug || product.slug),
       categoryName: product.category?.name || '',
       topupFields: product.topupFields.map((field: any) => ({
         id: field.id,
