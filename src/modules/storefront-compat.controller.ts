@@ -12,6 +12,39 @@ export class StorefrontCompatController {
     return (country || '').trim().toUpperCase();
   }
 
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  private async resolveTenant(host?: string | null) {
+    const normalizedHost = this.normalizeTenantHost(host);
+    const byHost = normalizedHost
+      ? (await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT t.*, d.hostname AS "primaryDomain"
+           FROM "tenant_domains" d
+           JOIN "tenant_brands" t ON t.id = d."tenantId"
+           WHERE d.hostname = $1 AND d."isActive" = true AND t."isActive" = true
+           LIMIT 1`,
+          normalizedHost,
+        ).catch(() => []))[0]
+      : null;
+    if (byHost) return byHost;
+
+    return (await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT t.*, d.hostname AS "primaryDomain"
+       FROM "tenant_brands" t
+       LEFT JOIN "tenant_domains" d ON d."tenantId" = t.id AND d."isPrimary" = true
+       WHERE t."isDefault" = true AND t."isActive" = true
+       ORDER BY t."createdAt" ASC
+       LIMIT 1`,
+    ).catch(() => []))[0] || null;
+  }
+
   private visibleForCountry(item: { allowedCountries?: unknown }, country?: string | null) {
     const normalized = this.normalizeCountry(country);
     if (!normalized) return true;
@@ -308,15 +341,63 @@ export class StorefrontCompatController {
   }
 
   @Public()
+  @Public()
+  @Get('tenant')
+  async getTenant(@Query('host') host?: string) {
+    const tenant = await this.resolveTenant(host);
+    if (!tenant) return null;
+    return {
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      publicName: tenant.publicName,
+      defaultLocale: tenant.defaultLocale,
+      defaultCountry: tenant.defaultCountry,
+      defaultCurrency: tenant.defaultCurrency,
+      primaryColor: tenant.primaryColor,
+      accentColor: tenant.accentColor,
+      logoUrl: this.normalizeImageUrl(tenant.logoUrl),
+      faviconUrl: this.normalizeImageUrl(tenant.faviconUrl),
+      cdnPublicUrl: tenant.cdnPublicUrl,
+      primaryDomain: tenant.primaryDomain,
+    };
+  }
+
+  @Public()
   @Get('settings')
-  async getSettings(@Query('group') group?: string) {
-    const settings = await this.prisma.siteSettings.findMany({
+  async getSettings(@Query('group') group?: string, @Query('host') host?: string) {
+    const tenant = await this.resolveTenant(host);
+    const globalSettings = await this.prisma.siteSettings.findMany({
       where: group ? { group } : {},
     });
 
-    return settings.reduce((acc: Record<string, string>, setting: any) => {
-      acc[setting.key] = setting.value;
-      return acc;
+    const acc: Record<string, string> = globalSettings.reduce((map: Record<string, string>, setting: any) => {
+      map[setting.key] = setting.value;
+      return map;
     }, {});
+
+    if (tenant) {
+      acc.brand_name = tenant.publicName || tenant.name;
+      acc.site_title = acc.site_title || tenant.publicName || tenant.name;
+      acc.default_locale = tenant.defaultLocale || acc.default_locale || 'tr';
+      acc.default_country = tenant.defaultCountry || acc.default_country || 'TR';
+      acc.default_currency = tenant.defaultCurrency || acc.default_currency || 'TRY';
+      acc.theme_primary_color = tenant.primaryColor || acc.theme_primary_color || '#6366f1';
+      acc.theme_accent_color = tenant.accentColor || acc.theme_accent_color || '#22c55e';
+      if (tenant.logoUrl) acc.logo_url = this.normalizeImageUrl(tenant.logoUrl);
+      if (tenant.faviconUrl) acc.favicon_url = this.normalizeImageUrl(tenant.faviconUrl);
+      if (tenant.cdnPublicUrl) acc.cdn_public_url = tenant.cdnPublicUrl;
+      if (tenant.primaryDomain) acc.site_public_url = `https://${tenant.primaryDomain}`;
+
+      const tenantSettings = await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT key, value FROM "tenant_settings" WHERE "tenantId" = $1 ${group ? 'AND "group" = $2' : ''}`,
+        ...(group ? [tenant.id, group] : [tenant.id]),
+      ).catch(() => []);
+      for (const setting of tenantSettings) {
+        acc[setting.key] = setting.value;
+      }
+    }
+
+    return acc;
   }
 }

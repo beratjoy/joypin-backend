@@ -3,6 +3,7 @@ import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
 import { Roles } from './auth/decorators/roles.decorator';
+import { randomUUID } from 'crypto';
 
 @Controller('admin')
 @Roles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'SUPPORT')
@@ -11,6 +12,190 @@ export class AdminCompatController {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) {}
+
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  private tenantSettingDefaults(tenant: any) {
+    return [
+      ['site_title', tenant.publicName || tenant.name, 'general', 'Site title'],
+      ['brand_name', tenant.publicName || tenant.name, 'general', 'Brand display name'],
+      ['logo_url', tenant.logoUrl || '', 'general', 'Brand logo'],
+      ['favicon_url', tenant.faviconUrl || '', 'general', 'Favicon'],
+      ['site_public_url', tenant.primaryDomain ? `https://${tenant.primaryDomain}` : '', 'system', 'Primary site domain'],
+      ['cdn_public_url', tenant.cdnPublicUrl || '', 'system', 'Public CDN URL'],
+      ['default_locale', tenant.defaultLocale || 'tr', 'localization', 'Default locale'],
+      ['default_country', tenant.defaultCountry || 'TR', 'localization', 'Default country'],
+      ['default_currency', tenant.defaultCurrency || 'TRY', 'localization', 'Default currency'],
+      ['theme_primary_color', tenant.primaryColor || '#6366f1', 'theme', 'Primary brand color'],
+      ['theme_accent_color', tenant.accentColor || '#22c55e', 'theme', 'Accent brand color'],
+    ];
+  }
+
+  private async ensureDefaultTenant() {
+    const existing = (await this.prisma.$queryRawUnsafe<any[]>(
+      'SELECT id FROM "tenant_brands" WHERE "isDefault" = true AND "isActive" = true LIMIT 1',
+    ).catch(() => []))[0];
+    if (existing?.id) return existing.id;
+
+    const id = randomUUID();
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO "tenant_brands" ("id", "name", "slug", "publicName", "cdnPublicUrl", "isDefault", "isActive")
+       VALUES ($1, 'Epin365', 'epin365', 'Epin365', $2, true, true)
+       ON CONFLICT ("slug") DO UPDATE SET "isDefault" = true, "isActive" = true RETURNING id`,
+      id,
+      process.env.CDN_PUBLIC_URL || 'https://cdn.epin365.com',
+    ).catch(() => 0);
+    const tenant = (await this.prisma.$queryRawUnsafe<any[]>('SELECT id FROM "tenant_brands" WHERE slug = $1 LIMIT 1', 'epin365'))[0];
+    if (tenant?.id) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO "tenant_domains" ("id", "tenantId", "hostname", "isPrimary", "isActive")
+         VALUES ($1, $2, 'epin365.com', true, true)
+         ON CONFLICT ("hostname") DO UPDATE SET "tenantId" = EXCLUDED."tenantId", "isPrimary" = true, "isActive" = true`,
+        randomUUID(),
+        tenant.id,
+      ).catch(() => 0);
+      return tenant.id;
+    }
+    return id;
+  }
+
+  @Get('tenants')
+  async listTenants() {
+    await this.ensureDefaultTenant();
+    const tenants = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT t.*,
+        COALESCE(json_agg(DISTINCT d.*) FILTER (WHERE d.id IS NOT NULL), '[]') AS domains,
+        COALESCE(json_agg(DISTINCT s.*) FILTER (WHERE s.id IS NOT NULL), '[]') AS settings
+       FROM "tenant_brands" t
+       LEFT JOIN "tenant_domains" d ON d."tenantId" = t.id
+       LEFT JOIN "tenant_settings" s ON s."tenantId" = t.id
+       GROUP BY t.id
+       ORDER BY t."isDefault" DESC, t."createdAt" ASC`,
+    );
+    return { tenants };
+  }
+
+  @Post('tenants')
+  async createTenant(@Body() body: any) {
+    const id = randomUUID();
+    const slug = String(body.slug || body.name || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!slug) throw new BadRequestException('Tenant slug is required');
+    const hostname = this.normalizeTenantHost(body.primaryDomain || body.hostname);
+
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO "tenant_brands" ("id", "name", "slug", "publicName", "defaultLocale", "defaultCountry", "defaultCurrency", "primaryColor", "accentColor", "logoUrl", "faviconUrl", "cdnPublicUrl", "isDefault", "isActive", "metadata")
+       VALUES ($1,$2,$3,$4,$5,$6,$7::"Currency",$8,$9,$10,$11,$12,false,$13,$14::jsonb)`,
+      id,
+      String(body.name || body.publicName || slug),
+      slug,
+      String(body.publicName || body.name || slug),
+      String(body.defaultLocale || 'tr'),
+      String(body.defaultCountry || 'TR').toUpperCase(),
+      String(body.defaultCurrency || 'TRY').toUpperCase(),
+      String(body.primaryColor || '#6366f1'),
+      String(body.accentColor || '#22c55e'),
+      body.logoUrl || null,
+      body.faviconUrl || null,
+      body.cdnPublicUrl || null,
+      body.isActive !== false,
+      JSON.stringify(body.metadata || {}),
+    );
+
+    if (hostname) {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO "tenant_domains" ("id", "tenantId", "hostname", "isPrimary", "isActive")
+         VALUES ($1,$2,$3,true,true)
+         ON CONFLICT ("hostname") DO UPDATE SET "tenantId" = EXCLUDED."tenantId", "isPrimary" = true, "isActive" = true`,
+        randomUUID(),
+        id,
+        hostname,
+      );
+    }
+
+    return { success: true, tenantId: id, tenants: (await this.listTenants()).tenants };
+  }
+
+  @Patch('tenants/:id')
+  async updateTenant(@Param('id') id: string, @Body() body: any) {
+    const allowed: Record<string, string> = {
+      name: 'name',
+      publicName: 'publicName',
+      defaultLocale: 'defaultLocale',
+      defaultCountry: 'defaultCountry',
+      defaultCurrency: 'defaultCurrency',
+      primaryColor: 'primaryColor',
+      accentColor: 'accentColor',
+      logoUrl: 'logoUrl',
+      faviconUrl: 'faviconUrl',
+      cdnPublicUrl: 'cdnPublicUrl',
+      isActive: 'isActive',
+    };
+    for (const [key, column] of Object.entries(allowed)) {
+      if (!(key in body)) continue;
+      const value = key === 'defaultCountry' || key === 'defaultCurrency' ? String(body[key]).toUpperCase() : body[key];
+      if (key === 'defaultCurrency') {
+        await this.prisma.$executeRawUnsafe(`UPDATE "tenant_brands" SET "${column}" = $1::"Currency", "updatedAt" = CURRENT_TIMESTAMP WHERE id = $2`, value, id);
+      } else {
+        await this.prisma.$executeRawUnsafe(`UPDATE "tenant_brands" SET "${column}" = $1, "updatedAt" = CURRENT_TIMESTAMP WHERE id = $2`, value, id);
+      }
+    }
+    if (body.isDefault === true) {
+      await this.prisma.$executeRawUnsafe('UPDATE "tenant_brands" SET "isDefault" = false');
+      await this.prisma.$executeRawUnsafe('UPDATE "tenant_brands" SET "isDefault" = true WHERE id = $1', id);
+    }
+    return { success: true, tenants: (await this.listTenants()).tenants };
+  }
+
+  @Post('tenants/:id/domains')
+  async addTenantDomain(@Param('id') id: string, @Body() body: any) {
+    const hostname = this.normalizeTenantHost(body.hostname);
+    if (!hostname) throw new BadRequestException('Hostname is required');
+    if (body.isPrimary) {
+      await this.prisma.$executeRawUnsafe('UPDATE "tenant_domains" SET "isPrimary" = false WHERE "tenantId" = $1', id);
+    }
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO "tenant_domains" ("id", "tenantId", "hostname", "isPrimary", "isActive", "notes")
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT ("hostname") DO UPDATE SET "tenantId" = EXCLUDED."tenantId", "isPrimary" = EXCLUDED."isPrimary", "isActive" = EXCLUDED."isActive", "notes" = EXCLUDED."notes", "updatedAt" = CURRENT_TIMESTAMP`,
+      randomUUID(),
+      id,
+      hostname,
+      Boolean(body.isPrimary),
+      body.isActive !== false,
+      body.notes || null,
+    );
+    return { success: true, tenants: (await this.listTenants()).tenants };
+  }
+
+  @Delete('tenants/domains/:domainId')
+  async deleteTenantDomain(@Param('domainId') domainId: string) {
+    await this.prisma.$executeRawUnsafe('DELETE FROM "tenant_domains" WHERE id = $1', domainId);
+    return { success: true, tenants: (await this.listTenants()).tenants };
+  }
+
+  @Patch('tenants/:id/settings/:key')
+  async upsertTenantSetting(@Param('id') id: string, @Param('key') key: string, @Body() body: any) {
+    await this.prisma.$executeRawUnsafe(
+      `INSERT INTO "tenant_settings" ("id", "tenantId", "key", "value", "group", "description")
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT ("tenantId", "key") DO UPDATE SET "value" = EXCLUDED."value", "group" = EXCLUDED."group", "description" = EXCLUDED."description", "updatedAt" = CURRENT_TIMESTAMP`,
+      randomUUID(),
+      id,
+      key,
+      String(body.value ?? ''),
+      body.group || 'general',
+      body.description || key,
+    );
+    return { success: true, tenants: (await this.listTenants()).tenants };
+  }
+
   @Get('payment-methods')
   async listPaymentMethods() {
     const paymentMethods = await this.prisma.paymentMethod.findMany({

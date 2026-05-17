@@ -2024,6 +2024,68 @@ model SiteSettings {
   @@map("site_settings")
 }
 
+model TenantBrand {
+  id              String  @id @default(uuid())
+  name            String  @db.VarChar(120)
+  slug            String  @unique @db.VarChar(120)
+  publicName      String  @db.VarChar(160)
+  defaultLocale   String  @default("tr") @db.VarChar(10)
+  defaultCountry  String  @default("TR") @db.VarChar(10)
+  defaultCurrency Currency @default(TRY)
+  primaryColor    String  @default("#6366f1") @db.VarChar(20)
+  accentColor     String  @default("#22c55e") @db.VarChar(20)
+  logoUrl         String? @db.VarChar(500)
+  faviconUrl      String? @db.VarChar(500)
+  cdnPublicUrl    String? @db.VarChar(500)
+  isDefault       Boolean @default(false)
+  isActive        Boolean @default(true)
+  metadata        Json?
+
+  domains  TenantDomain[]
+  settings TenantSetting[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDefault])
+  @@index([isActive])
+  @@map("tenant_brands")
+}
+
+model TenantDomain {
+  id        String      @id @default(uuid())
+  tenantId  String
+  tenant    TenantBrand @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hostname  String      @unique @db.VarChar(255)
+  isPrimary Boolean     @default(false)
+  isActive  Boolean     @default(true)
+  notes     String?     @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([hostname, isActive])
+  @@map("tenant_domains")
+}
+
+model TenantSetting {
+  id          String      @id @default(uuid())
+  tenantId    String
+  tenant      TenantBrand @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key         String      @db.VarChar(100)
+  value       String      @db.Text
+  group       String      @default("general") @db.VarChar(50)
+  description String?     @db.VarChar(255)
+  updatedBy   String?
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId, group])
+  @@map("tenant_settings")
+}
+
 // ─────────────────────────────────────────────────────────────
 // GAMIFICATION: LOOT BOX (Kasa Açma)
 // ─────────────────────────────────────────────────────────────
