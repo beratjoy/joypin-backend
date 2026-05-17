@@ -530,7 +530,23 @@ export class MailService {
     });
   }
 
-  async listManagedTemplates() {
+  private normalizeTenantIds(value: any): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((item) => String(item).trim()).filter(Boolean).filter((item) => item !== 'all');
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string) {
+    if (!tenantId || tenantId === 'all') return true;
+    const tenantIds = this.normalizeTenantIds(item.tenantIds);
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
+  private managedTemplateSlug(slug: string, tenantId?: string) {
+    return tenantId && tenantId !== 'all' ? `${slug}__${tenantId}` : slug;
+  }
+
+  async listManagedTemplates(tenantId?: string) {
     const [templates, settings] = await Promise.all([
       this.prisma.emailTemplate.findMany({
         where: { languageCode: 'tr' },
@@ -543,7 +559,9 @@ export class MailService {
     const settingMap = new Map(settings.map((setting) => [setting.key, setting.value]));
 
     return MAIL_EVENTS.map((event) => {
-      const template = templates.find((item: any) => item.emailType === event.emailType);
+      const scopedSlug = this.managedTemplateSlug(event.slug, tenantId);
+      const template = templates.find((item: any) => item.emailType === event.emailType && item.slug === scopedSlug)
+        || templates.find((item: any) => item.emailType === event.emailType && this.visibleForTenant(item, tenantId));
       return {
         ...event,
         isEnabled: settingMap.get(this.eventSettingKey(event.emailType)) !== 'false',
@@ -571,9 +589,11 @@ export class MailService {
     description?: string;
     isActive?: boolean;
     isEnabled?: boolean;
-  }) {
+  }, tenantId?: string) {
     const event = MAIL_EVENTS.find((item) => item.emailType === emailType);
     if (!event) throw new Error('Unsupported email type');
+    const slug = this.managedTemplateSlug(event.slug, tenantId);
+    const tenantIds = tenantId && tenantId !== 'all' ? [tenantId] : [];
 
     if (input.isEnabled !== undefined) {
       await this.prisma.siteSettings.upsert({
@@ -589,8 +609,9 @@ export class MailService {
     }
 
     const template = await this.prisma.emailTemplate.upsert({
-      where: { slug_languageCode: { slug: event.slug, languageCode: 'tr' } },
+      where: { slug_languageCode: { slug, languageCode: 'tr' } },
       update: {
+        tenantIds,
         name: input.name || event.name,
         subject: input.subject || this.defaultSubjectFor(emailType),
         bodyHtml: input.bodyHtml || this.defaultBodyFor(emailType),
@@ -599,7 +620,8 @@ export class MailService {
         version: { increment: 1 },
       },
       create: {
-        slug: event.slug,
+        tenantIds,
+        slug,
         name: input.name || event.name,
         subject: input.subject || this.defaultSubjectFor(emailType),
         bodyHtml: input.bodyHtml || this.defaultBodyFor(emailType),

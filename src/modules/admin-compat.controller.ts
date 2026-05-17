@@ -1111,10 +1111,12 @@ export class AdminCompatController {
     @Query('entityType') entityType?: string,
     @Query('category') category?: string,
     @Query('actorType') actorType?: string,
+    @Query('tenantId') tenantId?: string,
   ) {
     const currentPage = Math.max(Number(page) || 1, 1);
     const perPage = Math.min(Math.max(Number(limit) || 50, 10), 100);
     const where: any = {};
+    if (this.isTenantScoped(tenantId)) where.tenantId = tenantId;
     if (userId) where.userId = userId;
     if (action && action !== 'all') where.action = action;
     if (entityType && entityType !== 'all') where.entityType = entityType;
@@ -1364,12 +1366,12 @@ export class AdminCompatController {
     return { success: true };
   }
   @Get('mail/templates')
-  async listMailTemplates() {
-    return { templates: await this.mailService.listManagedTemplates() };
+  async listMailTemplates(@Query('tenantId') tenantId?: string) {
+    return { templates: await this.mailService.listManagedTemplates(this.isTenantScoped(tenantId) ? tenantId : undefined) };
   }
   @Put('mail/templates/:emailType')
-  async saveMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
-    return this.mailService.saveManagedTemplate(emailType, body);
+  async saveMailTemplate(@Param('emailType') emailType: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    return this.mailService.saveManagedTemplate(emailType, body, this.isTenantScoped(tenantId) ? tenantId : undefined);
   }
   @Post('mail/templates/:emailType/preview')
   async previewMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
@@ -1438,13 +1440,16 @@ export class AdminCompatController {
     return { success: true };
   }
   @Get('referrals/missions')
-  async listReferralMissions() {
-    return this.prisma.mission.findMany({ orderBy: { createdAt: 'desc' } });
+  async listReferralMissions(@Query('tenantId') tenantId?: string) {
+    const missions = await this.prisma.mission.findMany({ orderBy: { createdAt: 'desc' } });
+    return missions.filter((mission: any) => this.visibleForTenant(mission, tenantId));
   }
   @Post('referrals/missions')
-  async createReferralMission(@Body() body: any) {
+  async createReferralMission(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.mission.create({
       data: {
+        tenantIds: scopedTenantIds,
         title: body.title,
         description: body.description || null,
         type: body.type || 'REFERRAL_COUNT',
@@ -1459,10 +1464,12 @@ export class AdminCompatController {
     });
   }
   @Patch('referrals/missions/:id')
-  async updateReferralMission(@Param('id') id: string, @Body() body: any) {
+  async updateReferralMission(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.mission.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         title: body.title,
         description: body.description === undefined ? undefined : body.description || null,
         type: body.type,
@@ -2232,9 +2239,9 @@ export class AdminCompatController {
     });
   }
   @Get('providers')
-  async getProviders() {
+  async getProviders(@Query('tenantId') tenantId?: string) {
     const providers = await this.prisma.botProvider.findMany({ orderBy: { priority: 'asc' } });
-    return providers.map((provider: any) => ({
+    return providers.filter((provider: any) => this.visibleForTenant(provider, tenantId)).map((provider: any) => ({
       id: provider.id,
       name: provider.name,
       type: provider.type,
@@ -2515,9 +2522,11 @@ export class AdminCompatController {
     });
   }
   @Post('providers')
-  async createProvider(@Body() body: any) {
+  async createProvider(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.botProvider.create({
       data: {
+        tenantIds: scopedTenantIds,
         name: body.name,
         type: body.type || 'API',
         status: body.status || 'ACTIVE',
@@ -2532,10 +2541,12 @@ export class AdminCompatController {
     });
   }
   @Patch('providers/:id')
-  async updateProvider(@Param('id') id: string, @Body() body: any) {
+  async updateProvider(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.botProvider.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         name: body.name,
         type: body.type,
         status: body.status,
@@ -3194,9 +3205,9 @@ export class AdminCompatController {
     return { success: true, convertedTl: requestedTl, spentPoints: pointsToSpend, balanceAfter };
   }
   @Get('points/lootboxes')
-  async getPointLootBoxes() {
+  async getPointLootBoxes(@Query('tenantId') tenantId?: string) {
     for (const preset of this.getDefaultLootBoxes()) {
-      await this.getOrCreatePresetLootBox(preset.id);
+      await this.getOrCreatePresetLootBox(preset.id, tenantId);
     }
 
     const boxes = await this.prisma.lootBox.findMany({
@@ -3205,14 +3216,15 @@ export class AdminCompatController {
       orderBy: { sortOrder: 'asc' },
     });
 
-    return boxes.map((box: any) => this.formatLootBox(box));
+    return boxes.filter((box: any) => this.visibleForTenant(box, tenantId)).map((box: any) => this.formatLootBox(box));
   }
   @Patch('points/lootboxes/:id')
-  async updatePointLootBox(@Param('id') id: string, @Body() body: any) {
+  async updatePointLootBox(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
-      ? await this.getOrCreatePresetLootBox(id)
+      ? await this.getOrCreatePresetLootBox(id, tenantId)
       : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
     if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+    if (!this.visibleForTenant(dbBox, tenantId)) return { success: false, message: 'Kasa bulunamadı' };
 
     const rewards = Array.isArray(body.rewards) ? body.rewards : [];
     const chanceTotal = rewards.reduce((sum: number, reward: any) => sum + Number(reward.chance || 0), 0);
@@ -3225,6 +3237,7 @@ export class AdminCompatController {
       where: { id: dbBox.id },
       data: {
         name: body.name || dbBox.name,
+        tenantIds: body.tenantIds !== undefined ? this.scopedTenantIds(body.tenantIds, tenantId) : undefined,
         price: body.price !== undefined ? Number(body.price) : dbBox.price,
         isPointPrice: body.isPointPrice !== undefined ? Boolean(body.isPointPrice) : dbBox.isPointPrice,
         rewards: {
@@ -3242,7 +3255,7 @@ export class AdminCompatController {
     return { success: true, lootBox: this.formatLootBox(updated) };
   }
   @Delete('points/lootboxes/:id')
-  async deletePointLootBox(@Param('id') id: string) {
+  async deletePointLootBox(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
     const presetNames = this.getDefaultLootBoxes().map((box) => box.name);
     const dbBox = await this.prisma.lootBox.findFirst({
       where: {
@@ -3255,6 +3268,7 @@ export class AdminCompatController {
       },
     });
     if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+    if (!this.visibleForTenant(dbBox, tenantId)) return { success: false, message: 'Kasa bulunamadı' };
 
     await this.prisma.lootBox.update({
       where: { id: dbBox.id },
@@ -3969,15 +3983,26 @@ export class AdminCompatController {
     ];
   }
 
-  private async getOrCreatePresetLootBox(id: string) {
+  private async getOrCreatePresetLootBox(id: string, tenantId?: string) {
     const preset = this.getDefaultLootBoxes().find((box) => box.id === id) || this.getDefaultLootBoxes()[0];
+    const tenantIds = this.isTenantScoped(tenantId) ? [tenantId] : [];
     const existing = await this.prisma.lootBox.findFirst({
       where: { name: preset.name },
       include: { rewards: true },
     });
-    if (existing) return existing;
+    if (existing) {
+      if (tenantIds.length && this.normalizeTenantIds((existing as any).tenantIds).length === 0) {
+        return this.prisma.lootBox.update({
+          where: { id: existing.id },
+          data: { tenantIds },
+          include: { rewards: true },
+        } as any);
+      }
+      return existing;
+    }
     return this.prisma.lootBox.create({
       data: {
+        tenantIds,
         name: preset.name,
         description: preset.accessType === 'VIP'
           ? 'Aktif VIP üyelerin açabildiği özel ödül kasası'

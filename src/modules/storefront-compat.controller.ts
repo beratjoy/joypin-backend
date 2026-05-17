@@ -354,15 +354,16 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('blog-posts')
-  async getBlogPosts() {
+  async getBlogPosts(@Query('host') host?: string) {
+    const tenant = await this.resolveTenant(host);
     const posts = await this.prisma.blogPost.findMany({
       where: { isPublished: true },
       include: { category: true },
       orderBy: { publishedAt: 'desc' },
-      take: 3,
+      take: 12,
     });
 
-    return posts.map((post: any) => ({
+    return posts.filter((post: any) => this.visibleForTenant(post, tenant?.id)).slice(0, 3).map((post: any) => ({
       id: post.id,
       title: post.title,
       slug: post.slug,

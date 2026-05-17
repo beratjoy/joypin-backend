@@ -6,9 +6,46 @@ import { PrismaService } from '../prisma/prisma.service';
 export class CouponCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  private async resolveTenant(host?: string | null) {
+    const normalizedHost = this.normalizeTenantHost(host);
+    const byHost = normalizedHost
+      ? (await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT t.*
+           FROM "tenant_domains" d
+           JOIN "tenant_brands" t ON t.id = d."tenantId"
+           WHERE d.hostname = $1 AND d."isActive" = true AND t."isActive" = true
+           LIMIT 1`,
+          normalizedHost,
+        ).catch(() => []))[0]
+      : null;
+    if (byHost) return byHost;
+
+    return (await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM "tenant_brands" WHERE "isDefault" = true AND "isActive" = true LIMIT 1`,
+    ).catch(() => []))[0] || null;
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string | null) {
+    if (!tenantId) return true;
+    const tenantIds = Array.isArray(item.tenantIds)
+      ? item.tenantIds.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
   @Public()
   @Get('active')
-  async getActiveCoupons() {
+  async getActiveCoupons(@Query('host') host?: string) {
+    const tenant = await this.resolveTenant(host);
     const now = new Date();
     const coupons = await this.prisma.discountCoupon.findMany({
       where: {
@@ -20,7 +57,7 @@ export class CouponCompatController {
       take: 12,
     } as any);
 
-    return coupons.map((coupon: any) => ({
+    return coupons.filter((coupon: any) => this.visibleForTenant(coupon, tenant?.id)).map((coupon: any) => ({
       id: coupon.id,
       code: coupon.code,
       name: coupon.name || coupon.code,
@@ -40,7 +77,9 @@ export class CouponCompatController {
     @Query('audience') audience?: string,
     @Query('categoryId') categoryId?: string,
     @Query('pageScope') pageScope?: string,
+    @Query('host') host?: string,
   ) {
+    const tenant = await this.resolveTenant(host);
     const now = new Date();
     const coupons = await this.prisma.discountCoupon.findMany({
       where: {
@@ -53,7 +92,7 @@ export class CouponCompatController {
       take: 20,
     } as any);
 
-    const coupon = coupons.find((item: any) => {
+    const coupon = coupons.filter((item: any) => this.visibleForTenant(item, tenant?.id)).find((item: any) => {
       const targetMatches = !audience || item.targetAudience === 'ALL' || item.targetAudience === audience;
       const pageMatches = !pageScope || item.popupPageScope === 'ALL' || item.popupPageScope === pageScope;
       const categoryMatches = !categoryId || !item.popupCategoryIds?.length || item.popupCategoryIds.includes(categoryId);

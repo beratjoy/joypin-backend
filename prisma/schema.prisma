@@ -1082,6 +1082,7 @@ model ReferralTransaction {
 
 model BotProvider {
   id     String            @id @default(uuid())
+  tenantIds Json?
   name   String            @db.VarChar(100)
   type   BotProviderType
   status BotProviderStatus @default(ACTIVE)
@@ -1239,6 +1240,7 @@ model Supplier {
 
 model AuditLog {
   id         String      @id @default(uuid())
+  tenantId   String?
   userId     String?
   user       User?       @relation(fields: [userId], references: [id])
   action     AuditAction
@@ -1256,6 +1258,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([tenantId, createdAt])
   @@index([userId, createdAt])
   @@index([action])
   @@index([category, createdAt])
@@ -1270,6 +1273,7 @@ model AuditLog {
 
 model DiscountCoupon {
   id          String       @id @default(uuid())
+  tenantIds   Json?
   code        String       @unique @db.VarChar(50)
   name        String?      @db.VarChar(200)
   description String?
@@ -1447,6 +1451,7 @@ model BlogCategory {
 
 model BlogPost {
   id         String @id @default(uuid())
+  tenantIds  Json?
   title      String @db.VarChar(300)
   slug       String @unique @db.VarChar(350)
   content    String @db.Text
@@ -2110,6 +2115,7 @@ enum LootBoxRewardType {
 
 model LootBox {
   id           String   @id @default(uuid())
+  tenantIds    Json?
   name         String   @db.VarChar(200) // "Altın Kasa", "Elmas Kutu"
   description  String?
   imageUrl     String?  @db.VarChar(500)
@@ -2400,6 +2406,7 @@ enum CampaignTargetType {
 /// E-posta şablonları — Tüm transactional ve marketing maillerin HTML'leri
 model EmailTemplate {
   id          String    @id @default(uuid())
+  tenantIds   Json?
   slug        String    @unique @db.VarChar(100) // "welcome", "order-confirmation", "abandoned-cart-1h"
   name        String    @db.VarChar(200)         // Görünen ad: "Hoş Geldin Maili"
   subject     String    @db.VarChar(500)         // "Hoş geldin {{firstName}}!"
@@ -2424,6 +2431,7 @@ model EmailTemplate {
 /// E-posta kampanyaları — Admin takviminden planlanan toplu gönderimler
 model EmailCampaign {
   id            String             @id @default(uuid())
+  tenantIds     Json?
   title         String             @db.VarChar(300)
   description   String?
 
@@ -2468,6 +2476,7 @@ model EmailCampaign {
 /// E-posta gönderim logları — Her tekil mail gönderimi + açılma/tıklanma takibi
 model EmailLog {
   id            String      @id @default(uuid())
+  tenantId      String?
 
   userId        String?     // Kayıtlı kullanıcı (null = misafir)
   email         String      @db.VarChar(255) // Alıcı e-posta adresi (snapshot)
@@ -2508,6 +2517,7 @@ model EmailLog {
   @@index([emailType])
   @@index([status])
   @@index([campaignId])
+  @@index([tenantId, createdAt])
   @@index([trackingId])
   @@index([createdAt])
   @@map("email_logs")
@@ -2654,6 +2664,7 @@ enum MissionRewardType {
 
 model Mission {
   id            String            @id @default(uuid())
+  tenantIds     Json?
   title         String            @db.VarChar(200)
   description   String?
   imageUrl      String?           @db.VarChar(500)
