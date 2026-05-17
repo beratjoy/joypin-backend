@@ -115,7 +115,7 @@ export class AdminCompatController {
   }
 
   @Get('tenants')
-  async listTenants() {
+  async listTenants(@Req() req?: any) {
     await this.ensureDefaultTenant();
     const tenants = await this.prisma.$queryRawUnsafe<any[]>(
       `SELECT t.*,
@@ -127,7 +127,11 @@ export class AdminCompatController {
        GROUP BY t.id
        ORDER BY t."isDefault" DESC, t."createdAt" ASC`,
     );
-    return { tenants };
+    const allowedTenantIds = Array.isArray(req?._staffTenantIds) ? req._staffTenantIds : [];
+    const visibleTenants = req?.user?.role === 'SUPER_ADMIN' || allowedTenantIds.length === 0
+      ? tenants
+      : tenants.filter((tenant: any) => allowedTenantIds.includes(tenant.id));
+    return { tenants: visibleTenants };
   }
 
   @Post('tenants')

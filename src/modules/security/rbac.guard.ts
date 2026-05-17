@@ -57,11 +57,14 @@ export class RbacGuard implements CanActivate {
     }
 
     // StaffProfile ve yetkilerini çek (cache)
-    if (!request._staffPermissions) {
-      request._staffPermissions = await this.loadUserPermissions(user.id);
+    if (!request._staffAccess) {
+      request._staffAccess = await this.loadUserAccess(user.id);
+      request._staffPermissions = request._staffAccess.permissions;
+      request._staffTenantIds = request._staffAccess.tenantIds;
     }
 
     const userPermissions: Set<string> = request._staffPermissions;
+    this.assertTenantAccess(request, request._staffAccess.tenantIds);
 
     // Tüm gerekli izinleri kontrol et
     const hasAll = requiredPermissions.every(perm => userPermissions.has(perm));
@@ -76,7 +79,7 @@ export class RbacGuard implements CanActivate {
     return true;
   }
 
-  private async loadUserPermissions(userId: string): Promise<Set<string>> {
+  private async loadUserAccess(userId: string): Promise<{ permissions: Set<string>; tenantIds: string[] }> {
     const staffProfile = await this.prisma.staffProfile.findUnique({
       where: { userId },
       include: {
@@ -91,11 +94,42 @@ export class RbacGuard implements CanActivate {
     });
 
     if (!staffProfile || !staffProfile.isActive) {
-      return new Set<string>();
+      return { permissions: new Set<string>(), tenantIds: [] };
     }
 
     const codes = staffProfile.role.permissions.map(rp => rp.permission.code);
-    return new Set(codes);
+    return {
+      permissions: new Set(codes),
+      tenantIds: this.normalizeTenantIds((staffProfile as any).tenantIds),
+    };
+  }
+
+  private normalizeTenantIds(value: unknown): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((item) => String(item).trim()).filter(Boolean).filter((item) => item !== 'all');
+  }
+
+  private requestedTenantId(request: any): string | null {
+    const queryTenant = request.query?.tenantId || request.query?.admin_tenant_id;
+    if (typeof queryTenant === 'string' && queryTenant && queryTenant !== 'all') return queryTenant;
+    const bodyTenant = request.body?.tenantId;
+    if (typeof bodyTenant === 'string' && bodyTenant && bodyTenant !== 'all') return bodyTenant;
+    const headerTenant = request.headers?.['x-tenant-id'];
+    if (typeof headerTenant === 'string' && headerTenant && headerTenant !== 'all') return headerTenant;
+    return null;
+  }
+
+  private assertTenantAccess(request: any, allowedTenantIds: string[]) {
+    const path = String(request.path || request.url || '').toLowerCase();
+    if (!path.startsWith('/api/admin')) return;
+    if (allowedTenantIds.length === 0) return;
+
+    const tenantId = this.requestedTenantId(request);
+    if (!tenantId) return;
+    if (!allowedTenantIds.includes(tenantId)) {
+      throw new ForbiddenException('Bu site icin yetkiniz yok');
+    }
   }
 
   private inferAdminPermissions(request: any): string[] | undefined {

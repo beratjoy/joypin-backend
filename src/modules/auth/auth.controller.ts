@@ -66,6 +66,13 @@ export class AuthController {
       lastName: user.lastName,
       role: user.role,
       dealerGroup: user.dealerGroup,
+      staffProfile: user.staffProfile ? {
+        id: user.staffProfile.id,
+        role: user.staffProfile.role,
+        isActive: user.staffProfile.isActive,
+        tenantIds: Array.isArray(user.staffProfile.tenantIds) ? user.staffProfile.tenantIds : [],
+      } : null,
+      allowedTenantIds: user.role === 'SUPER_ADMIN' ? [] : (Array.isArray(user.staffProfile?.tenantIds) ? user.staffProfile.tenantIds : []),
       countryCode: user.countryCode,
       preferredCurrency: user.preferredCurrency,
     };

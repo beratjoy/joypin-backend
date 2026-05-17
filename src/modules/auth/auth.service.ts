@@ -179,6 +179,7 @@ export class AuthService {
       include: {
         dealerGroup: true,
         permissions: { include: { permission: true } },
+        staffProfile: { select: { id: true, tenantIds: true, isActive: true, role: { select: { id: true, name: true, displayName: true } } } },
       },
     });
 
