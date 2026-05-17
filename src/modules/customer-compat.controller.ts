@@ -37,8 +37,15 @@ export class CustomerCompatController {
     if (!tenantId) return true;
     const tenantIds = Array.isArray(item.tenantIds)
       ? item.tenantIds.map((id) => String(id).trim()).filter(Boolean)
-      : [];
+      : String(item.tenantIds || '').split(',').map((id) => id.trim()).filter(Boolean);
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
+  private tenantOrderWhere(userId: string, tenantId?: string | null) {
+    return {
+      userId,
+      ...(tenantId ? { tenantId } : {}),
+    };
   }
 
   private maskUser(user: any) {
@@ -86,13 +93,16 @@ export class CustomerCompatController {
 
   @Get('coupons')
   async getCoupons(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const coupons = await this.prisma.userCoupon.findMany({
       where: { userId: req.user.id },
       include: { coupon: true },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    return coupons.map((coupon: any) => this.mapUserCoupon(coupon));
+    return coupons
+      .filter((coupon: any) => this.visibleForTenant(coupon.coupon, tenant?.id))
+      .map((coupon: any) => this.mapUserCoupon(coupon));
   }
 
   @Post('coupons')
@@ -135,7 +145,12 @@ export class CustomerCompatController {
       where: { referrerId: req.user.id },
       include: {
         referredUser: { select: { id: true, firstName: true, lastName: true, email: true, createdAt: true } },
-        transactions: { include: { order: { select: { orderNumber: true, totalAmount: true, createdAt: true } } }, orderBy: { createdAt: 'desc' }, take: 20 },
+        transactions: {
+          where: tenant?.id ? { order: { tenantId: tenant.id } } : {},
+          include: { order: { select: { orderNumber: true, totalAmount: true, createdAt: true, tenantId: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -150,8 +165,9 @@ export class CustomerCompatController {
         createdAt: transaction.createdAt,
       })),
     );
-    const totalEarnings = referrals.reduce((sum: number, item: any) => sum + Number(item.totalEarnings || 0), 0);
-    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, referrals.length, totalEarnings, tenant?.id);
+    const visibleReferralCount = referrals.filter((referral: any) => referral.transactions.length > 0).length;
+    const totalEarnings = transactions.reduce((sum: number, item: any) => sum + Number(item.commission || 0), 0);
+    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, visibleReferralCount, totalEarnings, tenant?.id);
     const withdrawals = await this.prisma.withdrawalRequest.findMany({ where: { userId: req.user.id, ...(tenant?.id ? { tenantId: tenant.id } : {}) }, orderBy: { createdAt: 'desc' }, take: 10 });
 
     return {
@@ -159,8 +175,8 @@ export class CustomerCompatController {
       referralLink: `${baseUrl}/register?ref=${user.referralCode}`,
       tierName: user.memberType?.name || currentRule?.name || 'Normal Üye',
       commissionRate: Number(currentRule?.commissionPercent || 0),
-      totalReferrals: referrals.length,
-      activeReferrals: referrals.filter((item: any) => item.isActive).length,
+      totalReferrals: visibleReferralCount,
+      activeReferrals: referrals.filter((item: any) => item.isActive && item.transactions.length > 0).length,
       totalEarnings,
       availableBalance: Number(user.wallet?.balanceWithdrawable || 0) + Number(user.wallet?.balanceCommission || 0),
       rules: rules.map((rule: any) => ({
@@ -178,10 +194,10 @@ export class CustomerCompatController {
       referrals: referrals.map((referral: any) => ({
         id: referral.id,
         member: this.maskUser(referral.referredUser),
-        totalEarnings: Number(referral.totalEarnings || 0),
-        totalTransactions: referral.totalTransactions,
+        totalEarnings: referral.transactions.reduce((sum: number, item: any) => sum + Number(item.commissionAmount || 0), 0),
+        totalTransactions: referral.transactions.length,
         createdAt: referral.createdAt,
-      })),
+      })).filter((referral: any) => referral.totalTransactions > 0),
       transactions,
       missions,
       withdrawals,
@@ -247,6 +263,7 @@ export class CustomerCompatController {
 
   @Get()
   async getProfile(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const userId = req.user.id;
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -258,6 +275,8 @@ export class CustomerCompatController {
     }) as any;
 
     if (!user) return null;
+    const orderWhere = this.tenantOrderWhere(userId, tenant?.id);
+    const ticketWhere = { userId, ...(tenant?.id ? { tenantId: tenant.id } : {}) };
 
     const [
       spent,
@@ -265,15 +284,16 @@ export class CustomerCompatController {
       activeCoupons,
       supportCounts,
       recentTransactions,
-      referralStats,
+      referralRows,
+      totalOrders,
     ] = await Promise.all([
       this.prisma.order.aggregate({
-        where: { userId, paymentStatus: 'PAID' },
+        where: { ...orderWhere, paymentStatus: 'PAID' },
         _sum: { totalAmount: true },
       }),
       this.prisma.order.groupBy({
         by: ['status'],
-        where: { userId },
+        where: orderWhere,
         _count: { _all: true },
       }),
       this.prisma.userCoupon.findMany({
@@ -285,21 +305,31 @@ export class CustomerCompatController {
       }),
       this.prisma.ticket.groupBy({
         by: ['status'],
-        where: { userId },
+        where: ticketWhere,
         _count: { _all: true },
       }),
       user.wallet?.id
         ? this.prisma.walletTransaction.findMany({
-            where: { walletId: user.wallet.id },
+            where: {
+              walletId: user.wallet.id,
+              ...(tenant?.id ? { OR: [{ order: { tenantId: tenant.id } }, { orderId: null }] } : {}),
+            },
+            include: { order: { select: { tenantId: true } } },
             orderBy: { createdAt: 'desc' },
             take: 8,
           })
         : Promise.resolve([]),
-      this.prisma.userReferral.aggregate({
+      this.prisma.userReferral.findMany({
         where: { referrerId: userId },
-        _count: { _all: true },
-        _sum: { totalEarnings: true },
+        select: {
+          id: true,
+          transactions: {
+            where: tenant?.id ? { order: { tenantId: tenant.id } } : {},
+            select: { commissionAmount: true },
+          },
+        },
       }),
+      this.prisma.order.count({ where: orderWhere }),
     ]);
 
     const wallet = user.wallet;
@@ -315,6 +345,7 @@ export class CustomerCompatController {
     };
     const usableBalance = walletSummary.balanceCurrent + walletSummary.balanceBonus + walletSummary.balanceCashback;
     const activeCouponCount = activeCoupons.filter((item: any) => {
+      if (!this.visibleForTenant(item.coupon, tenant?.id)) return false;
       const expiresAt = item.expiresAt || item.coupon?.validUntil;
       return !expiresAt || new Date(expiresAt).getTime() > Date.now();
     }).length;
@@ -326,6 +357,11 @@ export class CustomerCompatController {
       acc[row.status] = row._count._all;
       return acc;
     }, {});
+    const referralCount = referralRows.filter((row: any) => row.transactions.length > 0).length;
+    const referralEarnings = referralRows.reduce(
+      (sum: number, row: any) => sum + row.transactions.reduce((inner: number, tx: any) => inner + Number(tx.commissionAmount || 0), 0),
+      0,
+    );
 
     return {
       id: user.id,
@@ -342,15 +378,15 @@ export class CustomerCompatController {
       usableBalance,
       wallet: walletSummary,
       currency: wallet?.currency || user.preferredCurrency || 'TRY',
-      totalOrders: user._count.orders,
+      totalOrders,
       totalSpent: Number(spent._sum.totalAmount || 0),
       pointsBalance: user.pointsBalance,
       activeCouponCount,
       openTicketCount: (ticketStatusCounts.OPEN || 0) + (ticketStatusCounts.AWAITING_REPLY || 0) + (ticketStatusCounts.REPLIED || 0),
       orderStatusCounts,
       ticketStatusCounts,
-      referralCount: referralStats._count._all,
-      referralEarnings: Number(referralStats._sum.totalEarnings || 0),
+      referralCount,
+      referralEarnings,
       recentTransactions: recentTransactions.map((transaction: any) => ({
         id: transaction.id,
         type: transaction.type,
@@ -370,8 +406,9 @@ export class CustomerCompatController {
 
   @Get('orders')
   async getOrders(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const orders = await this.prisma.order.findMany({
-      where: { userId: req.user.id },
+      where: this.tenantOrderWhere(req.user.id, tenant?.id),
       include: { subOrders: { include: { product: true, items: true } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -396,8 +433,9 @@ export class CustomerCompatController {
 
   @Get('tickets')
   async getTickets(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const tickets = await this.prisma.ticket.findMany({
-      where: { userId: req.user.id },
+      where: { userId: req.user.id, ...(tenant?.id ? { tenantId: tenant.id } : {}) },
       include: { messages: { orderBy: { createdAt: 'asc' } } },
       orderBy: { updatedAt: 'desc' },
       take: 100,
@@ -420,8 +458,10 @@ export class CustomerCompatController {
 
   @Post('tickets')
   async createTicket(@Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     return this.prisma.ticket.create({
       data: {
+        tenantId: tenant?.id || null,
         userId: req.user.id,
         subject: body.subject,
         messages: {
@@ -438,8 +478,9 @@ export class CustomerCompatController {
 
   @Post('tickets/:id/reply')
   async replyTicket(@Param('id') id: string, @Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const ticket = await this.prisma.ticket.findFirst({
-      where: { id, userId: req.user.id },
+      where: { id, userId: req.user.id, ...(tenant?.id ? { tenantId: tenant.id } : {}) },
     });
     if (!ticket) return { success: false, error: 'Ticket bulunamadı' };
 
