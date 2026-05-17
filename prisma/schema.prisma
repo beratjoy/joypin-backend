@@ -442,6 +442,7 @@ model ProductCategory {
   badges      Json?
   paymentMethods Json?
   allowedCountries Json?
+  tenantIds Json?
   requiresUserId Boolean @default(false)
   userIdLabel String? @db.VarChar(100)
   userIdPlaceholder String? @db.VarChar(200)
@@ -541,6 +542,7 @@ model Product {
   isActive  Boolean @default(true)
   sortOrder Int     @default(0)
   allowedCountries Json?
+  tenantIds Json?
   metadata  Json?   // bölge, platform vb.
 
   // SEO (madde #30 — toplu SEO ayarı, flat URL: /pubg — #33)
@@ -1178,6 +1180,7 @@ model PaymentMethod {
 
   sortOrder Int     @default(0)
   isActive  Boolean @default(true)
+  tenantIds Json?
 
   dealerGroupMappings DealerGroupPaymentMethod[]
   categoryRestrictions CategoryPaymentRestriction[]

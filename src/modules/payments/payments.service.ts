@@ -6,6 +6,37 @@ import { normalizeCountryCode, normalizeCurrency } from '../../common/locale-cur
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  async resolveTenantId(host?: string | null) {
+    const normalizedHost = this.normalizeTenantHost(host);
+    if (!normalizedHost) return null;
+    const row = (await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT t.id
+       FROM "tenant_domains" d
+       JOIN "tenant_brands" t ON t.id = d."tenantId"
+       WHERE d.hostname = $1 AND d."isActive" = true AND t."isActive" = true
+       LIMIT 1`,
+      normalizedHost,
+    ).catch(() => []))[0];
+    return row?.id || null;
+  }
+
+  private visibleForTenant(method: { tenantIds?: unknown }, tenantId?: string | null) {
+    if (!tenantId) return true;
+    const tenantIds = Array.isArray(method.tenantIds)
+      ? method.tenantIds.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
   /**
    * Tüm aktif ödeme yöntemlerini getirir.
    */
@@ -21,11 +52,13 @@ export class PaymentsService {
     countryCode?: string;
     currency?: string;
     amount?: number;
+    tenantHost?: string;
   }) {
     const countryCode = normalizeCountryCode(params.user?.countryCode || params.countryCode);
     const currency = normalizeCurrency(params.user?.preferredCurrency || params.currency, countryCode);
     const amount = Number(params.amount || 0);
     const dealerGroupId = params.user?.dealerGroupId;
+    const tenantId = await this.resolveTenantId(params.tenantHost);
 
     const methods = await this.prisma.paymentMethod.findMany({
       where: { isActive: true },
@@ -39,6 +72,7 @@ export class PaymentsService {
 
     return methods
       .filter((method: any) => {
+        if (!this.visibleForTenant(method, tenantId)) return false;
         const mapping = method.dealerGroupMappings?.[0];
         if (mapping && !mapping.isAllowed) return false;
         if (amount > 0 && Number(method.minAmount || 0) > 0 && amount < Number(method.minAmount)) return false;

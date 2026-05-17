@@ -66,6 +66,25 @@ export class AdminCompatController {
     return id;
   }
 
+  private normalizeTenantIds(value: any): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((item) => String(item).trim()).filter(Boolean).filter((item) => item !== 'all');
+  }
+
+  private scopedTenantIds(bodyTenantIds: any, queryTenantId?: string) {
+    const explicit = this.normalizeTenantIds(bodyTenantIds);
+    if (explicit.length > 0) return explicit;
+    if (queryTenantId && queryTenantId !== 'all') return [queryTenantId];
+    return undefined;
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string) {
+    if (!tenantId || tenantId === 'all') return true;
+    const tenantIds = this.normalizeTenantIds(item.tenantIds);
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
   @Get('tenants')
   async listTenants() {
     await this.ensureDefaultTenant();
@@ -197,12 +216,12 @@ export class AdminCompatController {
   }
 
   @Get('payment-methods')
-  async listPaymentMethods() {
+  async listPaymentMethods(@Query('tenantId') tenantId?: string) {
     const paymentMethods = await this.prisma.paymentMethod.findMany({
       orderBy: { sortOrder: 'asc' },
     });
     return {
-      paymentMethods: paymentMethods.map((method: any) => ({
+      paymentMethods: paymentMethods.filter((method: any) => this.visibleForTenant(method, tenantId)).map((method: any) => ({
         ...method,
         minAmount: Number(method.minAmount || 0),
         maxAmount: Number(method.maxAmount || 0),
@@ -212,7 +231,8 @@ export class AdminCompatController {
     };
   }
   @Post('payment-methods')
-  async createPaymentMethod(@Body() body: any) {
+  async createPaymentMethod(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const paymentMethod = await this.prisma.paymentMethod.create({
       data: {
         name: body.name,
@@ -226,12 +246,14 @@ export class AdminCompatController {
         fixedFee: Number(body.fixedFee || 0),
         sortOrder: Number(body.sortOrder || 0),
         isActive: body.isActive !== false,
+        tenantIds: scopedTenantIds,
       },
     });
     return { success: true, paymentMethod };
   }
   @Patch('payment-methods/:id')
-  async updatePaymentMethod(@Param('id') id: string, @Body() body: any) {
+  async updatePaymentMethod(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const paymentMethod = await this.prisma.paymentMethod.update({
       where: { id },
       data: {
@@ -246,6 +268,7 @@ export class AdminCompatController {
         fixedFee: body.fixedFee !== undefined ? Number(body.fixedFee || 0) : undefined,
         sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder || 0) : undefined,
         isActive: body.isActive,
+        tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
       },
     });
     return { success: true, paymentMethod };
@@ -1712,13 +1735,13 @@ export class AdminCompatController {
     return this.prisma.slider.delete({ where: { id } });
   }
   @Get('categories')
-  async getCategories() {
+  async getCategories(@Query('tenantId') tenantId?: string) {
     const categories = await this.prisma.productCategory.findMany({
       include: { products: { select: { id: true } } },
       orderBy: { sortOrder: 'asc' },
     });
 
-    return categories.map((category: any) => ({
+    return categories.filter((category: any) => this.visibleForTenant(category, tenantId)).map((category: any) => ({
       id: category.id,
       name: category.name,
       slug: category.slug,
@@ -1730,6 +1753,7 @@ export class AdminCompatController {
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
       allowedCountries: category.allowedCountries || [],
+      tenantIds: category.tenantIds || [],
       requiresUserId: category.requiresUserId || false,
       userIdLabel: category.userIdLabel || '',
       userIdPlaceholder: category.userIdPlaceholder || '',
@@ -1740,7 +1764,8 @@ export class AdminCompatController {
     }));
   }
   @Post('categories')
-  async createCategory(@Body() body: any) {
+  async createCategory(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.productCategory.create({
       data: {
         name: body.name,
@@ -1752,6 +1777,7 @@ export class AdminCompatController {
         badges: body.badges || [],
         paymentMethods: body.paymentMethods || [],
         allowedCountries: body.allowedCountries || [],
+        tenantIds: scopedTenantIds,
         requiresUserId: body.requiresUserId ?? false,
         userIdLabel: body.userIdLabel || null,
         userIdPlaceholder: body.userIdPlaceholder || null,
@@ -1761,7 +1787,8 @@ export class AdminCompatController {
     });
   }
   @Patch('categories/:id')
-  async updateCategory(@Param('id') id: string, @Body() body: any) {
+  async updateCategory(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.productCategory.update({
       where: { id },
       data: {
@@ -1774,6 +1801,7 @@ export class AdminCompatController {
         badges: body.badges,
         paymentMethods: body.paymentMethods,
         allowedCountries: body.allowedCountries,
+        tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
         requiresUserId: body.requiresUserId,
         userIdLabel: body.userIdLabel,
         userIdPlaceholder: body.userIdPlaceholder,
@@ -1787,7 +1815,7 @@ export class AdminCompatController {
     return this.prisma.productCategory.delete({ where: { id } });
   }
   @Get('products')
-  async getProducts(@Query('categoryId') categoryId?: string) {
+  async getProducts(@Query('categoryId') categoryId?: string, @Query('tenantId') tenantId?: string) {
     const products = await this.prisma.product.findMany({
       where: categoryId ? { categoryId } : {},
       include: {
@@ -1799,7 +1827,7 @@ export class AdminCompatController {
       orderBy: { sortOrder: 'asc' },
     });
 
-    return products.map((product: any) => ({
+    return products.filter((product: any) => this.visibleForTenant(product, tenantId) && this.visibleForTenant(product.category || {}, tenantId)).map((product: any) => ({
       id: product.id,
       name: product.name,
       shortName: product.shortName || '',
@@ -1820,6 +1848,7 @@ export class AdminCompatController {
       isActive: product.isActive,
       sortOrder: product.sortOrder || 0,
       allowedCountries: product.allowedCountries || [],
+      tenantIds: product.tenantIds || [],
       imageUrl: product.iconUrl,
       marketingImage: product.merchantImageUrl,
       sliderImage: product.sliderImageUrl,
@@ -2512,7 +2541,8 @@ export class AdminCompatController {
     return this.prisma.productProvider.delete({ where: { id } });
   }
   @Post('products')
-  async createProduct(@Body() body: any) {
+  async createProduct(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.product.create({
       data: {
         name: body.name,
@@ -2529,6 +2559,7 @@ export class AdminCompatController {
         isActive: body.isActive ?? true,
         sortOrder: Number(body.sortOrder || 0),
         allowedCountries: body.allowedCountries || [],
+        tenantIds: scopedTenantIds,
         iconUrl: body.imageUrl || null,
         merchantImageUrl: body.marketingImage || null,
         sliderImageUrl: body.sliderImage || null,
@@ -2542,7 +2573,8 @@ export class AdminCompatController {
     });
   }
   @Patch('products/:id')
-  async updateProduct(@Param('id') id: string, @Body() body: any) {
+  async updateProduct(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.update({
         where: { id },
@@ -2561,6 +2593,7 @@ export class AdminCompatController {
           isActive: body.isActive,
           sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder || 0) : undefined,
           allowedCountries: body.allowedCountries,
+          tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
           iconUrl: body.imageUrl,
           merchantImageUrl: body.marketingImage,
           sliderImageUrl: body.sliderImage,

@@ -20,6 +20,7 @@ export class PaymentsController {
     const headerCountry = req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'];
     const countryCode = req.user?.countryCode || req.query?.country || headerCountry || 'TR';
     const currency = req.user?.preferredCurrency || req.query?.currency;
+    const tenantHost = req.query?.host || req.headers['x-storefront-host'] || req.headers['x-forwarded-host'] || req.headers.host;
     return {
       countryCode,
       currency,
@@ -28,6 +29,7 @@ export class PaymentsController {
         countryCode: req.query?.country || headerCountry,
         currency: req.query?.currency,
         amount: req.query?.amount,
+        tenantHost,
       }),
     };
   }
