@@ -279,6 +279,58 @@ export class AdminCompatController {
     return { success: true };
   }
 
+  @Post('seed-payment-methods')
+  async seedPaymentMethods(@Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = tenantId && tenantId !== 'all' ? [tenantId] : undefined;
+    const defaults = [
+      {
+        name: 'Banka Havalesi / EFT',
+        code: 'BANK_TRANSFER',
+        description: 'TR/TRY icin manuel banka transferi',
+        gatewayConfig: { allowedCountries: ['TR'], allowedCurrencies: ['TRY'], manual: true },
+        sortOrder: 10,
+      },
+      {
+        name: 'Kredi / Banka Kartı',
+        code: 'CARD',
+        description: 'Kart odemeleri icin genel yontem',
+        gatewayConfig: { allowedCountries: ['TR'], allowedCurrencies: ['TRY'], gateway: 'manual_card_placeholder' },
+        sortOrder: 20,
+      },
+    ];
+
+    const paymentMethods = [];
+    for (const item of defaults) {
+      const method = await this.prisma.paymentMethod.upsert({
+        where: { code: item.code },
+        update: {
+          name: item.name,
+          description: item.description,
+          gatewayConfig: item.gatewayConfig,
+          sortOrder: item.sortOrder,
+          isActive: true,
+          tenantIds: scopedTenantIds,
+        },
+        create: {
+          name: item.name,
+          code: item.code,
+          description: item.description,
+          gatewayConfig: item.gatewayConfig,
+          minAmount: 0,
+          maxAmount: 0,
+          feePercent: 0,
+          fixedFee: 0,
+          sortOrder: item.sortOrder,
+          isActive: true,
+          tenantIds: scopedTenantIds,
+        },
+      });
+      paymentMethods.push(method);
+    }
+
+    return { success: true, paymentMethods };
+  }
+
   private async attachAssignedStaff<T extends { assignedStaffId?: string | null }>(orders: T[]): Promise<Array<T & { assignedStaff: any }>> {
     const staffIds = Array.from(new Set(orders.map((order) => order.assignedStaffId).filter(Boolean))) as string[];
     if (staffIds.length === 0) {
