@@ -1768,12 +1768,12 @@ export class AdminCompatController {
     });
   }
   @Patch('sliders/:id')
-  async updateSlider(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantIdQuery?: string) {
-    const rawTenantId = body.tenantId ?? tenantIdQuery;
+  async updateSlider(@Param('id') id: string, @Body() body: any) {
+    const rawTenantId = body.tenantId;
     return this.prisma.slider.update({
       where: { id },
       data: {
-        tenantId: rawTenantId === 'all' ? null : rawTenantId,
+        tenantId: body.tenantId !== undefined ? (rawTenantId === 'all' ? null : rawTenantId) : undefined,
         title: body.title,
         imageUrl: body.imageUrl,
         mobileImageUrl: body.mobileImageUrl,
@@ -1854,7 +1854,7 @@ export class AdminCompatController {
         badges: body.badges,
         paymentMethods: body.paymentMethods,
         allowedCountries: body.allowedCountries,
-        tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         requiresUserId: body.requiresUserId,
         userIdLabel: body.userIdLabel,
         userIdPlaceholder: body.userIdPlaceholder,
