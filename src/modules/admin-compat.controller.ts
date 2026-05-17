@@ -73,6 +73,7 @@ export class AdminCompatController {
   }
 
   private scopedTenantIds(bodyTenantIds: any, queryTenantId?: string) {
+    if (bodyTenantIds !== undefined) return this.normalizeTenantIds(bodyTenantIds);
     const explicit = this.normalizeTenantIds(bodyTenantIds);
     if (explicit.length > 0) return explicit;
     if (queryTenantId && queryTenantId !== 'all') return [queryTenantId];
