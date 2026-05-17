@@ -120,13 +120,27 @@ export class RbacGuard implements CanActivate {
     return null;
   }
 
+  private allowsTenantlessAdminAccess(request: any) {
+    const path = String(request.path || request.url || '').toLowerCase().split('?')[0];
+    const method = String(request.method || 'GET').toUpperCase();
+
+    if (method === 'GET' && path === '/api/admin/tenants') return true;
+    if (method === 'GET' && path === '/api/admin/security/permissions') return true;
+    if (method === 'GET' && path === '/api/admin/security/roles') return true;
+
+    return false;
+  }
+
   private assertTenantAccess(request: any, allowedTenantIds: string[]) {
     const path = String(request.path || request.url || '').toLowerCase();
     if (!path.startsWith('/api/admin')) return;
     if (allowedTenantIds.length === 0) return;
 
     const tenantId = this.requestedTenantId(request);
-    if (!tenantId) return;
+    if (!tenantId) {
+      if (this.allowsTenantlessAdminAccess(request)) return;
+      throw new ForbiddenException('Site secimi zorunlu');
+    }
     if (!allowedTenantIds.includes(tenantId)) {
       throw new ForbiddenException('Bu site icin yetkiniz yok');
     }
