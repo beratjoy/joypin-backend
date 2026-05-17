@@ -143,12 +143,17 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('sliders')
-  async getSliders() {
-    const sliders = await this.prisma.slider.findMany({
-      where: { isActive: true },
+  async getSliders(@Query('host') host?: string) {
+    const tenant = await this.resolveTenant(host);
+    const where: any = { isActive: true };
+    if (tenant?.id) where.OR = [{ tenantId: tenant.id }, { tenantId: null }];
+    const allSliders = await this.prisma.slider.findMany({
+      where,
       orderBy: { sortOrder: 'asc' },
-      select: { id: true, title: true, imageUrl: true, mobileImageUrl: true, linkUrl: true },
+      select: { id: true, tenantId: true, title: true, imageUrl: true, mobileImageUrl: true, linkUrl: true },
     });
+    const tenantSliders = tenant?.id ? allSliders.filter((slider: any) => slider.tenantId === tenant.id) : [];
+    const sliders = tenantSliders.length > 0 ? tenantSliders : allSliders.filter((slider: any) => !slider.tenantId);
     return sliders.map((slider) => ({
       ...slider,
       imageUrl: this.normalizeImageUrl(slider.imageUrl),

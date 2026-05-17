@@ -8,6 +8,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
@@ -31,10 +32,13 @@ export class OrdersController {
   @ApiResponse({ status: 201, description: 'Sipariş oluşturuldu' })
   async createOrder(
     @CurrentUser('id') userId: string,
+    @Req() req: any,
     @Body()
     body: {
       currency: Currency;
       paymentMethod: string;
+      tenantId?: string;
+      tenantHost?: string;
       customerNote?: string;
       items: Array<{
         productId: string;
@@ -46,7 +50,11 @@ export class OrdersController {
       }>;
     },
   ) {
-    return this.ordersService.createOrder({ userId, ...body });
+    return this.ordersService.createOrder({
+      userId,
+      ...body,
+      tenantHost: body.tenantHost || req.headers['x-storefront-host'] || req.headers.host,
+    });
   }
 
   @Get('my')
@@ -72,12 +80,15 @@ export class OrdersController {
   @ApiOperation({ summary: 'Misafir siparişi oluştur (kayıt gerekmez)' })
   @ApiResponse({ status: 201, description: 'Misafir siparişi + takip tokeni' })
   async createGuestOrder(
+    @Req() req: any,
     @Body()
     body: {
       guestEmail: string;
       guestPhone?: string;
       currency: Currency;
       paymentMethod: string;
+      tenantId?: string;
+      tenantHost?: string;
       customerNote?: string;
       items: Array<{
         productId: string;
@@ -89,7 +100,10 @@ export class OrdersController {
       }>;
     },
   ) {
-    return this.ordersService.createGuestOrder(body);
+    return this.ordersService.createGuestOrder({
+      ...body,
+      tenantHost: body.tenantHost || req.headers['x-storefront-host'] || req.headers.host,
+    });
   }
 
   /**

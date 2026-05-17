@@ -31,6 +31,43 @@ export class OrdersService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  async resolveTenantId(host?: string | null, explicitTenantId?: string | null) {
+    if (explicitTenantId) {
+      const row = (await this.prisma.$queryRawUnsafe<any[]>(
+        'SELECT id FROM "tenant_brands" WHERE id = $1 AND "isActive" = true LIMIT 1',
+        explicitTenantId,
+      ).catch(() => []))[0];
+      if (row?.id) return row.id;
+    }
+
+    const normalizedHost = this.normalizeTenantHost(host);
+    if (normalizedHost) {
+      const row = (await this.prisma.$queryRawUnsafe<any[]>(
+        `SELECT t.id
+         FROM "tenant_domains" d
+         JOIN "tenant_brands" t ON t.id = d."tenantId"
+         WHERE d.hostname = $1 AND d."isActive" = true AND t."isActive" = true
+         LIMIT 1`,
+        normalizedHost,
+      ).catch(() => []))[0];
+      if (row?.id) return row.id;
+    }
+
+    const fallback = (await this.prisma.$queryRawUnsafe<any[]>(
+      'SELECT id FROM "tenant_brands" WHERE "isDefault" = true AND "isActive" = true LIMIT 1',
+    ).catch(() => []))[0];
+    return fallback?.id || null;
+  }
+
   // ═══════════════════════════════════════════════════════════
   // 1. SİPARİŞ OLUŞTURMA (Kayıtlı + Misafir)
   // ═══════════════════════════════════════════════════════════
@@ -52,6 +89,8 @@ export class OrdersService {
     paymentMethod: string;
     ipAddress?: string;
     customerNote?: string;
+    tenantId?: string | null;
+    tenantHost?: string | null;
     items: OrderItemInput[];
   }) {
     return this._createOrderInternal({
@@ -71,6 +110,8 @@ export class OrdersService {
     paymentMethod: string;
     ipAddress?: string;
     customerNote?: string;
+    tenantId?: string | null;
+    tenantHost?: string | null;
     items: OrderItemInput[];
   }) {
     const guestTrackingToken = crypto.randomBytes(32).toString('hex');
@@ -95,9 +136,12 @@ export class OrdersService {
     paymentMethod: string;
     ipAddress?: string;
     customerNote?: string;
+    tenantId?: string | null;
+    tenantHost?: string | null;
     items: OrderItemInput[];
   }) {
     const orderNumber = await this.generateOrderNumber();
+    const tenantId = await this.resolveTenantId(params.tenantHost, params.tenantId);
 
     const totalAmount = params.items.reduce(
       (sum, item) => sum + item.unitPrice * item.quantity,
@@ -144,6 +188,7 @@ export class OrdersService {
       const createdOrder = await tx.order.create({
         data: {
           orderNumber,
+          tenantId,
           userId: params.userId || null,
           isGuest: params.isGuest,
           guestEmail: params.guestEmail,

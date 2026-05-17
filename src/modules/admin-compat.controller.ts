@@ -274,6 +274,19 @@ export class AdminCompatController {
     }));
   }
 
+  private async attachTenant<T extends { tenantId?: string | null }>(rows: T[]): Promise<Array<T & { tenant: any }>> {
+    const tenantIds = Array.from(new Set(rows.map((row) => row.tenantId).filter(Boolean))) as string[];
+    if (tenantIds.length === 0) return rows.map((row) => ({ ...row, tenant: null }));
+    const tenants = await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT id, name, slug, "publicName", "primaryColor", "accentColor"
+       FROM "tenant_brands"
+       WHERE id = ANY($1::text[])`,
+      tenantIds,
+    ).catch(() => []);
+    const tenantMap = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+    return rows.map((row) => ({ ...row, tenant: row.tenantId ? tenantMap.get(row.tenantId) || null : null }));
+  }
+
   private normalizeAdminOrder(order: any) {
     const customerName = order.user
       ? `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim() || order.user.email
@@ -293,6 +306,8 @@ export class AdminCompatController {
 
     return {
       ...order,
+      tenant: order.tenant || null,
+      tenantName: order.tenant?.publicName || order.tenant?.name || null,
       customerName,
       customerEmail,
       customerType: order.user?.customerType || (order.isGuest ? 'guest' : 'individual'),
@@ -889,7 +904,8 @@ export class AdminCompatController {
   }
 
   @Get('notifications/summary')
-  async getNotificationSummary() {
+  async getNotificationSummary(@Query('tenantId') tenantId?: string) {
+    const orderTenantWhere = tenantId && tenantId !== 'all' ? { tenantId } : {};
     const [
       pendingOrders,
       pendingPayments,
@@ -899,16 +915,18 @@ export class AdminCompatController {
       pendingTickets,
     ] = await Promise.all([
       this.prisma.order.count({
-        where: { status: { in: ['PENDING', 'PROCESSING', 'PARTIALLY_DELIVERED'] as any } },
+        where: { ...orderTenantWhere, status: { in: ['PENDING', 'PROCESSING', 'PARTIALLY_DELIVERED'] as any } },
       }),
       this.prisma.paymentTransaction.count({
         where: {
+          ...(tenantId && tenantId !== 'all' ? { tenantId } : {}),
           status: 'PENDING' as any,
           NOT: { gateway: 'BANK_TRANSFER' as any },
         },
       }),
       this.prisma.paymentTransaction.count({
         where: {
+          ...(tenantId && tenantId !== 'all' ? { tenantId } : {}),
           status: 'PENDING' as any,
           gateway: 'BANK_TRANSFER' as any,
         },
@@ -920,7 +938,7 @@ export class AdminCompatController {
         where: { status: 'PENDING' as any },
       }),
       this.prisma.ticket.count({
-        where: { status: { in: ['OPEN', 'AWAITING_REPLY'] as any } },
+        where: { ...(tenantId && tenantId !== 'all' ? { tenantId } : {}), status: { in: ['OPEN', 'AWAITING_REPLY'] as any } },
       }),
     ]);
 
@@ -1651,14 +1669,19 @@ export class AdminCompatController {
     return this.renderInvoiceHtml(invoice, billing, settings.invoice_pdf_format || 'classic');
   }
   @Get('sliders')
-  async getSliders() {
-    return this.prisma.slider.findMany({ orderBy: { sortOrder: 'asc' } });
+  async getSliders(@Query('tenantId') tenantId?: string) {
+    const where = tenantId && tenantId !== 'all' ? { OR: [{ tenantId }, { tenantId: null }] } : {};
+    const sliders = await this.prisma.slider.findMany({ where, orderBy: { sortOrder: 'asc' } });
+    return this.attachTenant(sliders);
   }
   @Post('sliders')
-  async createSlider(@Body() body: any) {
-    const count = await this.prisma.slider.count();
+  async createSlider(@Body() body: any, @Query('tenantId') tenantIdQuery?: string) {
+    const rawTenantId = body.tenantId ?? tenantIdQuery;
+    const tenantId = rawTenantId && rawTenantId !== 'all' ? rawTenantId : null;
+    const count = await this.prisma.slider.count({ where: tenantId ? { tenantId } : {} });
     return this.prisma.slider.create({
       data: {
+        tenantId,
         title: body.title,
         imageUrl: body.imageUrl,
         mobileImageUrl: body.mobileImageUrl || null,
@@ -1669,10 +1692,12 @@ export class AdminCompatController {
     });
   }
   @Patch('sliders/:id')
-  async updateSlider(@Param('id') id: string, @Body() body: any) {
+  async updateSlider(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantIdQuery?: string) {
+    const rawTenantId = body.tenantId ?? tenantIdQuery;
     return this.prisma.slider.update({
       where: { id },
       data: {
+        tenantId: rawTenantId === 'all' ? null : rawTenantId,
         title: body.title,
         imageUrl: body.imageUrl,
         mobileImageUrl: body.mobileImageUrl,
@@ -2563,13 +2588,18 @@ export class AdminCompatController {
   }
 
   @Get('orders')
-  async getOrders() {
+  async getOrders(@Query('tenantId') tenantId?: string, @Query('status') status?: string) {
+    const where: any = {};
+    if (tenantId && tenantId !== 'all') where.tenantId = tenantId;
+    if (status && status !== 'all') where.status = status as any;
     const orders = await this.prisma.order.findMany({
+      where,
       include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
       orderBy: { createdAt: 'desc' },
     });
     const withStaff = await this.attachAssignedStaff(orders);
-    return { orders: withStaff.map((order) => this.normalizeAdminOrder(order)) };
+    const withTenant = await this.attachTenant(withStaff);
+    return { orders: withTenant.map((order) => this.normalizeAdminOrder(order)) };
   }
 
   @Get('orders/:orderId')
@@ -2587,7 +2617,8 @@ export class AdminCompatController {
       throw new NotFoundException('Sipariş bulunamadı');
     }
     const [withStaff] = await this.attachAssignedStaff([order]);
-    return this.normalizeAdminOrder(withStaff);
+    const [withTenant] = await this.attachTenant([withStaff]);
+    return this.normalizeAdminOrder(withTenant);
   }
 
   @Get('orders/:orderId/fraud-doc')
