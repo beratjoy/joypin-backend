@@ -6,6 +6,41 @@ import { PrismaService } from '../prisma/prisma.service';
 export class CustomerCompatController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeTenantHost(host?: string | null) {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '');
+  }
+
+  private async resolveTenantFromRequest(req: any) {
+    const host = this.normalizeTenantHost(req.headers?.['x-forwarded-host'] || req.headers?.host || req.headers?.origin);
+    const byHost = host
+      ? (await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT t.*
+           FROM "tenant_domains" d
+           JOIN "tenant_brands" t ON t.id = d."tenantId"
+           WHERE d.hostname = $1 AND d."isActive" = true AND t."isActive" = true
+           LIMIT 1`,
+          host,
+        ).catch(() => []))[0]
+      : null;
+    if (byHost) return byHost;
+    return (await this.prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM "tenant_brands" WHERE "isDefault" = true AND "isActive" = true LIMIT 1`,
+    ).catch(() => []))[0] || null;
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string | null) {
+    if (!tenantId) return true;
+    const tenantIds = Array.isArray(item.tenantIds)
+      ? item.tenantIds.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
   private maskUser(user: any) {
     const first = user?.firstName || '';
     const last = user?.lastName || '';
@@ -62,6 +97,7 @@ export class CustomerCompatController {
 
   @Post('coupons')
   async claimCoupon(@Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const coupon = await this.prisma.discountCoupon.findFirst({
       where: {
         code: String(body.code || '').trim().toUpperCase(),
@@ -69,6 +105,8 @@ export class CustomerCompatController {
       },
     });
     if (!coupon) return { success: false, message: 'Kupon bulunamadı' };
+
+    if (!this.visibleForTenant(coupon, tenant?.id)) return { success: false, message: 'Kupon bulunamadÄ±' };
 
     const userCoupon = await this.prisma.userCoupon.upsert({
       where: { userId_couponId: { userId: req.user.id, couponId: coupon.id } },
@@ -87,9 +125,11 @@ export class CustomerCompatController {
 
   @Get('referrals')
   async getReferrals(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const user = await this.ensureReferralCode(req.user.id);
     const baseUrl = process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://joypin.com';
-    const rules = await this.prisma.referralRule.findMany({ where: { isActive: true }, orderBy: { tierLevel: 'asc' } });
+    const allRules = await this.prisma.referralRule.findMany({ where: { isActive: true }, orderBy: { tierLevel: 'asc' } });
+    const rules = allRules.filter((rule: any) => this.visibleForTenant(rule, tenant?.id));
     const currentRule = rules[0] || null;
     const referrals = await this.prisma.userReferral.findMany({
       where: { referrerId: req.user.id },
@@ -111,8 +151,8 @@ export class CustomerCompatController {
       })),
     );
     const totalEarnings = referrals.reduce((sum: number, item: any) => sum + Number(item.totalEarnings || 0), 0);
-    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, referrals.length, totalEarnings);
-    const withdrawals = await this.prisma.withdrawalRequest.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 10 });
+    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, referrals.length, totalEarnings, tenant?.id);
+    const withdrawals = await this.prisma.withdrawalRequest.findMany({ where: { userId: req.user.id, ...(tenant?.id ? { tenantId: tenant.id } : {}) }, orderBy: { createdAt: 'desc' }, take: 10 });
 
     return {
       referralCode: user.referralCode,
@@ -150,6 +190,7 @@ export class CustomerCompatController {
 
   @Post('referrals/withdraw')
   async createReferralWithdrawal(@Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
     const amount = Number(body.amount || 0);
     if (amount <= 0) return { success: false, message: 'Tutar geçersiz' };
     const wallet = await this.prisma.wallet.findUnique({ where: { userId: req.user.id } }) as any;
@@ -158,6 +199,7 @@ export class CustomerCompatController {
     const withdrawal = await this.prisma.withdrawalRequest.create({
       data: {
         userId: req.user.id,
+        tenantId: tenant?.id || null,
         amount,
         currency: body.currency || wallet.currency || 'TRY',
         feeAmount: 0,
@@ -171,7 +213,7 @@ export class CustomerCompatController {
     return { success: true, withdrawal };
   }
 
-  private async getReferralMissions(userId: string, tierName: string | null, referralCount: number, totalEarnings: number) {
+  private async getReferralMissions(userId: string, tierName: string | null, referralCount: number, totalEarnings: number, tenantId?: string | null) {
     const now = new Date();
     const missions = await this.prisma.mission.findMany({
       where: {
@@ -183,6 +225,7 @@ export class CustomerCompatController {
       orderBy: { createdAt: 'desc' },
     });
     return missions
+      .filter((mission: any) => this.visibleForTenant(mission, tenantId))
       .filter((mission: any) => !mission.minTier || mission.minTier === tierName)
       .map((mission: any) => {
         const autoValue = mission.type === 'REFERRAL_COUNT' ? referralCount : mission.type === 'TOTAL_TURNOVER' ? totalEarnings : Number(mission.progress[0]?.currentValue || 0);

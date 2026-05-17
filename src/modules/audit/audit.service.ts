@@ -7,6 +7,7 @@ export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   async log(params: {
+    tenantId?: string;
     userId?: string;
     action: AuditAction;
     category?: string;

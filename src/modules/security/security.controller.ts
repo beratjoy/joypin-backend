@@ -17,6 +17,24 @@ export class SecurityController {
     private readonly rbacSeed: RbacSeedService,
   ) {}
 
+  private normalizeTenantIds(value: any): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((item) => String(item).trim()).filter(Boolean).filter((item) => item !== 'all');
+  }
+
+  private scopedTenantIds(bodyTenantIds: any, queryTenantId?: string) {
+    if (bodyTenantIds !== undefined) return this.normalizeTenantIds(bodyTenantIds);
+    if (queryTenantId && queryTenantId !== 'all') return [queryTenantId];
+    return undefined;
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string) {
+    if (!tenantId || tenantId === 'all') return true;
+    const tenantIds = this.normalizeTenantIds(item.tenantIds);
+    return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
   // ═══════════════════════════════════════════════════════════
   // ROLES CRUD
   // ═══════════════════════════════════════════════════════════
@@ -113,7 +131,7 @@ export class SecurityController {
 
   @Get('staff')
   @RequirePermissions('staff.manage_users')
-  async listStaff() {
+  async listStaff(@Query('tenantId') tenantId?: string) {
     const staff = await this.prisma.staffProfile.findMany({
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true, role: true } },
@@ -121,7 +139,7 @@ export class SecurityController {
       },
       orderBy: { createdAt: 'desc' },
     });
-    return { staff };
+    return { staff: staff.filter((profile: any) => this.visibleForTenant(profile, tenantId)) };
   }
 
   @Post('staff')
@@ -135,7 +153,9 @@ export class SecurityController {
     roleId: string;
     department?: string;
     phone?: string;
-  }) {
+    tenantIds?: string[];
+  }, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const email = String(body.email || body.userId || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       throw new BadRequestException('Gecerli bir personel e-posta adresi girin.');
@@ -189,12 +209,14 @@ export class SecurityController {
     const profile = await this.prisma.staffProfile.upsert({
       where: { userId: user.id },
       update: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         roleId: body.roleId,
         department: body.department,
         phone: body.phone,
         isActive: true,
       },
       create: {
+        tenantIds: scopedTenantIds,
         userId: user.id,
         roleId: body.roleId,
         department: body.department,
@@ -222,7 +244,9 @@ export class SecurityController {
     department?: string;
     isActive?: boolean;
     password?: string;
-  }) {
+    tenantIds?: string[];
+  }, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     if (body.roleId) {
       const role = await this.prisma.staffRole.findUnique({
         where: { id: body.roleId },
@@ -239,6 +263,7 @@ export class SecurityController {
     const profile = await this.prisma.staffProfile.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         roleId: body.roleId,
         department: body.department,
         isActive: body.isActive,

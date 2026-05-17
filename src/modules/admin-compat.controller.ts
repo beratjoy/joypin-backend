@@ -1070,7 +1070,10 @@ export class AdminCompatController {
         },
       }),
       this.prisma.withdrawalRequest.count({
-        where: { status: { in: ['PENDING', 'UNDER_REVIEW'] as any } },
+        where: {
+          ...(tenantId && tenantId !== 'all' ? { tenantId } : {}),
+          status: { in: ['PENDING', 'UNDER_REVIEW'] as any },
+        },
       }),
       this.isTenantScoped(tenantId)
         ? this.prisma.productReview.findMany({
@@ -1378,13 +1381,16 @@ export class AdminCompatController {
     return this.mailService.previewManagedTemplate(emailType, body);
   }
   @Get('referrals/rules')
-  async listReferralRules() {
-    return this.prisma.referralRule.findMany({ orderBy: [{ tierLevel: 'asc' }, { createdAt: 'desc' }] });
+  async listReferralRules(@Query('tenantId') tenantId?: string) {
+    const rules = await this.prisma.referralRule.findMany({ orderBy: [{ tierLevel: 'asc' }, { createdAt: 'desc' }] });
+    return rules.filter((rule: any) => this.visibleForTenant(rule, tenantId));
   }
   @Post('referrals/rules')
-  async createReferralRule(@Body() body: any) {
+  async createReferralRule(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.referralRule.create({
       data: {
+        tenantIds: scopedTenantIds,
         name: body.name,
         description: body.description || null,
         incomeModel: body.incomeModel || 'PRODUCT_SALE',
@@ -1408,10 +1414,12 @@ export class AdminCompatController {
     });
   }
   @Patch('referrals/rules/:id')
-  async updateReferralRule(@Param('id') id: string, @Body() body: any) {
+  async updateReferralRule(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.referralRule.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         name: body.name,
         description: body.description === undefined ? undefined : body.description || null,
         incomeModel: body.incomeModel,
@@ -2256,27 +2264,30 @@ export class AdminCompatController {
     }));
   }
   @Get('member-types')
-  async getMemberTypes() {
+  async getMemberTypes(@Query('tenantId') tenantId?: string) {
     const memberTypes = await this.prisma.memberType.findMany({
       include: { _count: { select: { users: true } } },
       orderBy: { sortOrder: 'asc' },
     });
 
-    return memberTypes.map((memberType: any) => ({
+    return memberTypes.filter((memberType: any) => this.visibleForTenant(memberType, tenantId)).map((memberType: any) => ({
       id: memberType.id,
       name: memberType.name,
       colorCode: memberType.colorCode,
       sortOrder: memberType.sortOrder,
       isActive: memberType.isActive,
       defaultDiscountPercent: Number(memberType.defaultDiscountPercent || 0),
+      tenantIds: memberType.tenantIds || [],
       userCount: memberType._count?.users || 0,
       createdAt: memberType.createdAt,
     }));
   }
   @Post('member-types')
-  async createMemberType(@Body() body: any) {
+  async createMemberType(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.memberType.create({
       data: {
+        tenantIds: scopedTenantIds,
         name: body.name,
         colorCode: body.colorCode || '#6366f1',
         sortOrder: body.sortOrder ?? 0,
@@ -2286,10 +2297,12 @@ export class AdminCompatController {
     });
   }
   @Patch('member-types/:id')
-  async updateMemberType(@Param('id') id: string, @Body() body: any) {
+  async updateMemberType(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.memberType.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         name: body.name,
         colorCode: body.colorCode,
         sortOrder: body.sortOrder,
@@ -2311,6 +2324,7 @@ export class AdminCompatController {
       name: plan.name,
       description: plan.description,
       durationDays: plan.durationDays,
+      tenantIds: plan.tenantIds || [],
       targetMemberTypeId: plan.targetMemberTypeId,
       targetMemberTypeName: plan.targetMemberType?.name || null,
       bonusPoints: plan.bonusPoints,
@@ -2330,7 +2344,7 @@ export class AdminCompatController {
     };
   }
   @Get('vip-plans')
-  async getVipPlans() {
+  async getVipPlans(@Query('tenantId') tenantId?: string) {
     const plans = await this.prisma.subscriptionPlan.findMany({
       include: {
         targetMemberType: true,
@@ -2340,10 +2354,11 @@ export class AdminCompatController {
       },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     } as any);
-    return plans.map((plan: any) => this.mapVipPlan(plan));
+    return plans.filter((plan: any) => this.visibleForTenant(plan, tenantId)).map((plan: any) => this.mapVipPlan(plan));
   }
   @Post('vip-plans')
-  async createVipPlan(@Body() body: any) {
+  async createVipPlan(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const prices = Array.isArray(body.prices) ? body.prices.filter((price: any) => Number(price.price) > 0) : [];
     const firstPrice = prices[0] || { currency: 'TRY', price: body.price || 0 };
     const targetMemberType = body.targetMemberTypeId
@@ -2356,6 +2371,7 @@ export class AdminCompatController {
 
     const plan = await this.prisma.subscriptionPlan.create({
       data: {
+        tenantIds: scopedTenantIds,
         name: body.name,
         description: body.description || null,
         price: Number(firstPrice.price || 0),
@@ -2380,7 +2396,8 @@ export class AdminCompatController {
     return this.mapVipPlan(plan);
   }
   @Patch('vip-plans/:id')
-  async updateVipPlan(@Param('id') id: string, @Body() body: any) {
+  async updateVipPlan(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const prices = Array.isArray(body.prices) ? body.prices.filter((price: any) => Number(price.price) > 0) : [];
     const firstPrice = prices[0];
     const targetMemberType = body.targetMemberTypeId
@@ -2392,6 +2409,7 @@ export class AdminCompatController {
     const plan = await this.prisma.subscriptionPlan.update({
       where: { id },
       data: {
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
         name: body.name,
         description: body.description,
         price: firstPrice ? Number(firstPrice.price || 0) : undefined,

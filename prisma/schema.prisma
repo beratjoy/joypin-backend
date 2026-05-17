@@ -583,6 +583,7 @@ model Product {
 
 model MemberType {
   id         String  @id @default(uuid())
+  tenantIds  Json?
   name       String  @unique @db.VarChar(100) // Bireysel, Gold, Platin, Royal Bayi vb.
   colorCode  String  @default("#6366f1") @db.VarChar(9) // Badge rengi
   sortOrder  Int     @default(0)
@@ -981,6 +982,7 @@ model WalletTransaction {
 
 model ReferralRule {
   id                String        @id @default(uuid())
+  tenantIds         Json?
   name              String        @db.VarChar(100)
   description       String?
 
@@ -1821,6 +1823,7 @@ model PaymentTransaction {
 /// Para çekme talepleri (Bayiler için)
 model WithdrawalRequest {
   id              String @id @default(uuid())
+  tenantId        String?
   
   userId          String
   user            User   @relation(fields: [userId], references: [id])
@@ -1858,6 +1861,7 @@ model WithdrawalRequest {
   updatedAt       DateTime @updatedAt
   
   @@index([userId])
+  @@index([tenantId, createdAt])
   @@index([status])
   @@index([createdAt])
   @@map("withdrawal_requests")
@@ -2228,6 +2232,7 @@ enum SubscriptionStatus {
 /// Her plan bir MemberType'a bağlıdır — satın alındığında kullanıcı o tipe yükseltilir.
 model SubscriptionPlan {
   id                 String     @id @default(uuid())
+  tenantIds          Json?
   name               String     @db.VarChar(200) // "Aylık VIP", "Yıllık Gold"
   description        String?
   price              Decimal    @db.Decimal(12, 4) // Varsayılan fiyat (fallback)
@@ -2278,6 +2283,7 @@ model SubscriptionPrice {
 /// Süre bittiğinde cron job memberTypeId'yi "Bireysel"e geri döndürür.
 model UserSubscription {
   id        String             @id @default(uuid())
+  tenantId  String?
   userId    String
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId    String
@@ -2301,6 +2307,7 @@ model UserSubscription {
   updatedAt DateTime @updatedAt
 
   @@index([userId, status])
+  @@index([tenantId, createdAt])
   @@index([endDate, status])
   @@map("user_subscriptions")
 }
@@ -2756,6 +2763,7 @@ model StaffRolePermission {
 /// Personel Profili — User'a bağlı, hangi rolde olduğunu belirler
 model StaffProfile {
   id       String    @id @default(uuid())
+  tenantIds Json?
   userId   String    @unique
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   roleId   String

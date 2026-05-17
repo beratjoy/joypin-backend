@@ -50,6 +50,7 @@ export class ActivityInterceptor implements NestInterceptor {
       const action = this.actionFor(method, path);
       await this.prisma.auditLog.create({
         data: {
+          tenantId: this.tenantIdFor(request),
           userId: user.id || null,
           action,
           category: this.categoryFor(method, path, user.role),
@@ -112,6 +113,16 @@ export class ActivityInterceptor implements NestInterceptor {
     const forwarded = request.headers?.['x-forwarded-for'];
     if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',')[0].trim();
     return request.ip || request.socket?.remoteAddress || null;
+  }
+
+  private tenantIdFor(request: any): string | null {
+    const queryTenant = request.query?.tenantId || request.query?.admin_tenant_id;
+    if (typeof queryTenant === 'string' && queryTenant && queryTenant !== 'all') return queryTenant;
+    const bodyTenant = request.body?.tenantId;
+    if (typeof bodyTenant === 'string' && bodyTenant && bodyTenant !== 'all') return bodyTenant;
+    const headerTenant = request.headers?.['x-tenant-id'];
+    if (typeof headerTenant === 'string' && headerTenant && headerTenant !== 'all') return headerTenant;
+    return null;
   }
 
   private sanitize(value: unknown): unknown {
