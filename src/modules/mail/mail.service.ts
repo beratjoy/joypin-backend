@@ -30,6 +30,7 @@ const MAIL_EVENTS = [
   { emailType: 'ORDER_DELIVERY', slug: 'order-delivery', name: 'Teslimat', description: 'E-pin veya sipariş teslim maili' },
   { emailType: 'ORDER_PARTIAL_DELIVERY', slug: 'order-partial-delivery', name: 'Kismi Teslimat', description: 'Siparisin bir kismi teslim edildiginde musteri bilgilendirmesi' },
   { emailType: 'ORDER_CANCELLED', slug: 'order-cancelled', name: 'Sipariş İptali', description: 'Sipariş iptal edildiğinde müşteri bilgilendirmesi' },
+  { emailType: 'PAYMENT_FAILED', slug: 'payment-failed', name: 'Odeme Basarisiz', description: 'Odeme basarisiz veya iptal oldugunda musteri bilgilendirmesi' },
   { emailType: 'GUEST_ORDER_INFO', slug: 'guest-order-info', name: 'Misafir Sipariş', description: 'Üyeliksiz sipariş takip maili' },
   { emailType: 'PASSWORD_RESET', slug: 'password-reset', name: 'Şifre Sıfırlama', description: 'Şifre yenileme bağlantısı' },
   { emailType: 'ACCOUNT_DELETION', slug: 'account-deletion', name: 'Üyelik İptali', description: 'Üyelik silme/onay bilgilendirmesi' },
@@ -321,6 +322,70 @@ export class MailService {
         refundAmount: data.refundAmount || '',
         currency: data.currency,
         note: data.note || '',
+      },
+    });
+  }
+
+  /** Odeme basarisiz bilgilendirme maili */
+  async sendPaymentFailed(to: string, data: {
+    orderId: string;
+    productName: string;
+    totalAmount: string;
+    currency: string;
+    gateway?: string;
+    reason?: string;
+    retryUrl?: string;
+    userId?: string;
+    tenantId?: string;
+  }): Promise<void> {
+    const retryUrl = data.retryUrl || `${await this.getSiteUrlForTenant(data.tenantId)}/tr/dashboard/orders`;
+    const html = this.wrapTemplate(`
+      <div style="text-align:center;margin-bottom:20px;">
+        <div style="display:inline-block;background:linear-gradient(135deg,#7f1d1d,#f97316);width:52px;height:52px;border-radius:18px;line-height:52px;font-size:24px;margin-bottom:14px;color:#fff;font-weight:900;">!</div>
+        <h2 style="color:#f8fafc;margin:0 0 8px;">Odeme Tamamlanamadi</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.7;margin:0;">#${data.orderId.slice(0, 16).toUpperCase()} numarali siparisiniz icin odeme basarisiz oldu veya iptal edildi.</p>
+      </div>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#111827;border:1px solid #334155;border-radius:16px;padding:18px;margin-bottom:20px;">
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Urun</td>
+          <td style="color:#f8fafc;font-size:13px;font-weight:700;padding:8px 12px;text-align:right;">${data.productName}</td>
+        </tr>
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Tutar</td>
+          <td style="color:#f8fafc;font-size:13px;font-weight:700;padding:8px 12px;text-align:right;">${data.totalAmount} ${data.currency}</td>
+        </tr>
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Kanal</td>
+          <td style="color:#fbbf24;font-size:13px;font-weight:800;padding:8px 12px;text-align:right;">${data.gateway || '-'}</td>
+        </tr>
+      </table>
+
+      <div style="background:#2f1111;border:1px solid #7f1d1d;border-radius:14px;padding:14px;margin-bottom:18px;color:#fecaca;font-size:13px;line-height:1.7;">
+        ${data.reason || 'Odeme saglayicisindan basarisiz sonuc alindi.'}
+      </div>
+
+      <a href="${retryUrl}" style="display:block;background:linear-gradient(135deg,#f97316,#ef4444);color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Siparisi Kontrol Et</a>
+    `);
+
+    await this.send({
+      to,
+      subject: `Odeme basarisiz: #${data.orderId.slice(0, 16).toUpperCase()}`,
+      html,
+      emailType: 'PAYMENT_FAILED',
+      userId: data.userId,
+      tenantId: data.tenantId,
+      orderId: data.orderId,
+      metadata: { gateway: data.gateway, reason: data.reason },
+      templateVars: {
+        orderId: data.orderId,
+        orderNo: data.orderId.slice(0, 16).toUpperCase(),
+        productName: data.productName,
+        totalAmount: data.totalAmount,
+        currency: data.currency,
+        gateway: data.gateway || '',
+        reason: data.reason || '',
+        retryUrl,
       },
     });
   }
@@ -1047,6 +1112,7 @@ export class MailService {
       ORDER_DELIVERY: 'Teslimat hazır: {{productName}}',
       ORDER_PARTIAL_DELIVERY: 'Siparis kismen teslim edildi: #{{orderNo}}',
       ORDER_CANCELLED: 'Sipariş iptal edildi: #{{orderNo}}',
+      PAYMENT_FAILED: 'Odeme basarisiz: #{{orderNo}}',
       GUEST_ORDER_INFO: 'Sipariş takip linkin: #{{orderNo}}',
       PASSWORD_RESET: 'Şifre sıfırlama bağlantın',
       ACCOUNT_DELETION: 'Üyelik iptali talebin alındı',
@@ -1068,6 +1134,7 @@ export class MailService {
       ORDER_DELIVERY: '<h2 style="color:#f8fafc;margin:0 0 10px;">Teslimat hazır</h2><p style="color:#94a3b8;line-height:1.7;">{{productName}} için teslimat kodların:</p><div style="color:#f8fafc;background:#020617;border:1px solid #334155;border-radius:16px;padding:18px;font-family:monospace;">{{codeList}}</div>',
       ORDER_PARTIAL_DELIVERY: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparis kismen teslim edildi</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numarali {{productName}} siparisinde {{deliveredQuantity}} / {{totalQuantity}} adet teslim edildi.</p><div style="background:#102033;border:1px solid #2563eb;border-radius:14px;padding:14px;color:#bfdbfe;">Bekleyen adet: {{remainingQuantity}}<br/>Iade: {{refundAmount}} {{currency}}</div>',
       ORDER_CANCELLED: '<h2 style="color:#f8fafc;margin:0 0 10px;">Sipariş iptal edildi</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı {{productName}} siparişiniz iptal edildi.</p><div style="background:#2f1111;border:1px solid #7f1d1d;border-radius:14px;padding:14px;color:#fecaca;">Sebep: {{reason}}</div>',
+      PAYMENT_FAILED: '<h2 style="color:#f8fafc;margin:0 0 10px;">Odeme tamamlanamadi</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numarali {{productName}} siparisiniz icin odeme basarisiz oldu.</p><div style="background:#2f1111;border:1px solid #7f1d1d;border-radius:14px;padding:14px;color:#fecaca;">{{reason}}</div><a href="{{retryUrl}}" style="display:block;background:#ef4444;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;margin-top:16px;">Siparisi Kontrol Et</a>',
       GUEST_ORDER_INFO: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparişin alındı</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı siparişini takip edebilirsin.</p><a href="{{trackUrl}}" style="display:block;background:#6366f1;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Siparişi Takip Et</a>',
       PASSWORD_RESET: '<h2 style="color:#f8fafc;margin:0 0 10px;">Şifre sıfırlama</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, yeni şifre belirlemek için aşağıdaki butonu kullan.</p><a href="{{resetUrl}}" style="display:block;background:#ef4444;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Şifremi Sıfırla</a>',
       ACCOUNT_DELETION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Talebin alındı</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, üyelik iptali talebin işleme alındı.</p>',
@@ -1089,6 +1156,7 @@ export class MailService {
       ORDER_DELIVERY: ['orderId', 'orderNo', 'productName', 'codes', 'codeList'],
       ORDER_PARTIAL_DELIVERY: ['orderId', 'orderNo', 'productName', 'deliveredQuantity', 'totalQuantity', 'remainingQuantity', 'refundAmount', 'currency', 'note'],
       ORDER_CANCELLED: ['orderId', 'orderNo', 'productName', 'reason', 'totalAmount', 'currency'],
+      PAYMENT_FAILED: ['orderId', 'orderNo', 'productName', 'totalAmount', 'currency', 'gateway', 'reason', 'retryUrl'],
       GUEST_ORDER_INFO: ['orderId', 'orderNo', 'trackingToken', 'productName', 'totalAmount', 'currency', 'trackUrl'],
       PASSWORD_RESET: ['firstName', 'resetUrl'],
       ACCOUNT_DELETION: ['firstName', 'reactivateUrl'],
@@ -1112,6 +1180,7 @@ export class MailService {
       orderNo: '20260517-0012',
       productName: 'PUBG Mobile 660 UC',
       reason: 'Stok yetersizligi nedeniyle iptal edildi.',
+      gateway: 'PAYTR',
       quantity: 2,
       deliveredQuantity: 3,
       totalQuantity: 5,

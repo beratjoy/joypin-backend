@@ -2378,6 +2378,7 @@ enum EmailType {
   ORDER_DELIVERY         // E-pin teslimi
   ORDER_PARTIAL_DELIVERY // Kismi teslimat bildirimi
   ORDER_CANCELLED        // Siparis iptal bildirimi
+  PAYMENT_FAILED         // Odeme basarisiz bildirimi
   GUEST_ORDER_INFO       // Misafir sipariş bilgi
   PASSWORD_RESET         // Şifre sıfırlama
   ACCOUNT_DELETION       // Üyelik iptali

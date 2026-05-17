@@ -64,6 +64,11 @@ export class WebhookProcessorService {
       if (orderId) {
         await this.handlePaymentSuccess(orderId, 'STRIPE', amount);
       }
+    } else if (event.type === 'checkout.session.expired' || event.type === 'payment_intent.payment_failed' || event.type === 'payment_intent.canceled') {
+      const orderId = event.data?.object?.metadata?.orderId;
+      if (orderId) {
+        await this.handlePaymentFailure(orderId, 'STRIPE', event.type);
+      }
     }
   }
 
@@ -94,6 +99,11 @@ export class WebhookProcessorService {
       const amount = parseFloat(body.amount);
       if (orderId) {
         await this.handlePaymentSuccess(orderId, 'CRYPTOMUS', amount);
+      }
+    } else if (['fail', 'failed', 'cancel', 'cancelled', 'canceled', 'expired'].includes(String(body.status || '').toLowerCase())) {
+      const orderId = body.order_id;
+      if (orderId) {
+        await this.handlePaymentFailure(orderId, 'CRYPTOMUS', `status:${body.status}`);
       }
     }
   }
@@ -129,6 +139,8 @@ export class WebhookProcessorService {
       const orderId = body.merchant_oid;
       const amount = parseFloat(body.total_amount) / 100; // kuruş → TRY
       await this.handlePaymentSuccess(orderId, 'PAYTR', amount);
+    } else {
+      await this.handlePaymentFailure(body.merchant_oid, 'PAYTR', body.failed_reason_msg || body.status || 'failed');
     }
   }
 
@@ -158,6 +170,8 @@ export class WebhookProcessorService {
       const orderId = body.orderId;
       const amount = parseFloat(body.amount);
       await this.handlePaymentSuccess(orderId, 'LIDIO', amount);
+    } else if (['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'DECLINED'].includes(String(body.status || '').toUpperCase())) {
+      await this.handlePaymentFailure(body.orderId, 'LIDIO', body.message || body.status || 'failed');
     }
   }
 
@@ -247,6 +261,69 @@ export class WebhookProcessorService {
       quantity,
       totalAmount: Number(order.totalAmount || 0).toFixed(2),
       currency: String(order.currency || 'TRY'),
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
+    });
+  }
+
+  private async handlePaymentFailure(
+    orderRef: string,
+    provider: 'STRIPE' | 'CRYPTOMUS' | 'PAYTR' | 'LIDIO',
+    reason: string,
+  ): Promise<void> {
+    if (!orderRef) return;
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [
+          { id: orderRef },
+          { orderNumber: orderRef },
+        ],
+      },
+      include: {
+        user: true,
+        subOrders: { include: { product: true } },
+      },
+    });
+
+    if (!order) {
+      await this.logWebhook(provider, 'payment_failure_order_not_found', { orderRef, reason }, false, orderRef);
+      return;
+    }
+    if (order.paymentStatus === 'PAID') {
+      await this.logWebhook(provider, 'payment_failure_ignored_paid_order', { orderRef, reason }, true, order.id);
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentTransaction.updateMany({
+        where: { orderId: order.id, status: { in: ['PENDING', 'PROCESSING'] as any } },
+        data: { status: 'FAILED' },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentStatus: 'FAILED' },
+      });
+    });
+
+    await this.sendPaymentFailedEmail(order, provider, reason).catch((error) => {
+      this.logger.warn(`[Mail] Payment failed email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
+    });
+    await this.logWebhook(provider, 'payment_failed', { orderRef, reason }, true, order.id);
+  }
+
+  private async sendPaymentFailedEmail(order: any, provider: string, reason: string) {
+    const to = order?.user?.email || order?.guestEmail;
+    if (!to) return;
+    const firstSubOrder = order.subOrders?.[0];
+    const productName = firstSubOrder?.product?.name || 'Siparis';
+    await this.mail.sendPaymentFailed(to, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      totalAmount: Number(order.totalAmount || 0).toFixed(2),
+      currency: String(order.currency || 'TRY'),
+      gateway: provider,
+      reason,
       userId: order.userId || undefined,
       tenantId: order.tenantId || undefined,
     });

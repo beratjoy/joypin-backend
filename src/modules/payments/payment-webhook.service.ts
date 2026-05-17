@@ -157,5 +157,34 @@ export class PaymentWebhookService {
       where: { orderId, status: 'PENDING' },
       data: { status: 'FAILED' },
     });
+
+    const order = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { paymentStatus: 'FAILED' },
+      include: { user: true, subOrders: { include: { product: true } } },
+    }).catch(() => null);
+
+    if (order) {
+      await this.sendPaymentFailedEmail(order, gateway, 'Odeme saglayicisindan basarisiz sonuc alindi.').catch((error) => {
+        this.logger.warn(`[Mail] Payment failed email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
+  }
+
+  private async sendPaymentFailedEmail(order: any, gateway: string, reason: string) {
+    const to = order?.user?.email || order?.guestEmail;
+    if (!to) return;
+    const firstSubOrder = order.subOrders?.[0];
+    const productName = firstSubOrder?.product?.name || 'Siparis';
+    await this.mail.sendPaymentFailed(to, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      totalAmount: Number(order.totalAmount || 0).toFixed(2),
+      currency: String(order.currency || 'TRY'),
+      gateway,
+      reason,
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
+    });
   }
 }
