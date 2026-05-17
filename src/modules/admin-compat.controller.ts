@@ -286,6 +286,8 @@ export class AdminCompatController {
   }
   @Patch('payment-methods/:id')
   async updatePaymentMethod(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.paymentMethod.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Ödeme yöntemi bulunamadı');
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const paymentMethod = await this.prisma.paymentMethod.update({
       where: { id },
@@ -307,7 +309,9 @@ export class AdminCompatController {
     return { success: true, paymentMethod };
   }
   @Delete('payment-methods/:id')
-  async deletePaymentMethod(@Param('id') id: string) {
+  async deletePaymentMethod(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.paymentMethod.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Ödeme yöntemi bulunamadı');
     await this.prisma.paymentMethod.delete({ where: { id } });
     return { success: true };
   }
@@ -393,6 +397,15 @@ export class AdminCompatController {
     ).catch(() => []);
     const tenantMap = new Map(tenants.map((tenant) => [tenant.id, tenant]));
     return rows.map((row) => ({ ...row, tenant: row.tenantId ? tenantMap.get(row.tenantId) || null : null }));
+  }
+
+  private async userVisibleForTenant(userId: string, tenantId?: string) {
+    if (!this.isTenantScoped(tenantId)) return true;
+    const [order, payment] = await Promise.all([
+      this.prisma.order.findFirst({ where: { userId, tenantId }, select: { id: true } }),
+      this.prisma.paymentTransaction.findFirst({ where: { userId, tenantId }, select: { id: true } }),
+    ]);
+    return Boolean(order || payment);
   }
 
   private normalizeAdminOrder(order: any) {
@@ -1521,7 +1534,7 @@ export class AdminCompatController {
   @Get('finance/deposits')
   async getDeposits(@Query('status') status?: string, @Query('limit') limit?: string, @Query('tenantId') tenantId?: string) {
     const take = Math.min(Number(limit || 100), 200);
-    const deposits = await this.prisma.paymentTransaction.findMany({
+    const depositsRaw = await this.prisma.paymentTransaction.findMany({
       where: {
         gateway: 'BANK_TRANSFER' as any,
         ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
@@ -1531,6 +1544,7 @@ export class AdminCompatController {
       orderBy: { initiatedAt: 'desc' },
       take,
     });
+    const deposits = await this.attachTenant(depositsRaw);
 
     return {
       deposits: deposits.map((deposit: any) => ({
@@ -1544,6 +1558,8 @@ export class AdminCompatController {
         note: deposit.failureReason || deposit.gatewayResponse?.note || null,
         status: deposit.status,
         createdAt: deposit.initiatedAt,
+        tenantId: deposit.tenantId,
+        tenantName: deposit.tenant?.publicName || deposit.tenant?.name || null,
       })),
     };
   }
@@ -1596,17 +1612,40 @@ export class AdminCompatController {
     return { success: true };
   }
   @Get('finance/transactions')
-  async getFinanceTransactions(@Query('limit') limit?: string) {
+  async getFinanceTransactions(@Query('limit') limit?: string, @Query('tenantId') tenantId?: string) {
     const take = Math.min(Number(limit || 100), 200);
     const transactions = await this.prisma.walletTransaction.findMany({
-      include: { wallet: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } }, performedBy: true },
+      where: this.isTenantScoped(tenantId)
+        ? {
+            OR: [
+              { order: { is: { tenantId } } },
+              { paymentTx: { is: { tenantId } } },
+            ],
+          }
+        : {},
+      include: {
+        order: { select: { tenantId: true } },
+        paymentTx: { select: { tenantId: true } },
+        wallet: { include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } } },
+        performedBy: true,
+      },
       orderBy: { createdAt: 'desc' },
       take,
     });
+    const tenantIds = Array.from(new Set(transactions.map((tx: any) => tx.order?.tenantId || tx.paymentTx?.tenantId).filter(Boolean))) as string[];
+    const tenants = tenantIds.length
+      ? await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT id, name, "publicName" FROM "tenant_brands" WHERE id = ANY($1::text[])`,
+          tenantIds,
+        ).catch(() => [])
+      : [];
+    const tenantMap = new Map(tenants.map((tenant) => [tenant.id, tenant]));
 
     return transactions.map((tx: any) => {
       const amount = Number(tx.amount || 0);
       const balanceAfter = Number(tx.balanceAfter || 0);
+      const txTenantId = tx.order?.tenantId || tx.paymentTx?.tenantId || null;
+      const txTenant = txTenantId ? tenantMap.get(txTenantId) : null;
       return {
         id: tx.id,
         userId: tx.wallet.userId,
@@ -1618,13 +1657,18 @@ export class AdminCompatController {
         description: tx.description || '',
         performedBy: tx.performedBy ? `${tx.performedBy.firstName} ${tx.performedBy.lastName}` : 'Sistem',
         createdAt: tx.createdAt,
+        tenantId: txTenantId,
+        tenantName: txTenant?.publicName || txTenant?.name || null,
       };
     });
   }
   @Post('finance/manual-adjust')
-  async manualBalanceAdjust(@Body() body: any) {
+  async manualBalanceAdjust(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const amount = Number(body.amount || 0);
     if (!body.userId || amount <= 0) return { success: false, message: 'Geçersiz işlem' };
+    if (!(await this.userVisibleForTenant(body.userId, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     const wallet = await this.prisma.wallet.upsert({
       where: { userId: body.userId },
       update: {},
@@ -2803,7 +2847,7 @@ export class AdminCompatController {
   }
 
   @Get('orders/:orderId')
-  async getOrderById(@Param('orderId') orderId: string) {
+  async getOrderById(@Param('orderId') orderId: string, @Query('tenantId') tenantId?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -2813,7 +2857,7 @@ export class AdminCompatController {
         },
       },
     });
-    if (!order) {
+    if (!order || (this.isTenantScoped(tenantId) && order.tenantId !== tenantId)) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
     const [withStaff] = await this.attachAssignedStaff([order]);
@@ -2822,7 +2866,7 @@ export class AdminCompatController {
   }
 
   @Get('orders/:orderId/fraud-doc')
-  async getOrderFraudDoc(@Param('orderId') orderId: string, @Res() res: any) {
+  async getOrderFraudDoc(@Param('orderId') orderId: string, @Res() res: any, @Query('tenantId') tenantId?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -2840,7 +2884,7 @@ export class AdminCompatController {
       },
     });
 
-    if (!order) {
+    if (!order || (this.isTenantScoped(tenantId) && order.tenantId !== tenantId)) {
       throw new NotFoundException('Sipariş bulunamadı');
     }
 
