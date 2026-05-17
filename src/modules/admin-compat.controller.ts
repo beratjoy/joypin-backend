@@ -3224,7 +3224,7 @@ export class AdminCompatController {
     // Notify via WebSocket
     const socket = (global as any).io;
     if (socket) {
-      socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber, assignedStaff: withStaff.assignedStaff });
+      socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber, tenantId: order.tenantId, assignedStaff: withStaff.assignedStaff });
     }
 
     return { success: true, message: 'Sipariş işleme alındı', order: withStaff };
@@ -3271,7 +3271,7 @@ export class AdminCompatController {
     // Notify via WebSocket
     const socket = (global as any).io;
     if (socket) {
-      socket.emit('order:released', { orderId, orderNumber: order.orderNumber });
+      socket.emit('order:released', { orderId, orderNumber: order.orderNumber, tenantId: order.tenantId });
     }
 
     return { success: true, message: 'Sipariş serbest bırakıldı' };
