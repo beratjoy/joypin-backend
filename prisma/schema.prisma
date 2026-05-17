@@ -1907,6 +1907,7 @@ model ProductDiscount {
 /// Kullanıcı bildirimleri (WebSocket/Polling destekli)
 model UserNotification {
   id              String @id @default(uuid())
+  tenantId        String?
   
   userId          String
   user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1937,6 +1938,8 @@ model UserNotification {
   expiresAt       DateTime? // Otomatik silinecek tarih
   
   @@index([userId])
+  @@index([tenantId, createdAt])
+  @@index([userId, tenantId, isRead])
   @@index([type])
   @@index([deliveryStatus])
   @@index([isRead])

@@ -14,6 +14,7 @@ import { NotificationType, NotificationDeliveryStatus } from '@prisma/client';
 
 interface NotificationPayload {
   id: string;
+  tenantId?: string | null;
   type: NotificationType;
   title: string;
   message: string;
@@ -63,6 +64,7 @@ export class NotificationGateway
   handleConnection(client: Socket) {
     const userId = client.handshake.auth.userId;
     const token = client.handshake.auth.token;
+    const tenantId = this.scopedTenantId(client.handshake.auth.tenantId);
 
     if (!userId || !token) {
       client.disconnect();
@@ -74,11 +76,15 @@ export class NotificationGateway
     
     // Kullanıcıya özel odaya katıl
     client.join(`user_${userId}`);
+    if (tenantId) {
+      client.data.tenantId = tenantId;
+      client.join(`tenant_${tenantId}`);
+    }
     
     console.log(`User ${userId} connected with socket ${client.id}`);
     
     // Okunmamış bildirimleri gönder
-    this.sendUnreadNotifications(userId, client);
+    this.sendUnreadNotifications(userId, client, tenantId);
   }
 
   handleDisconnect(client: Socket) {
@@ -162,9 +168,11 @@ export class NotificationGateway
     userId: string,
     payload: Omit<NotificationPayload, 'id' | 'timestamp'>,
   ): Promise<void> {
+    const tenantId = this.scopedTenantId(payload.tenantId) || await this.resolveTenantId(payload.relatedEntityType, payload.relatedEntityId);
     // Veritabanına kaydet
     const notification = await this.prisma.userNotification.create({
       data: {
+        tenantId,
         userId,
         type: payload.type,
         title: payload.title,
@@ -180,6 +188,7 @@ export class NotificationGateway
 
     const fullPayload: NotificationPayload = {
       id: notification.id,
+      tenantId,
       ...payload,
       timestamp: new Date().toISOString(),
     };
@@ -200,9 +209,15 @@ export class NotificationGateway
     userId: string,
     update: PaymentStatusUpdate,
   ): Promise<void> {
+    const transaction = await this.prisma.paymentTransaction.findUnique({
+      where: { id: update.transactionId },
+      select: { tenantId: true },
+    }).catch(() => null);
+    const tenantId = transaction?.tenantId || undefined;
     // Ödeme odasındaki tüm kullanıcılara gönder
     this.server.to(`payment_${update.transactionId}`).emit('payment_status', {
       ...update,
+      tenantId,
       timestamp: new Date().toISOString(),
     });
 
@@ -217,6 +232,7 @@ export class NotificationGateway
         message: update.message || `Your payment of ${update.amount} ${update.currency} has been ${update.status.toLowerCase()}`,
         relatedEntityType: 'payment',
         relatedEntityId: update.transactionId,
+        tenantId,
         actionUrl: `/payments/${update.transactionId}`,
         actionText: 'View Details',
       });
@@ -232,12 +248,14 @@ export class NotificationGateway
     status: string,
     message?: string,
   ): Promise<void> {
+    const tenantId = await this.resolveTenantId('withdrawal', withdrawalId);
     await this.sendNotification(userId, {
       type: 'WITHDRAWAL_STATUS_CHANGE',
       title: 'Withdrawal Status Updated',
       message: message || `Your withdrawal request status changed to: ${status}`,
       relatedEntityType: 'withdrawal',
       relatedEntityId: withdrawalId,
+      tenantId,
       actionUrl: `/withdrawals/${withdrawalId}`,
       actionText: 'View Status',
     });
@@ -248,7 +266,7 @@ export class NotificationGateway
    */
   async broadcastNotification(
     payload: Omit<NotificationPayload, 'id' | 'timestamp'>,
-    filter?: { dealerGroupId?: string; userRole?: string },
+    filter?: { dealerGroupId?: string; userRole?: string; tenantId?: string },
   ): Promise<void> {
     // Filtreye göre kullanıcıları bul
     const where: any = {};
@@ -258,6 +276,13 @@ export class NotificationGateway
     if (filter?.userRole) {
       where.role = filter.userRole;
     }
+    const tenantId = this.scopedTenantId(filter?.tenantId || payload.tenantId || undefined);
+    if (tenantId) {
+      where.OR = [
+        { orders: { some: { tenantId } } },
+        { paymentTransactions: { some: { tenantId } } },
+      ];
+    }
 
     const users = await this.prisma.user.findMany({
       where,
@@ -266,7 +291,7 @@ export class NotificationGateway
 
     // Her kullanıcıya bildirim oluştur
     for (const user of users) {
-      await this.sendNotification(user.id, payload);
+      await this.sendNotification(user.id, { ...payload, tenantId });
     }
   }
 
@@ -283,9 +308,12 @@ export class NotificationGateway
       unreadOnly?: boolean;
       limit?: number;
       after?: Date;
+      tenantId?: string;
     },
   ) {
     const where: any = { userId };
+    const tenantId = this.scopedTenantId(options?.tenantId);
+    if (tenantId) where.tenantId = tenantId;
     
     if (options?.unreadOnly) {
       where.isRead = false;
@@ -304,9 +332,10 @@ export class NotificationGateway
   /**
    * Okunmamış bildirim sayısı
    */
-  async getUnreadCount(userId: string): Promise<number> {
+  async getUnreadCount(userId: string, tenantId?: string): Promise<number> {
+    const scopedTenantId = this.scopedTenantId(tenantId);
     return this.prisma.userNotification.count({
-      where: { userId, isRead: false },
+      where: { userId, isRead: false, ...(scopedTenantId ? { tenantId: scopedTenantId } : {}) },
     });
   }
 
@@ -314,12 +343,13 @@ export class NotificationGateway
   // PRIVATE METHODS
   // ═══════════════════════════════════════════════════════════════
 
-  private async sendUnreadNotifications(userId: string, client: Socket): Promise<void> {
-    const notifications = await this.getUserNotifications(userId, { unreadOnly: true, limit: 10 });
+  private async sendUnreadNotifications(userId: string, client: Socket, tenantId?: string): Promise<void> {
+    const notifications = await this.getUserNotifications(userId, { unreadOnly: true, limit: 10, tenantId });
     
     if (notifications.length > 0) {
       client.emit('unread_notifications', notifications.map(n => ({
         id: n.id,
+        tenantId: n.tenantId,
         type: n.type,
         title: n.title,
         message: n.message,
@@ -332,21 +362,46 @@ export class NotificationGateway
       })));
     }
 
-    await this.sendUnreadCount(userId, client);
+    await this.sendUnreadCount(userId, client, tenantId);
   }
 
-  private async sendUnreadCount(userId: string, client?: Socket): Promise<void> {
-    const count = await this.getUnreadCount(userId);
+  private async sendUnreadCount(userId: string, client?: Socket, tenantId?: string): Promise<void> {
+    const count = await this.getUnreadCount(userId, tenantId);
     
     if (client) {
-      client.emit('unread_count', { count });
+      client.emit('unread_count', { count, tenantId });
     } else {
-      this.server.to(`user_${userId}`).emit('unread_count', { count });
+      this.server.to(`user_${userId}`).emit('unread_count', { count, tenantId });
     }
   }
 
   private isUserOnline(userId: string): boolean {
     return this.userSockets.has(userId);
+  }
+
+  private scopedTenantId(tenantId?: string | null): string | undefined {
+    return tenantId && tenantId !== 'all' ? tenantId : undefined;
+  }
+
+  private async resolveTenantId(entityType?: string, entityId?: string): Promise<string | undefined> {
+    if (!entityType || !entityId) return undefined;
+    if (entityType === 'order') {
+      const order = await this.prisma.order.findUnique({ where: { id: entityId }, select: { tenantId: true } });
+      return order?.tenantId || undefined;
+    }
+    if (entityType === 'payment') {
+      const tx = await this.prisma.paymentTransaction.findUnique({ where: { id: entityId }, select: { tenantId: true } });
+      return tx?.tenantId || undefined;
+    }
+    if (entityType === 'withdrawal') {
+      const withdrawal = await this.prisma.withdrawalRequest.findUnique({ where: { id: entityId }, select: { tenantId: true } });
+      return withdrawal?.tenantId || undefined;
+    }
+    if (entityType === 'ticket') {
+      const ticket = await this.prisma.ticket.findUnique({ where: { id: entityId }, select: { tenantId: true } });
+      return ticket?.tenantId || undefined;
+    }
+    return undefined;
   }
 
   private getUserIdBySocket(socketId: string): string | undefined {
