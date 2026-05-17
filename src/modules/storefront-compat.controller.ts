@@ -96,6 +96,15 @@ export class StorefrontCompatController {
     return null;
   }
 
+  private isLegacyUploadServeUrl(url: string) {
+    try {
+      const parsed = new URL(url);
+      return this.knownAssetHosts().has(parsed.hostname.toLowerCase()) && /^\/api\/upload\/serve\//i.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  }
+
   private normalizeImageUrl(url?: string | null, slug?: string | null) {
     const value = (url || '').trim();
     const knownSlug = (slug || '').toLowerCase();
@@ -117,6 +126,9 @@ export class StorefrontCompatController {
     };
 
     if (value.startsWith('/')) return this.toCdnUrl(value);
+    if (this.isLegacyUploadServeUrl(value)) {
+      return this.toCdnUrl(localGameImages[knownSlug] || this.fallbackImage);
+    }
     const normalizedAssetUrl = this.normalizeStoredAssetUrl(value);
     if (normalizedAssetUrl) return normalizedAssetUrl;
     if (value.includes('cdn.joypin.com')) {
