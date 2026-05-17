@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { MailService } from '../../mail/mail.service';
 
 /**
  * Webhook Processor Service
@@ -25,6 +26,7 @@ export class WebhookProcessorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {}
 
   // ═══════════════════════════════════════════════════════
@@ -206,6 +208,10 @@ export class WebhookProcessorService {
       },
     });
 
+    await this.sendOrderPaidEmail(order).catch((error) => {
+      this.logger.warn(`[Mail] Order paid email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
+    });
+
     // 2) Bakiye yükleme (eğer balance deposit ise)
     if (!order.userId) {
       // Guest order — bakiye güncellemesi yok
@@ -227,6 +233,22 @@ export class WebhookProcessorService {
         details: { provider, amount, paymentStatus: 'PAID' },
         ipAddress: '',
       },
+    });
+  }
+
+  private async sendOrderPaidEmail(order: any) {
+    if (!order?.user?.email) return;
+    const firstSubOrder = order.subOrders?.[0];
+    const productName = firstSubOrder?.product?.name || 'Sipariş';
+    const quantity = (order.subOrders || []).reduce((sum: number, subOrder: any) => sum + Number(subOrder.quantity || 0), 0) || 1;
+    await this.mail.sendOrderConfirmation(order.user.email, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      quantity,
+      totalAmount: Number(order.totalAmount || 0).toFixed(2),
+      currency: String(order.currency || 'TRY'),
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
     });
   }
 

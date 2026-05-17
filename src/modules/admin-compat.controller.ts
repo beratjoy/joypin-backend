@@ -809,6 +809,29 @@ export class AdminCompatController {
     return subOrder?.parentOrder || null;
   }
 
+  private async sendDeliveryEmail(orderId: string, codes: string[] = ['Teslimat tamamlandı']) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: true } } },
+    });
+    if (!order) return;
+    const to = order.user?.email || order.guestEmail;
+    if (!to) return;
+    const productName = order.subOrders
+      .map((subOrder: any) => subOrder.product?.name)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ') || 'Sipariş';
+
+    await this.mailService.sendEpinDelivery(to, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      codes,
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
+    });
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -3384,6 +3407,11 @@ export class AdminCompatController {
         console.warn('[AdminCompat] award points skipped:', error);
       }
     }
+    if (updatedSubOrders.length > 0) {
+      await this.sendDeliveryEmail(order.id).catch((error) => {
+        console.warn('[AdminCompat] delivery email skipped:', error);
+      });
+    }
 
     return {
       success: true,
@@ -3443,6 +3471,9 @@ export class AdminCompatController {
     });
     await this.recalculateOrderStatus(subOrder.parentOrderId);
     await this.awardPointsForDeliveredSubOrder(updated);
+    await this.sendDeliveryEmail(subOrder.parentOrderId).catch((error) => {
+      console.warn('[AdminCompat] topup delivery email skipped:', error);
+    });
     return updated;
   }
   @Post('orders/:subOrderId/assign-epin')
@@ -3482,6 +3513,9 @@ export class AdminCompatController {
     });
     await this.recalculateOrderStatus(subOrder.parentOrderId);
     await this.awardPointsForDeliveredSubOrder(subOrder);
+    await this.sendDeliveryEmail(subOrder.parentOrderId, codes.slice(0, subOrder.quantity)).catch((error) => {
+      console.warn('[AdminCompat] epin delivery email skipped:', error);
+    });
 
     return { success: true, insertedCount: epins.count };
   }

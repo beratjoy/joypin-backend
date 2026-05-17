@@ -108,6 +108,7 @@ export class MailService {
     totalAmount: string;
     currency: string;
     userId?: string;
+    tenantId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
       <h2 style="color:#f1f5f9;margin:0 0 8px;">Siparişiniz Alındı! ✓</h2>
@@ -139,7 +140,7 @@ export class MailService {
 
     await this.send({
       to, subject: `Sipariş Onayı — #${data.orderId.slice(0, 8).toUpperCase()}`, html,
-      emailType: 'ORDER_CONFIRMATION', userId: data.userId, orderId: data.orderId,
+      emailType: 'ORDER_CONFIRMATION', userId: data.userId, tenantId: data.tenantId, orderId: data.orderId,
       templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), productName: data.productName, quantity: data.quantity, totalAmount: data.totalAmount, currency: data.currency, orderUrl: `${this.getSiteUrl()}/account/orders` },
     });
   }
@@ -150,6 +151,7 @@ export class MailService {
     productName: string;
     codes: string[];
     userId?: string;
+    tenantId?: string;
   }): Promise<void> {
     const codeRows = data.codes.map((code, i) => `
       <tr>
@@ -188,7 +190,7 @@ export class MailService {
 
     await this.send({
       to, subject: `E-Pin Kodlarınız Hazır — ${data.productName}`, html,
-      emailType: 'ORDER_DELIVERY', userId: data.userId, orderId: data.orderId,
+      emailType: 'ORDER_DELIVERY', userId: data.userId, tenantId: data.tenantId, orderId: data.orderId,
       templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), productName: data.productName, codes: data.codes.join(', '), codeList: data.codes.join('<br>') },
     });
   }
@@ -200,6 +202,7 @@ export class MailService {
     productName: string;
     totalAmount: string;
     currency: string;
+    tenantId?: string;
   }): Promise<void> {
     const trackUrl = `${this.getSiteUrl()}/track?orderId=${data.orderId}&token=${data.trackingToken}`;
     const html = this.wrapTemplate(`
@@ -232,7 +235,7 @@ export class MailService {
 
     await this.send({
       to, subject: `Sipariş Takip Linkiniz — #${data.orderId.slice(0, 8).toUpperCase()}`, html,
-      emailType: 'GUEST_ORDER_INFO', orderId: data.orderId,
+      emailType: 'GUEST_ORDER_INFO', tenantId: data.tenantId, orderId: data.orderId,
       templateVars: { orderId: data.orderId, orderNo: data.orderId.slice(0, 8).toUpperCase(), trackingToken: data.trackingToken, productName: data.productName, totalAmount: data.totalAmount, currency: data.currency, trackUrl },
     });
   }
@@ -326,6 +329,7 @@ export class MailService {
     balanceType: string;
     newBalance: string;
     userId?: string;
+    tenantId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
       <h2 style="color:#f1f5f9;margin:0 0 8px;">Bakiye Yüklendi! 💰</h2>
@@ -353,7 +357,7 @@ export class MailService {
 
     await this.send({
       to, subject: 'Bakiye Yüklendi — JoyPin', html,
-      emailType: 'BALANCE_LOADED', userId: data.userId,
+      emailType: 'BALANCE_LOADED', userId: data.userId, tenantId: data.tenantId,
       templateVars: { amount: data.amount, currency: data.currency, balanceType: data.balanceType, newBalance: data.newBalance, walletUrl: `${this.getSiteUrl()}/account/wallet` },
     });
   }

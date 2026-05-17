@@ -14,6 +14,7 @@ import {
   DeliveryType,
 } from '@prisma/client';
 import * as crypto from 'crypto';
+import { MailService } from '../mail/mail.service';
 
 // ─── Shared Types ────────────────────────────────────────────
 interface OrderItemInput {
@@ -29,7 +30,10 @@ interface OrderItemInput {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   private normalizeTenantHost(host?: string | null) {
     return String(host || '')
@@ -262,7 +266,49 @@ export class OrdersService {
       `Sipariş oluşturuldu: ${orderNumber} (${params.isGuest ? 'misafir' : 'kayıtlı'})`,
     );
 
+    await this.sendOrderCreatedEmail(order.id, params.guestTrackingToken).catch((error) => {
+      this.logger.warn(`[Mail] Order create email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
+    });
+
     return order;
+  }
+
+  private async sendOrderCreatedEmail(orderId: string, guestTrackingToken?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: true } } },
+    });
+    if (!order) return;
+
+    const firstSubOrder = order.subOrders[0];
+    const productName = firstSubOrder?.product?.name || 'Sipariş';
+    const quantity = order.subOrders.reduce((sum, subOrder) => sum + Number(subOrder.quantity || 0), 0) || 1;
+    const totalAmount = Number(order.totalAmount || 0).toFixed(2);
+    const currency = String(order.currency || 'TRY');
+
+    if (order.isGuest && order.guestEmail && order.guestTrackingToken) {
+      await this.mail.sendGuestOrderInfo(order.guestEmail, {
+        orderId: order.orderNumber || order.id,
+        trackingToken: guestTrackingToken || order.guestTrackingToken,
+        productName,
+        totalAmount,
+        currency,
+        tenantId: order.tenantId || undefined,
+      });
+      return;
+    }
+
+    if (order.user?.email && order.paymentStatus === 'PAID') {
+      await this.mail.sendOrderConfirmation(order.user.email, {
+        orderId: order.orderNumber || order.id,
+        productName,
+        quantity,
+        totalAmount,
+        currency,
+        userId: order.userId || undefined,
+        tenantId: order.tenantId || undefined,
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════════════════

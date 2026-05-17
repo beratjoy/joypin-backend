@@ -52,6 +52,43 @@ export class MailCampaignController {
   }
 
   /** Tek kampanya detayı */
+  @Get('logs/recent')
+  async recentLogs(
+    @Query('tenantId') tenantId?: string,
+    @Query('status') status?: string,
+    @Query('emailType') emailType?: string,
+    @Query('take') take?: string,
+  ) {
+    const where: any = {};
+    if (this.isTenantScoped(tenantId)) where.tenantId = tenantId;
+    if (status) where.status = status;
+    if (emailType) where.emailType = emailType;
+
+    const logs = await this.prisma.emailLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(take || 50), 1), 200),
+      select: {
+        id: true,
+        tenantId: true,
+        email: true,
+        emailType: true,
+        subject: true,
+        status: true,
+        errorMessage: true,
+        sentAt: true,
+        openedAt: true,
+        clickedAt: true,
+        openCount: true,
+        clickCount: true,
+        orderId: true,
+        campaignId: true,
+        createdAt: true,
+      },
+    });
+    return { logs };
+  }
+
   @Get(':id')
   async getOne(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
     const campaign = await this.prisma.emailCampaign.findUnique({
