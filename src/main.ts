@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
 import * as crypto from 'crypto';
+import { Server } from 'socket.io';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -67,6 +68,31 @@ async function bootstrap() {
     origin: allowedOrigins,
     credentials: true,
   });
+
+  const io = new Server(app.getHttpServer(), {
+    path: '/ws',
+    cors: {
+      origin: allowedOrigins,
+      credentials: true,
+    },
+    transports: ['websocket', 'polling'],
+  });
+  io.on('connection', (socket) => {
+    const tenantId = typeof socket.handshake.auth?.tenantId === 'string'
+      ? socket.handshake.auth.tenantId
+      : undefined;
+    if (tenantId && tenantId !== 'all') {
+      socket.join(`tenant_${tenantId}`);
+    }
+    socket.on('join', (payload: { room?: string; tenantId?: string } = {}) => {
+      if (payload.room) socket.join(payload.room);
+      const scopedTenantId = payload.tenantId || tenantId;
+      if (scopedTenantId && scopedTenantId !== 'all') {
+        socket.join(`tenant_${scopedTenantId}`);
+      }
+    });
+  });
+  (global as any).io = io;
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('JoyPin E-Pin Platform API')
