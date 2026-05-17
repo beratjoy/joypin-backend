@@ -866,6 +866,123 @@ export class AdminCompatController {
 
     return { success: true, updated: saved.length, currencies: await this.getCurrencies() };
   }
+
+  private assetColumns() {
+    return [
+      { table: 'product_categories', column: 'imageUrl' },
+      { table: 'product_categories', column: 'logoUrl' },
+      { table: 'products', column: 'iconUrl' },
+      { table: 'products', column: 'merchantImageUrl' },
+      { table: 'products', column: 'sliderImageUrl' },
+      { table: 'sliders', column: 'imageUrl' },
+      { table: 'sliders', column: 'mobileImageUrl' },
+      { table: 'blog_posts', column: 'coverImage' },
+      { table: 'blog_posts', column: 'imageUrl' },
+      { table: 'loot_boxes', column: 'imageUrl' },
+      { table: 'missions', column: 'imageUrl' },
+    ];
+  }
+
+  private cdnRewriteHosts() {
+    return (process.env.CDN_REWRITE_HOSTS || 'epin365.com,www.epin365.com,cdn.epin365.com,joypin.com,www.joypin.com,cdn.joypin.com')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean);
+  }
+
+  private toPublicAssetUrl(value: string) {
+    const cdnBase = (process.env.CDN_PUBLIC_URL || process.env.R2_PUBLIC_URL || '').replace(/\/$/, '');
+    if (value.startsWith('/') && cdnBase) return `${cdnBase}${value}`;
+    return value;
+  }
+
+  private async collectAssetStats() {
+    const stats = {
+      localPath: 0,
+      cdnUrl: 0,
+      legacyHost: 0,
+      externalUrl: 0,
+      empty: 0,
+      samples: [] as Array<{ table: string; column: string; id: string; value: string; publicUrl: string }>,
+    };
+    const legacyHosts = this.cdnRewriteHosts().map((host) => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+
+    for (const { table, column } of this.assetColumns()) {
+      const rows = await this.prisma.$queryRawUnsafe<Array<{ id: string; value: string | null }>>(
+        `SELECT id, "${column}" AS value FROM "${table}" WHERE "${column}" IS NOT NULL AND "${column}" <> '' LIMIT 500`,
+      ).catch(() => []);
+
+      for (const row of rows) {
+        const value = String(row.value || '');
+        if (!value) {
+          stats.empty += 1;
+        } else if (value.startsWith('/uploads/') || value.startsWith('/images/')) {
+          stats.localPath += 1;
+        } else if (/^https?:\/\/cdn\./i.test(value)) {
+          stats.cdnUrl += 1;
+        } else if (new RegExp(`^https?://(${legacyHosts})/(uploads|images)/`, 'i').test(value)) {
+          stats.legacyHost += 1;
+        } else if (/^https?:\/\//i.test(value)) {
+          stats.externalUrl += 1;
+        }
+
+        if (stats.samples.length < 30) {
+          stats.samples.push({ table, column, id: row.id, value, publicUrl: this.toPublicAssetUrl(value) });
+        }
+      }
+    }
+
+    return stats;
+  }
+
+  @Get('settings/cdn/status')
+  async getCdnStatus() {
+    const assets = await this.collectAssetStats();
+    const sampleChecks = await Promise.all(
+      assets.samples.slice(0, 12).map(async (asset) => {
+        const url = asset.publicUrl;
+        if (!/^https?:\/\//i.test(url)) return { ...asset, status: 'skipped' };
+        try {
+          const response = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+          return { ...asset, status: response.status };
+        } catch {
+          return { ...asset, status: 'error' };
+        }
+      }),
+    );
+
+    return {
+      siteUrl: process.env.SITE_URL || process.env.FRONTEND_URL || '',
+      frontendUrl: process.env.FRONTEND_URL || '',
+      cdnPublicUrl: process.env.CDN_PUBLIC_URL || '',
+      r2PublicUrl: process.env.R2_PUBLIC_URL || '',
+      r2Bucket: process.env.R2_BUCKET || '',
+      r2Configured: Boolean(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET),
+      rewriteHosts: this.cdnRewriteHosts(),
+      assets,
+      sampleChecks,
+    };
+  }
+
+  @Post('settings/cdn/normalize-assets')
+  async normalizeCdnAssets() {
+    const legacyHosts = this.cdnRewriteHosts()
+      .map((host) => host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const summary: Array<{ table: string; column: string; changed: number }> = [];
+
+    for (const { table, column } of this.assetColumns()) {
+      const changed = await this.prisma.$executeRawUnsafe(
+        `UPDATE "${table}"
+         SET "${column}" = regexp_replace("${column}", '^https?://(${legacyHosts})(/(uploads|images)/.*)$', '\\2', 'i')
+         WHERE "${column}" ~* '^https?://(${legacyHosts})/(uploads|images)/'`,
+      ).catch(() => 0);
+      summary.push({ table, column, changed: Number(changed || 0) });
+    }
+
+    return { success: true, summary, status: await this.getCdnStatus() };
+  }
+
   @Patch('settings/:key')
   async updateSetting(@Param('key') key: string, @Body() body: any) {
     const inferredGroup = key.startsWith('legal_') || key.startsWith('about_') || key.startsWith('contact_') || key.startsWith('faq_')
