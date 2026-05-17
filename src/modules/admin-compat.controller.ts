@@ -832,6 +832,31 @@ export class AdminCompatController {
     });
   }
 
+  private async sendCancellationEmail(orderId: string, reason: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: true } } },
+    });
+    if (!order) return;
+    const to = order.user?.email || order.guestEmail;
+    if (!to) return;
+    const productName = order.subOrders
+      .map((subOrder: any) => subOrder.product?.name)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ') || 'Sipariş';
+
+    await this.mailService.sendOrderCancelled(to, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      reason,
+      totalAmount: Number(order.totalAmount || 0).toFixed(2),
+      currency: String(order.currency || 'TRY'),
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
+    });
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -3444,6 +3469,11 @@ export class AdminCompatController {
     });
 
     await this.recalculateOrderStatus(order.id);
+    if (cancellable.length > 0) {
+      await this.sendCancellationEmail(order.id, reason).catch((error) => {
+        console.warn('[AdminCompat] cancellation email skipped:', error);
+      });
+    }
 
     return {
       success: true,

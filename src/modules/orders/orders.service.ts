@@ -325,7 +325,7 @@ export class OrdersService {
   ) {
     const subOrder = await this.prisma.subOrder.findUniqueOrThrow({
       where: { id: subOrderId },
-      include: { parentOrder: true },
+      include: { parentOrder: { include: { user: true } }, product: true },
     });
 
     if (subOrder.status === 'CANCELLED') {
@@ -363,6 +363,21 @@ export class OrdersService {
 
     // netAmount güncelle (iptal edilen kısmı düş)
     await this.recalculateNetAmount(subOrder.parentOrderId);
+
+    const to = subOrder.parentOrder.user?.email || subOrder.parentOrder.guestEmail;
+    if (to) {
+      await this.mail.sendOrderCancelled(to, {
+        orderId: subOrder.parentOrder.orderNumber || subOrder.parentOrder.id,
+        productName: subOrder.product?.name || 'Sipariş',
+        reason: cancelReason,
+        totalAmount: Number(subOrder.totalPrice || 0).toFixed(2),
+        currency: String(subOrder.currency || subOrder.parentOrder.currency || 'TRY'),
+        userId: subOrder.parentOrder.userId || undefined,
+        tenantId: subOrder.parentOrder.tenantId || undefined,
+      }).catch((error) => {
+        this.logger.warn(`[Mail] Cancel email skipped for ${subOrder.parentOrderId}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
 
     return updated;
   }

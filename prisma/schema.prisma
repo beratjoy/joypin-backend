@@ -2376,6 +2376,7 @@ enum EmailType {
   EMAIL_VERIFICATION     // E-posta doğrulama/OTP
   ORDER_CONFIRMATION     // Sipariş onayı
   ORDER_DELIVERY         // E-pin teslimi
+  ORDER_CANCELLED        // Siparis iptal bildirimi
   GUEST_ORDER_INFO       // Misafir sipariş bilgi
   PASSWORD_RESET         // Şifre sıfırlama
   ACCOUNT_DELETION       // Üyelik iptali
