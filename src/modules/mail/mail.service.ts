@@ -507,7 +507,7 @@ export class MailService {
   // ═══════════════════════════════════════════════════════
 
   /** Tracking pixel açıldığında çağrılır */
-  async sendTestEmail(to: string): Promise<void> {
+  async sendTestEmail(to: string, tenantId?: string): Promise<void> {
     const html = this.wrapTemplate(`
       <div style="text-align:center;margin-bottom:24px;">
         <div style="display:inline-block;width:56px;height:56px;border-radius:18px;background:linear-gradient(135deg,#7c3aed,#06b6d4);line-height:56px;color:#ffffff;font-size:26px;font-weight:900;box-shadow:0 18px 45px rgba(124,58,237,0.35);">J</div>
@@ -530,6 +530,7 @@ export class MailService {
       subject: 'JoyPin mail sistemi test edildi',
       html,
       emailType: 'CAMPAIGN',
+      tenantId,
       metadata: { source: 'admin_mail_settings_test' },
       templateVars: { siteUrl: this.getSiteUrl() },
     });
@@ -557,15 +558,14 @@ export class MailService {
         where: { languageCode: 'tr' },
         orderBy: [{ emailType: 'asc' }, { updatedAt: 'desc' }],
       }),
-      this.prisma.siteSettings.findMany({
-        where: { key: { in: MAIL_EVENTS.map((event) => this.eventSettingKey(event.emailType)) } },
-      }),
+      this.getScopedSettings(MAIL_EVENTS.map((event) => this.eventSettingKey(event.emailType)), tenantId),
     ]);
-    const settingMap = new Map(settings.map((setting) => [setting.key, setting.value]));
+    const settingMap = new Map(Object.entries(settings));
 
     return MAIL_EVENTS.map((event) => {
       const scopedSlug = this.managedTemplateSlug(event.slug, tenantId);
       const template = templates.find((item: any) => item.emailType === event.emailType && item.slug === scopedSlug)
+        || templates.find((item: any) => item.emailType === event.emailType && this.normalizeTenantIds(item.tenantIds).length === 0 && item.slug === event.slug)
         || templates.find((item: any) => item.emailType === event.emailType && this.visibleForTenant(item, tenantId));
       return {
         ...event,
@@ -601,16 +601,13 @@ export class MailService {
     const tenantIds = tenantId && tenantId !== 'all' ? [tenantId] : [];
 
     if (input.isEnabled !== undefined) {
-      await this.prisma.siteSettings.upsert({
-        where: { key: this.eventSettingKey(emailType) },
-        update: { value: input.isEnabled ? 'true' : 'false' },
-        create: {
-          key: this.eventSettingKey(emailType),
-          value: input.isEnabled ? 'true' : 'false',
-          group: 'mail_events',
-          description: `${event.name} mail gönderimi aktif mi?`,
-        },
-      });
+      await this.upsertScopedSetting(
+        this.eventSettingKey(emailType),
+        input.isEnabled ? 'true' : 'false',
+        'mail_events',
+        `${event.name} mail gönderimi aktif mi?`,
+        tenantId,
+      );
     }
 
     const template = await this.prisma.emailTemplate.upsert({
@@ -710,12 +707,12 @@ export class MailService {
   // ═══════════════════════════════════════════════════════
 
   private async send(payload: MailPayload): Promise<void> {
-    const mailConfig = await this.getMailConfig();
+    const mailConfig = await this.getMailConfig(payload.tenantId);
     if (!mailConfig.enabled) {
       this.logger.warn(`Email disabled. Skipped: ${payload.to} / ${payload.subject}`);
       return;
     }
-    if (payload.emailType && !(await this.isEventEnabled(payload.emailType))) {
+    if (payload.emailType && !(await this.isEventEnabled(payload.emailType, payload.tenantId))) {
       this.logger.warn(`Email event disabled. Skipped: ${payload.emailType} / ${payload.to}`);
       return;
     }
@@ -724,7 +721,7 @@ export class MailService {
     const rendered = await this.applyManagedTemplate(payload);
 
     // Inject tracking pixel into HTML
-    const pixelUrl = `${this.getSiteUrl()}/api/track/open/${trackingId}`;
+    const pixelUrl = `${await this.getSiteUrlForTenant(payload.tenantId)}/api/track/open/${trackingId}`;
     const htmlWithPixel = rendered.html.replace(
       '</body>',
       `<img src="${pixelUrl}" width="1" height="1" style="display:none;" alt="" /></body>`,
@@ -791,7 +788,55 @@ export class MailService {
     return this.config.get('SITE_URL', 'https://joypin.com');
   }
 
-  private async getMailConfig() {
+  private async getSiteUrlForTenant(tenantId?: string): Promise<string> {
+    if (!tenantId || tenantId === 'all') return this.getSiteUrl();
+    const domain = await this.prisma.tenantDomain.findFirst({
+      where: { tenantId, isActive: true },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: { hostname: true },
+    }).catch(() => null);
+    return domain?.hostname ? `https://${domain.hostname}` : this.getSiteUrl();
+  }
+
+  private async getScopedSettings(keys: string[], tenantId?: string): Promise<Record<string, string>> {
+    const [globalRows, tenantRows] = await Promise.all([
+      this.prisma.siteSettings.findMany({ where: { key: { in: keys } } }),
+      tenantId && tenantId !== 'all'
+        ? this.prisma.tenantSetting.findMany({ where: { tenantId, key: { in: keys } } })
+        : Promise.resolve([]),
+    ]);
+    const settings = globalRows.reduce<Record<string, string>>((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {});
+    for (const row of tenantRows) {
+      settings[row.key] = row.value;
+    }
+    return settings;
+  }
+
+  private async upsertScopedSetting(
+    key: string,
+    value: string,
+    group: string,
+    description: string,
+    tenantId?: string,
+  ) {
+    if (tenantId && tenantId !== 'all') {
+      return this.prisma.tenantSetting.upsert({
+        where: { tenantId_key: { tenantId, key } },
+        update: { value, group, description },
+        create: { tenantId, key, value, group, description },
+      });
+    }
+    return this.prisma.siteSettings.upsert({
+      where: { key },
+      update: { value, group, description },
+      create: { key, value, group, description },
+    });
+  }
+
+  private async getMailConfig(tenantId?: string) {
     const keys = [
       'mail_enabled',
       'mail_smtp_host',
@@ -805,11 +850,7 @@ export class MailService {
       'mail_brand_name',
       'mail_footer_company',
     ];
-    const rows = await this.prisma.siteSettings.findMany({ where: { key: { in: keys } } });
-    const settings = rows.reduce<Record<string, string>>((acc, row) => {
-      acc[row.key] = row.value;
-      return acc;
-    }, {});
+    const settings = await this.getScopedSettings(keys, tenantId);
     const port = Number(settings.mail_smtp_port || this.config.get('SMTP_PORT', 465));
 
     return {
@@ -827,17 +868,23 @@ export class MailService {
     };
   }
 
-  private async isEventEnabled(emailType: string): Promise<boolean> {
-    const setting = await this.prisma.siteSettings.findUnique({ where: { key: this.eventSettingKey(emailType) } });
-    return setting?.value !== 'false';
+  private async isEventEnabled(emailType: string, tenantId?: string): Promise<boolean> {
+    const settings = await this.getScopedSettings([this.eventSettingKey(emailType)], tenantId);
+    return settings[this.eventSettingKey(emailType)] !== 'false';
   }
 
   private async applyManagedTemplate(payload: MailPayload): Promise<{ subject: string; html: string; templateSlug?: string }> {
     if (!payload.emailType) return { subject: payload.subject, html: payload.html };
-    const template = await this.prisma.emailTemplate.findFirst({
+    const event = MAIL_EVENTS.find((item) => item.emailType === payload.emailType);
+    const scopedSlug = event ? this.managedTemplateSlug(event.slug, payload.tenantId) : undefined;
+    const templates = await this.prisma.emailTemplate.findMany({
       where: { emailType: payload.emailType as any, languageCode: 'tr', isActive: true },
       orderBy: { updatedAt: 'desc' },
+      take: 25,
     });
+    const template = (scopedSlug ? templates.find((item) => item.slug === scopedSlug) : undefined)
+      || (event ? templates.find((item) => item.slug === event.slug && this.normalizeTenantIds((item as any).tenantIds).length === 0) : undefined)
+      || templates.find((item) => this.visibleForTenant(item as any, payload.tenantId));
     if (!template) return { subject: payload.subject, html: payload.html };
 
     const vars = { ...this.sampleVarsFor(payload.emailType), ...(payload.templateVars || {}) };

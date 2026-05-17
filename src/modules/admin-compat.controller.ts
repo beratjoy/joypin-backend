@@ -1284,11 +1284,22 @@ export class AdminCompatController {
     return response.json();
   }
   @Get('settings')
-  async getSettings(@Query('group') group?: string) {
-    return this.prisma.siteSettings.findMany({
+  async getSettings(@Query('group') group?: string, @Query('tenantId') tenantId?: string) {
+    const globalRows = await this.prisma.siteSettings.findMany({
       where: group ? { group } : {},
       orderBy: { key: 'asc' },
     });
+    if (!this.isTenantScoped(tenantId)) return globalRows;
+
+    const tenantRows = await this.prisma.tenantSetting.findMany({
+      where: { tenantId: String(tenantId), ...(group ? { group } : {}) },
+      orderBy: { key: 'asc' },
+    });
+    const rowsByKey = new Map(globalRows.map((row) => [row.key, row as any]));
+    for (const row of tenantRows) {
+      rowsByKey.set(row.key, { ...row, isTenantOverride: true });
+    }
+    return Array.from(rowsByKey.values()).sort((a, b) => a.key.localeCompare(b.key));
   }
 
   @Get('notifications/summary')
@@ -1593,10 +1604,25 @@ export class AdminCompatController {
   }
 
   @Patch('settings/:key')
-  async updateSetting(@Param('key') key: string, @Body() body: any) {
+  async updateSetting(@Param('key') key: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const inferredGroup = key.startsWith('legal_') || key.startsWith('about_') || key.startsWith('contact_') || key.startsWith('faq_')
       ? 'static_pages'
       : 'general';
+
+    if (this.isTenantScoped(tenantId)) {
+      return this.prisma.tenantSetting.upsert({
+        where: { tenantId_key: { tenantId: String(tenantId), key } },
+        update: { value: String(body.value ?? ''), group: body.group || inferredGroup, description: body.description || key },
+        create: {
+          tenantId: String(tenantId),
+          key,
+          value: String(body.value ?? ''),
+          group: body.group || inferredGroup,
+          description: body.description || key,
+        },
+      });
+    }
+
     return this.prisma.siteSettings.upsert({
       where: { key },
       update: { value: String(body.value ?? '') },
@@ -1609,13 +1635,13 @@ export class AdminCompatController {
     });
   }
   @Post('settings/mail/test')
-  async sendMailSettingsTest(@Body() body: any) {
+  async sendMailSettingsTest(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const to = String(body?.to || '').trim();
     if (!to || !to.includes('@')) {
       throw new BadRequestException('Valid test email is required');
     }
 
-    await this.mailService.sendTestEmail(to);
+    await this.mailService.sendTestEmail(to, this.isTenantScoped(tenantId) ? String(tenantId) : undefined);
     return { success: true };
   }
   @Get('mail/templates')
