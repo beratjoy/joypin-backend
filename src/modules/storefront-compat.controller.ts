@@ -125,6 +125,9 @@ export class StorefrontCompatController {
       spotify: '/images/games/spotify.webp',
     };
 
+    if (/^\/api\/upload\/serve\//i.test(value)) {
+      return this.toCdnUrl(localGameImages[knownSlug] || this.fallbackImage);
+    }
     if (value.startsWith('/')) return this.toCdnUrl(value);
     if (this.isLegacyUploadServeUrl(value)) {
       return this.toCdnUrl(localGameImages[knownSlug] || this.fallbackImage);
