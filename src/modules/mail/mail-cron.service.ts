@@ -198,6 +198,8 @@ export class MailCronService {
 
       for (const campaign of campaigns) {
         this.logger.log(`[Campaign] Sending campaign: ${campaign.title}`);
+        const tenantIds = this.normalizeTenantIds(campaign.tenantIds);
+        const logTenantId = tenantIds.length === 1 ? tenantIds[0] : undefined;
 
         // Durumu SENDING yap
         await this.prisma.emailCampaign.update({
@@ -214,6 +216,7 @@ export class MailCronService {
             campaignId: campaign.id,
             subject: campaign.subject,
             bodyHtml: campaign.bodyHtml,
+            tenantId: logTenantId,
             userId: recipient.id,
           });
           sentCount++;
@@ -271,10 +274,32 @@ export class MailCronService {
   // ─────────────────────────────────────────────────────────
   // PRIVATE — Hedef kitle belirleme
   // ─────────────────────────────────────────────────────────
+  private normalizeTenantIds(value: unknown): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .filter((item) => item !== 'all');
+  }
+
+  private tenantRecipientWhere(tenantIds: string[]) {
+    if (tenantIds.length === 0) return {};
+
+    return {
+      OR: [
+        { orders: { some: { tenantId: { in: tenantIds } } } },
+        { paymentTransactions: { some: { tenantId: { in: tenantIds } } } },
+        { subscriptions: { some: { tenantId: { in: tenantIds } } } },
+      ],
+    };
+  }
+
   private async getTargetRecipients(campaign: any): Promise<{ id: string; email: string }[]> {
     const baseWhere: any = {
       status: 'ACTIVE',
       emailNotification: true,
+      ...this.tenantRecipientWhere(this.normalizeTenantIds(campaign.tenantIds)),
     };
 
     switch (campaign.targetType) {

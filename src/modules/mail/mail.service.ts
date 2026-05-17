@@ -10,6 +10,7 @@ interface MailPayload {
   subject: string;
   html: string;
   trackingId?: string;
+  tenantId?: string;
   userId?: string;
   emailType?: string;
   campaignId?: string;
@@ -487,12 +488,13 @@ export class MailService {
     campaignId: string;
     subject: string;
     bodyHtml: string;
+    tenantId?: string;
     userId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(data.bodyHtml);
     await this.send({
       to, subject: data.subject, html,
-      emailType: 'CAMPAIGN', userId: data.userId, campaignId: data.campaignId,
+      emailType: 'CAMPAIGN', tenantId: data.tenantId, userId: data.userId, campaignId: data.campaignId,
       templateVars: { bodyHtml: data.bodyHtml, siteUrl: this.getSiteUrl() },
     });
   }
@@ -752,6 +754,7 @@ export class MailService {
           emailType: (payload.emailType as any) || 'CAMPAIGN',
           subject: rendered.subject,
           templateSlug: rendered.templateSlug || payload.emailType?.toLowerCase().replace(/_/g, '-'),
+          tenantId: payload.tenantId || null,
           userId: payload.userId || null,
           campaignId: payload.campaignId || null,
           orderId: payload.orderId || null,
@@ -772,6 +775,7 @@ export class MailService {
           email: payload.to,
           emailType: (payload.emailType as any) || 'CAMPAIGN',
           subject: payload.subject,
+          tenantId: payload.tenantId || null,
           userId: payload.userId || null,
           status: 'FAILED',
           errorMessage: error instanceof Error ? error.message : 'Unknown error',
