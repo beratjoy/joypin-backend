@@ -857,6 +857,41 @@ export class AdminCompatController {
     });
   }
 
+  private async sendPartialDeliveryEmail(orderId: string, updatedSubOrders: any[], refunds: any[], note: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: true } } },
+    });
+    if (!order) return;
+    const to = order.user?.email || order.guestEmail;
+    if (!to) return;
+
+    const affectedIds = new Set(updatedSubOrders.map((subOrder: any) => subOrder.id));
+    const affected = order.subOrders.filter((subOrder: any) => affectedIds.has(subOrder.id));
+    const productName = affected
+      .map((subOrder: any) => subOrder.product?.name)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ') || 'Siparis';
+    const deliveredQuantity = affected.reduce((sum: number, subOrder: any) => sum + Number(subOrder.deliveredCount || 0), 0);
+    const totalQuantity = affected.reduce((sum: number, subOrder: any) => sum + Number(subOrder.quantity || 0), 0);
+    const remainingQuantity = Math.max(0, totalQuantity - deliveredQuantity);
+    const refundAmount = refunds.reduce((sum: number, refund: any) => sum + Number(refund.amount || 0), 0);
+
+    await this.mailService.sendPartialDelivery(to, {
+      orderId: order.orderNumber || order.id,
+      productName,
+      deliveredQuantity,
+      totalQuantity,
+      remainingQuantity,
+      refundAmount: refundAmount > 0 ? refundAmount.toFixed(2) : undefined,
+      currency: String(order.currency || 'TRY'),
+      note,
+      userId: order.userId || undefined,
+      tenantId: order.tenantId || undefined,
+    });
+  }
+
   private formatReview(review: any) {
     return {
       id: review.id,
@@ -3433,7 +3468,11 @@ export class AdminCompatController {
       }
     }
     if (updatedSubOrders.length > 0) {
-      await this.sendDeliveryEmail(order.id).catch((error) => {
+      const hasPartialDelivery = updatedSubOrders.some((subOrder) => subOrder.status === 'PARTIALLY_DELIVERED');
+      const deliveryMail = hasPartialDelivery
+        ? this.sendPartialDeliveryEmail(order.id, updatedSubOrders, refunds, note)
+        : this.sendDeliveryEmail(order.id);
+      await deliveryMail.catch((error) => {
         console.warn('[AdminCompat] delivery email skipped:', error);
       });
     }

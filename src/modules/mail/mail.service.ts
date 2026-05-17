@@ -28,6 +28,7 @@ const MAIL_EVENTS = [
   { emailType: 'EMAIL_VERIFICATION', slug: 'email-verification', name: 'Doğrulama Kodu', description: 'OTP ve güvenlik doğrulama kodları' },
   { emailType: 'ORDER_CONFIRMATION', slug: 'order-confirmation', name: 'Sipariş Onayı', description: 'Ödeme sonrası sipariş alındı maili' },
   { emailType: 'ORDER_DELIVERY', slug: 'order-delivery', name: 'Teslimat', description: 'E-pin veya sipariş teslim maili' },
+  { emailType: 'ORDER_PARTIAL_DELIVERY', slug: 'order-partial-delivery', name: 'Kismi Teslimat', description: 'Siparisin bir kismi teslim edildiginde musteri bilgilendirmesi' },
   { emailType: 'ORDER_CANCELLED', slug: 'order-cancelled', name: 'Sipariş İptali', description: 'Sipariş iptal edildiğinde müşteri bilgilendirmesi' },
   { emailType: 'GUEST_ORDER_INFO', slug: 'guest-order-info', name: 'Misafir Sipariş', description: 'Üyeliksiz sipariş takip maili' },
   { emailType: 'PASSWORD_RESET', slug: 'password-reset', name: 'Şifre Sıfırlama', description: 'Şifre yenileme bağlantısı' },
@@ -246,6 +247,80 @@ export class MailService {
         reason: data.reason,
         totalAmount: data.totalAmount,
         currency: data.currency,
+      },
+    });
+  }
+
+  /** Kismi teslimat bilgilendirme maili */
+  async sendPartialDelivery(to: string, data: {
+    orderId: string;
+    productName: string;
+    deliveredQuantity: number;
+    totalQuantity: number;
+    remainingQuantity: number;
+    refundAmount?: string;
+    currency: string;
+    note?: string;
+    userId?: string;
+    tenantId?: string;
+  }): Promise<void> {
+    const refundRow = data.refundAmount ? `
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Bakiye Iadesi</td>
+          <td style="color:#22c55e;font-size:13px;font-weight:800;padding:8px 12px;text-align:right;">${data.refundAmount} ${data.currency}</td>
+        </tr>
+    ` : '';
+
+    const html = this.wrapTemplate(`
+      <div style="text-align:center;margin-bottom:20px;">
+        <div style="display:inline-block;background:linear-gradient(135deg,#1d4ed8,#06b6d4);width:52px;height:52px;border-radius:18px;line-height:52px;font-size:22px;margin-bottom:14px;color:#fff;font-weight:900;">%</div>
+        <h2 style="color:#f8fafc;margin:0 0 8px;">Siparisiniz Kismen Teslim Edildi</h2>
+        <p style="color:#94a3b8;font-size:14px;line-height:1.7;margin:0;">#${data.orderId.slice(0, 16).toUpperCase()} numarali siparisinizde stokta olan kisim teslim edildi.</p>
+      </div>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#111827;border:1px solid #334155;border-radius:16px;padding:18px;margin-bottom:20px;">
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Urun</td>
+          <td style="color:#f8fafc;font-size:13px;font-weight:700;padding:8px 12px;text-align:right;">${data.productName}</td>
+        </tr>
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Teslim Edilen</td>
+          <td style="color:#f8fafc;font-size:13px;font-weight:700;padding:8px 12px;text-align:right;">${data.deliveredQuantity} / ${data.totalQuantity}</td>
+        </tr>
+        <tr>
+          <td style="color:#94a3b8;font-size:13px;padding:8px 12px;">Bekleyen</td>
+          <td style="color:#fbbf24;font-size:13px;font-weight:800;padding:8px 12px;text-align:right;">${data.remainingQuantity}</td>
+        </tr>
+        ${refundRow}
+      </table>
+
+      <p style="color:#64748b;font-size:12px;line-height:1.7;margin:0;">${data.note || 'Kalan adetler hazir oldugunda teslim edilecek veya iade/bakiye islemi uygulanacaktir.'}</p>
+    `);
+
+    await this.send({
+      to,
+      subject: `Siparis kismen teslim edildi: #${data.orderId.slice(0, 16).toUpperCase()}`,
+      html,
+      emailType: 'ORDER_PARTIAL_DELIVERY',
+      userId: data.userId,
+      tenantId: data.tenantId,
+      orderId: data.orderId,
+      metadata: {
+        deliveredQuantity: data.deliveredQuantity,
+        totalQuantity: data.totalQuantity,
+        remainingQuantity: data.remainingQuantity,
+        refundAmount: data.refundAmount,
+      },
+      templateVars: {
+        orderId: data.orderId,
+        orderNo: data.orderId.slice(0, 16).toUpperCase(),
+        productName: data.productName,
+        deliveredQuantity: data.deliveredQuantity,
+        totalQuantity: data.totalQuantity,
+        remainingQuantity: data.remainingQuantity,
+        refundAmount: data.refundAmount || '',
+        currency: data.currency,
+        note: data.note || '',
       },
     });
   }
@@ -970,6 +1045,7 @@ export class MailService {
       EMAIL_VERIFICATION: 'Doğrulama kodun: {{code}}',
       ORDER_CONFIRMATION: 'Siparişin alındı: #{{orderNo}}',
       ORDER_DELIVERY: 'Teslimat hazır: {{productName}}',
+      ORDER_PARTIAL_DELIVERY: 'Siparis kismen teslim edildi: #{{orderNo}}',
       ORDER_CANCELLED: 'Sipariş iptal edildi: #{{orderNo}}',
       GUEST_ORDER_INFO: 'Sipariş takip linkin: #{{orderNo}}',
       PASSWORD_RESET: 'Şifre sıfırlama bağlantın',
@@ -990,6 +1066,7 @@ export class MailService {
       EMAIL_VERIFICATION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Doğrulama kodu</h2><p style="color:#94a3b8;line-height:1.7;">{{purpose}}</p><div style="font-size:34px;font-weight:900;letter-spacing:8px;color:#ffffff;background:#1e1b4b;border:1px solid #6366f1;border-radius:18px;padding:22px;text-align:center;">{{code}}</div>',
       ORDER_CONFIRMATION: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparişin alındı</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı {{productName}} siparişin işleme alındı.</p><p style="color:#60a5fa;font-size:22px;font-weight:900;">{{totalAmount}} {{currency}}</p>',
       ORDER_DELIVERY: '<h2 style="color:#f8fafc;margin:0 0 10px;">Teslimat hazır</h2><p style="color:#94a3b8;line-height:1.7;">{{productName}} için teslimat kodların:</p><div style="color:#f8fafc;background:#020617;border:1px solid #334155;border-radius:16px;padding:18px;font-family:monospace;">{{codeList}}</div>',
+      ORDER_PARTIAL_DELIVERY: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparis kismen teslim edildi</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numarali {{productName}} siparisinde {{deliveredQuantity}} / {{totalQuantity}} adet teslim edildi.</p><div style="background:#102033;border:1px solid #2563eb;border-radius:14px;padding:14px;color:#bfdbfe;">Bekleyen adet: {{remainingQuantity}}<br/>Iade: {{refundAmount}} {{currency}}</div>',
       ORDER_CANCELLED: '<h2 style="color:#f8fafc;margin:0 0 10px;">Sipariş iptal edildi</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı {{productName}} siparişiniz iptal edildi.</p><div style="background:#2f1111;border:1px solid #7f1d1d;border-radius:14px;padding:14px;color:#fecaca;">Sebep: {{reason}}</div>',
       GUEST_ORDER_INFO: '<h2 style="color:#f8fafc;margin:0 0 10px;">Siparişin alındı</h2><p style="color:#94a3b8;line-height:1.7;">#{{orderNo}} numaralı siparişini takip edebilirsin.</p><a href="{{trackUrl}}" style="display:block;background:#6366f1;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Siparişi Takip Et</a>',
       PASSWORD_RESET: '<h2 style="color:#f8fafc;margin:0 0 10px;">Şifre sıfırlama</h2><p style="color:#94a3b8;line-height:1.7;">Merhaba {{firstName}}, yeni şifre belirlemek için aşağıdaki butonu kullan.</p><a href="{{resetUrl}}" style="display:block;background:#ef4444;color:#fff;text-align:center;text-decoration:none;border-radius:14px;padding:14px 18px;font-weight:800;">Şifremi Sıfırla</a>',
@@ -1010,6 +1087,7 @@ export class MailService {
       EMAIL_VERIFICATION: ['code', 'purpose'],
       ORDER_CONFIRMATION: ['orderId', 'orderNo', 'productName', 'quantity', 'totalAmount', 'currency', 'orderUrl'],
       ORDER_DELIVERY: ['orderId', 'orderNo', 'productName', 'codes', 'codeList'],
+      ORDER_PARTIAL_DELIVERY: ['orderId', 'orderNo', 'productName', 'deliveredQuantity', 'totalQuantity', 'remainingQuantity', 'refundAmount', 'currency', 'note'],
       ORDER_CANCELLED: ['orderId', 'orderNo', 'productName', 'reason', 'totalAmount', 'currency'],
       GUEST_ORDER_INFO: ['orderId', 'orderNo', 'trackingToken', 'productName', 'totalAmount', 'currency', 'trackUrl'],
       PASSWORD_RESET: ['firstName', 'resetUrl'],
@@ -1035,6 +1113,11 @@ export class MailService {
       productName: 'PUBG Mobile 660 UC',
       reason: 'Stok yetersizligi nedeniyle iptal edildi.',
       quantity: 2,
+      deliveredQuantity: 3,
+      totalQuantity: 5,
+      remainingQuantity: 2,
+      refundAmount: '30.00',
+      note: 'Kalan adetler uyeliginize bakiye olarak iade edildi.',
       totalAmount: '363.00',
       currency: 'TRY',
       codes: 'ABCD-1234, EFGH-5678',

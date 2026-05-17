@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from './mail.service';
 import { randomBytes } from 'crypto';
@@ -21,6 +22,7 @@ export class MailCronService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   // ─────────────────────────────────────────────────────────
@@ -291,6 +293,28 @@ export class MailCronService {
   }
 
   // ─────────────────────────────────────────────────────────
+  // EMAIL LOG RETENTION
+  // ─────────────────────────────────────────────────────────
+  @Cron('35 2 * * *') // Daily 02:35 UTC
+  async handleEmailLogRetention(): Promise<void> {
+    const retentionDays = Math.max(Number(this.config.get('MAIL_LOG_RETENTION_DAYS') || 180), 30);
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+    try {
+      const result = await this.prisma.emailLog.deleteMany({
+        where: {
+          createdAt: { lt: cutoff },
+        },
+      });
+
+      if (result.count > 0) {
+        this.logger.log(`[EmailLogRetention] Pruned ${result.count} email logs older than ${retentionDays} days`);
+      }
+    } catch (error) {
+      this.logger.error('[EmailLogRetention] Error:', error);
+    }
+  }
+
   // PRIVATE — Hedef kitle belirleme
   // ─────────────────────────────────────────────────────────
   private normalizeTenantIds(value: unknown): string[] {
