@@ -2533,6 +2533,7 @@ model EmailLog {
 /// Terk edilen sepet takibi — Kullanıcının sepetinde bırakıp gittiği ürünler
 model AbandonedCart {
   id              String    @id @default(uuid())
+  tenantId        String?
   userId          String?   // Kayıtlı kullanıcı
   email           String?   @db.VarChar(255) // Bilinen e-posta
 
@@ -2560,6 +2561,7 @@ model AbandonedCart {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([tenantId])
   @@index([email])
   @@index([isRecovered])
   @@index([lastActivityAt])

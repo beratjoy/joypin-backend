@@ -64,6 +64,7 @@ export class MailCronService {
           firstName: 'Değerli Müşterimiz', // userId varsa isim çekilebilir
           items: formattedItems,
           couponCode,
+          tenantId: cart.tenantId || undefined,
           userId: cart.userId || undefined,
         });
 
@@ -120,6 +121,7 @@ export class MailCronService {
           firstName: 'Değerli Müşterimiz',
           items: formattedItems,
           couponCode,
+          tenantId: cart.tenantId || undefined,
           userId: cart.userId || undefined,
         });
 
@@ -145,35 +147,52 @@ export class MailCronService {
     const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
 
     try {
-      // Son 30-31 gün arasında son login yapmış (tam 30. günde mail at)
-      // emailNotification = true olanlar
-      const users = await this.prisma.user.findMany({
-        where: {
-          lastLoginAt: {
-            lte: thirtyDaysAgo,
-            gte: thirtyOneDaysAgo,
-          },
-          emailNotification: true,
-          status: 'ACTIVE',
-        },
-        select: { id: true, email: true, firstName: true },
-        take: 100,
+      const tenants = await this.prisma.tenantBrand.findMany({
+        where: { isActive: true },
+        select: { id: true, slug: true },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       });
+      const tenantScopes = tenants.length ? tenants : [{ id: undefined, slug: 'global' }];
+      const processedUserIds = new Set<string>();
+      let sentCount = 0;
 
-      if (users.length === 0) return;
-      this.logger.log(`[Re-engagement] Processing ${users.length} inactive users`);
-
-      for (const user of users) {
-        const couponCode = `GERIDON${randomBytes(3).toString('hex').toUpperCase()}`;
-
-        await this.mail.sendReEngagement(user.email, {
-          firstName: user.firstName,
-          couponCode,
-          userId: user.id,
+      for (const tenant of tenantScopes) {
+        const users = await this.prisma.user.findMany({
+          where: {
+            lastLoginAt: {
+              lte: thirtyDaysAgo,
+              gte: thirtyOneDaysAgo,
+            },
+            emailNotification: true,
+            status: 'ACTIVE',
+            ...(tenant.id ? this.tenantRecipientWhere([tenant.id]) : {}),
+          },
+          select: { id: true, email: true, firstName: true },
+          take: 100,
         });
+
+        if (users.length === 0) continue;
+        this.logger.log(`[Re-engagement] Processing ${users.length} inactive users for ${tenant.slug}`);
+
+        for (const user of users) {
+          if (processedUserIds.has(user.id)) continue;
+          processedUserIds.add(user.id);
+
+          const couponCode = `GERIDON${randomBytes(3).toString('hex').toUpperCase()}`;
+
+          await this.mail.sendReEngagement(user.email, {
+            firstName: user.firstName,
+            couponCode,
+            tenantId: tenant.id,
+            userId: user.id,
+          });
+          sentCount++;
+        }
       }
 
-      this.logger.log(`[Re-engagement] Sent ${users.length} re-engagement emails`);
+      if (sentCount > 0) {
+        this.logger.log(`[Re-engagement] Sent ${sentCount} re-engagement emails`);
+      }
     } catch (error) {
       this.logger.error('[Re-engagement] Error:', error);
     }

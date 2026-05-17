@@ -367,6 +367,7 @@ export class MailService {
     firstName: string;
     items: { name: string; price: string }[];
     couponCode?: string;
+    tenantId?: string;
     userId?: string;
   }): Promise<void> {
     const itemRows = data.items.map(item => `
@@ -401,7 +402,7 @@ export class MailService {
 
     await this.send({
       to, subject: '🛒 Sepetinde ürün var — Kaçırma!', html,
-      emailType: 'ABANDONED_CART_1H', userId: data.userId,
+      emailType: 'ABANDONED_CART_1H', tenantId: data.tenantId, userId: data.userId,
       metadata: { couponCode: data.couponCode },
       templateVars: { firstName: data.firstName, couponCode: data.couponCode || '', checkoutUrl: `${this.getSiteUrl()}/checkout` },
     });
@@ -412,6 +413,7 @@ export class MailService {
     firstName: string;
     items: { name: string; price: string }[];
     couponCode: string;
+    tenantId?: string;
     userId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
@@ -434,7 +436,7 @@ export class MailService {
 
     await this.send({
       to, subject: '⏰ Son Şans! Sepetindeki ürünler tükeniyor', html,
-      emailType: 'ABANDONED_CART_24H', userId: data.userId,
+      emailType: 'ABANDONED_CART_24H', tenantId: data.tenantId, userId: data.userId,
       metadata: { couponCode: data.couponCode },
       templateVars: { firstName: data.firstName, couponCode: data.couponCode, checkoutUrl: `${this.getSiteUrl()}/checkout` },
     });
@@ -444,6 +446,7 @@ export class MailService {
   async sendReEngagement(to: string, data: {
     firstName: string;
     couponCode: string;
+    tenantId?: string;
     userId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
@@ -473,7 +476,7 @@ export class MailService {
 
     await this.send({
       to, subject: '💜 Seni çok özledik! İşte sana özel %20 indirim', html,
-      emailType: 'RE_ENGAGEMENT', userId: data.userId,
+      emailType: 'RE_ENGAGEMENT', tenantId: data.tenantId, userId: data.userId,
       metadata: { couponCode: data.couponCode },
       templateVars: { firstName: data.firstName, couponCode: data.couponCode, siteUrl: this.getSiteUrl() },
     });

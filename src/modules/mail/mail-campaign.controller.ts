@@ -165,19 +165,25 @@ export class MailCampaignController {
           .filter((campaign: any) => this.visibleForTenant(campaign, tenantId))
           .map((campaign) => campaign.id)
       : null;
-    const campaignScope = visibleCampaignIds ? { campaignId: { in: visibleCampaignIds } } : {};
+    const logScope = this.isTenantScoped(tenantId)
+      ? { OR: [{ tenantId }, { campaignId: { in: visibleCampaignIds || [] } }] }
+      : {};
 
     // Son 30 gün email logları
     const [totalSent, totalOpened, totalClicked, totalBounced] = await Promise.all([
-      this.prisma.emailLog.count({ where: { sentAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
-      this.prisma.emailLog.count({ where: { status: 'OPENED', openedAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
-      this.prisma.emailLog.count({ where: { status: 'CLICKED', clickedAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
-      this.prisma.emailLog.count({ where: { status: 'BOUNCED', createdAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
+      this.prisma.emailLog.count({ where: { sentAt: { gte: thirtyDaysAgo }, ...logScope } }),
+      this.prisma.emailLog.count({ where: { status: 'OPENED', openedAt: { gte: thirtyDaysAgo }, ...logScope } }),
+      this.prisma.emailLog.count({ where: { status: 'CLICKED', clickedAt: { gte: thirtyDaysAgo }, ...logScope } }),
+      this.prisma.emailLog.count({ where: { status: 'BOUNCED', createdAt: { gte: thirtyDaysAgo }, ...logScope } }),
     ]);
 
     // Kurtarılan satışlar (recovered carts)
     const recoveredCarts = await this.prisma.abandonedCart.findMany({
-      where: { isRecovered: true, recoveredAt: { gte: thirtyDaysAgo } },
+      where: {
+        isRecovered: true,
+        recoveredAt: { gte: thirtyDaysAgo },
+        ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
+      },
       select: { recoveredAmount: true },
     });
     const recoveredRevenue = recoveredCarts.reduce(
@@ -191,7 +197,7 @@ export class MailCampaignController {
     // Tip bazlı breakdown
     const typeBreakdown = await this.prisma.emailLog.groupBy({
       by: ['emailType'],
-      where: { createdAt: { gte: thirtyDaysAgo }, ...campaignScope },
+      where: { createdAt: { gte: thirtyDaysAgo }, ...logScope },
       _count: true,
     });
 
