@@ -33,9 +33,9 @@ export class AnalyticsController {
    * 1 saat cache
    */
   @Get('ai-report')
-  async getAiReport(@Query('refresh') refresh?: string) {
+  async getAiReport(@Query('refresh') refresh?: string, @Query('tenantId') tenantId?: string) {
     const forceRefresh = refresh === 'true';
-    const result = await this.aiService.getAiReport(forceRefresh);
+    const result = await this.aiService.getAiReport(forceRefresh, tenantId);
     return { success: true, data: result };
   }
 
@@ -59,8 +59,8 @@ export class AnalyticsController {
   }
 
   @Post('ask')
-  async ask(@Body() body: { question: string }) {
-    const result = await this.aiService.answerQuestion(body.question || '');
+  async ask(@Body() body: { question: string; tenantId?: string }, @Query('tenantId') tenantId?: string) {
+    const result = await this.aiService.answerQuestion(body.question || '', tenantId || body.tenantId);
     return { success: true, data: result };
   }
 }

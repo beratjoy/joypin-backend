@@ -18,10 +18,7 @@ export class AnalyticsAiService {
   private readonly openaiModel: string;
 
   // AI rapor önbelleği (1 saat)
-  private aiCache: { report: string | null; expiresAt: number } = {
-    report: null,
-    expiresAt: 0,
-  };
+  private aiCache = new Map<string, { report: string; expiresAt: number; generatedAt: string }>();
   private readonly AI_CACHE_TTL_MS = 60 * 60 * 1000; // 1 saat
 
   constructor(
@@ -36,44 +33,51 @@ export class AnalyticsAiService {
   /**
    * AI raporunu üret — önbellekli
    */
-  async getAiReport(forceRefresh = false): Promise<{ report: string; cached: boolean; generatedAt: string }> {
+  async getAiReport(forceRefresh = false, tenantId?: string): Promise<{ report: string; cached: boolean; generatedAt: string }> {
     // Cache kontrolü
-    if (!forceRefresh && this.aiCache.report && Date.now() < this.aiCache.expiresAt) {
+    const scopedTenantId = this.scopedTenantId(tenantId);
+    const cacheKey = scopedTenantId || 'global';
+    const cached = this.aiCache.get(cacheKey);
+    if (!forceRefresh && cached && Date.now() < cached.expiresAt) {
       return {
-        report: this.aiCache.report,
+        report: cached.report,
         cached: true,
-        generatedAt: new Date(this.aiCache.expiresAt - this.AI_CACHE_TTL_MS).toISOString(),
+        generatedAt: cached.generatedAt,
       };
     }
 
     // Analitik verisini al
-    const summary = await this.analytics.getSummary(forceRefresh);
+    const summary = await this.analytics.getSummary(forceRefresh, scopedTenantId);
 
     // OpenAI'ya gönder
     const report = await this.generateAiSummary(summary);
 
     // Önbelleğe al
-    this.aiCache = { report, expiresAt: Date.now() + this.AI_CACHE_TTL_MS };
+    const generatedAt = new Date().toISOString();
+    this.aiCache.set(cacheKey, { report, expiresAt: Date.now() + this.AI_CACHE_TTL_MS, generatedAt });
 
     return {
       report,
       cached: false,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
     };
   }
 
-  async answerQuestion(question: string): Promise<{ answer: string; generatedAt: string }> {
+  async answerQuestion(question: string, tenantId?: string): Promise<{ answer: string; generatedAt: string }> {
+    const scopedTenantId = this.scopedTenantId(tenantId);
     const [summary, stockPools, financialLogs] = await Promise.all([
-      this.analytics.getSummary(true),
+      this.analytics.getSummary(true, scopedTenantId),
       this.prisma.stockPool.findMany({
         include: {
           codes: { select: { isUsed: true, costPrice: true, currency: true } },
-          products: { include: { product: { select: { name: true } } } },
+          products: { include: { product: { select: { name: true, tenantIds: true } } } },
         },
         orderBy: { updatedAt: 'desc' },
-        take: 25,
+        take: scopedTenantId ? 100 : 25,
       }),
       this.prisma.orderFinancialLog.findMany({
+        where: scopedTenantId ? { order: { tenantId: scopedTenantId } } : {},
+        include: { order: { select: { orderNumber: true } } },
         orderBy: { createdAt: 'desc' },
         take: 50,
       }),
@@ -93,7 +97,8 @@ export class AnalyticsAiService {
       topMemberTypes: summary.topMemberTypes,
       lowStock: summary.lowStock,
       users: summary.users,
-      stockPools: stockPools.map((pool: any) => ({
+      tenantId: scopedTenantId || 'global',
+      stockPools: stockPools.filter((pool: any) => this.stockPoolVisibleForTenant(pool, scopedTenantId)).slice(0, 25).map((pool: any) => ({
         name: pool.name,
         isActive: pool.isActive,
         totalCodes: pool.codes.length,
@@ -110,6 +115,7 @@ export class AnalyticsAiService {
         currency: log.currency,
         createdAt: log.createdAt,
         description: log.description,
+        orderNumber: log.order?.orderNumber,
       })),
     };
 
@@ -283,5 +289,21 @@ ${summary.lowStock.length > 0 ? summary.lowStock.map(s => `- ${s.name}: ${s.stoc
   private async getOpenAiModel(): Promise<string> {
     const setting = await this.prisma.siteSettings.findUnique({ where: { key: 'openai_model' } });
     return setting?.value || this.openaiModel || 'gpt-4o-mini';
+  }
+
+  private scopedTenantId(tenantId?: string): string | undefined {
+    return tenantId && tenantId !== 'all' ? tenantId : undefined;
+  }
+
+  private stockPoolVisibleForTenant(pool: any, tenantId?: string): boolean {
+    if (!tenantId) return true;
+    const products = Array.isArray(pool.products) ? pool.products : [];
+    if (products.length === 0) return true;
+    return products.some((item: any) => {
+      const tenantIds = Array.isArray(item.product?.tenantIds)
+        ? item.product.tenantIds.map(String).filter(Boolean)
+        : [];
+      return tenantIds.length === 0 || tenantIds.includes(tenantId);
+    });
   }
 }
