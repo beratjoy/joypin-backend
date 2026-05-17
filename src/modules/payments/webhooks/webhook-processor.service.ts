@@ -48,7 +48,7 @@ export class WebhookProcessorService {
       .update(`${timestamp}.${rawBody.toString()}`)
       .digest('hex');
 
-    if (!crypto.timingSafeEqual(Buffer.from(sigV1), Buffer.from(expectedSig))) {
+    if (!this.safeCompare(sigV1, expectedSig)) {
       await this.logWebhook('STRIPE', 'signature_failed', rawBody, false);
       throw new BadRequestException('Stripe signature verification failed');
     }
@@ -80,7 +80,7 @@ export class WebhookProcessorService {
       .update(payloadStr)
       .digest('hex');
 
-    if (signature !== expectedSig) {
+    if (!this.safeCompare(signature, expectedSig)) {
       await this.logWebhook('CRYPTOMUS', 'signature_failed', body, false);
       throw new BadRequestException('Cryptomus signature verification failed');
     }
@@ -116,7 +116,7 @@ export class WebhookProcessorService {
       .update(hashStr)
       .digest('base64');
 
-    if (body.hash !== expectedHash) {
+    if (!this.safeCompare(body.hash, expectedHash)) {
       await this.logWebhook('PAYTR', 'hash_failed', body, false);
       throw new BadRequestException('PayTR hash verification failed');
     }
@@ -145,7 +145,7 @@ export class WebhookProcessorService {
       .update(hashInput)
       .digest('hex');
 
-    if (body.hash !== expectedHash) {
+    if (!this.safeCompare(body.hash, expectedHash)) {
       await this.logWebhook('LIDIO', 'hash_failed', body, false);
       throw new BadRequestException('Lidio hash verification failed');
     }
@@ -170,12 +170,35 @@ export class WebhookProcessorService {
   ): Promise<void> {
     this.logger.log(`Payment success: ${provider} | Order: ${orderId} | Amount: ${amount}`);
 
+    const existing = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: true,
+        subOrders: { include: { product: true } },
+      },
+    });
+    if (!existing) {
+      throw new BadRequestException('Order not found');
+    }
+
+    if (existing.paymentStatus === 'PAID') {
+      this.logger.warn(`Duplicate payment webhook ignored: ${provider} | Order: ${orderId}`);
+      await this.logWebhook(provider, 'duplicate_payment_success', { orderId, amount }, true, orderId);
+      return;
+    }
+
+    if (Number(existing.totalAmount || 0) > 0 && amount > 0 && amount + 0.0001 < Number(existing.totalAmount)) {
+      await this.logWebhook(provider, 'amount_mismatch', { orderId, amount, expected: existing.totalAmount }, false, orderId);
+      throw new BadRequestException('Payment amount is lower than order total');
+    }
+
     // 1) Sipariş statüsünü güncelle
     const order = await this.prisma.order.update({
       where: { id: orderId },
       data: {
         paymentStatus: 'PAID',
         status: 'PROCESSING',
+        paymentRef: provider,
       },
       include: {
         user: true,
@@ -283,5 +306,11 @@ export class WebhookProcessorService {
         processedAt: isValid ? new Date() : null,
       },
     });
+  }
+
+  private safeCompare(a: unknown, b: unknown): boolean {
+    const left = Buffer.from(String(a || ''));
+    const right = Buffer.from(String(b || ''));
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
   }
 }

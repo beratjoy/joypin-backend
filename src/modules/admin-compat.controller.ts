@@ -1,17 +1,16 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { Public } from './auth/decorators/public.decorator';
 import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
+import { Roles } from './auth/decorators/roles.decorator';
 
 @Controller('admin')
+@Roles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'SUPPORT')
 export class AdminCompatController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) {}
-
-  @Public()
   @Get('payment-methods')
   async listPaymentMethods() {
     const paymentMethods = await this.prisma.paymentMethod.findMany({
@@ -27,8 +26,6 @@ export class AdminCompatController {
       })),
     };
   }
-
-  @Public()
   @Post('payment-methods')
   async createPaymentMethod(@Body() body: any) {
     const paymentMethod = await this.prisma.paymentMethod.create({
@@ -48,8 +45,6 @@ export class AdminCompatController {
     });
     return { success: true, paymentMethod };
   }
-
-  @Public()
   @Patch('payment-methods/:id')
   async updatePaymentMethod(@Param('id') id: string, @Body() body: any) {
     const paymentMethod = await this.prisma.paymentMethod.update({
@@ -70,8 +65,6 @@ export class AdminCompatController {
     });
     return { success: true, paymentMethod };
   }
-
-  @Public()
   @Delete('payment-methods/:id')
   async deletePaymentMethod(@Param('id') id: string) {
     await this.prisma.paymentMethod.delete({ where: { id } });
@@ -489,8 +482,6 @@ export class AdminCompatController {
       orderNumber: review.order?.orderNumber || null,
     };
   }
-
-  @Public()
   @Get('reviews')
   async listReviews(@Query('status') status?: string, @Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
     const reviews = await this.prisma.productReview.findMany({
@@ -509,8 +500,6 @@ export class AdminCompatController {
     });
     return { reviews: reviews.map((review: any) => this.formatReview(review)) };
   }
-
-  @Public()
   @Get('reviews/public')
   async listPublicReviews(@Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
     const reviews = await this.prisma.productReview.findMany({
@@ -529,8 +518,6 @@ export class AdminCompatController {
     });
     return { reviews: reviews.map((review: any) => this.formatReview(review)) };
   }
-
-  @Public()
   @Post('reviews')
   async createReview(@Body() body: any) {
     const order = body.orderId ? await this.prisma.order.findUnique({
@@ -566,8 +553,6 @@ export class AdminCompatController {
     });
     return { success: true, review: this.formatReview(review) };
   }
-
-  @Public()
   @Patch('reviews/:id')
   async updateReview(@Param('id') id: string, @Body() body: any) {
     const review = await this.prisma.productReview.update({
@@ -590,15 +575,11 @@ export class AdminCompatController {
     });
     return { success: true, review: this.formatReview(review) };
   }
-
-  @Public()
   @Delete('reviews/:id')
   async deleteReview(@Param('id') id: string) {
     await this.prisma.productReview.delete({ where: { id } });
     return { success: true };
   }
-
-  @Public()
   @Get('tickets')
   async getTickets() {
     const tickets = await this.prisma.ticket.findMany({
@@ -638,15 +619,11 @@ export class AdminCompatController {
       };
     });
   }
-
-  @Public()
   @Get('tickets/:id')
   async getTicket(@Param('id') id: string) {
     const tickets = await this.getTickets();
     return tickets.find((ticket: any) => ticket.id === id) || null;
   }
-
-  @Public()
   @Post('tickets/:id/reply')
   async replyTicket(@Param('id') id: string, @Body() body: any) {
     const ticket = await this.prisma.ticket.findUnique({ where: { id } });
@@ -668,8 +645,6 @@ export class AdminCompatController {
     ]);
     return { success: true };
   }
-
-  @Public()
   @Patch('tickets/:id')
   async updateTicket(@Param('id') id: string, @Body() body: any) {
     const data: any = {};
@@ -720,8 +695,6 @@ export class AdminCompatController {
 
     return response.json();
   }
-
-  @Public()
   @Get('settings')
   async getSettings(@Query('group') group?: string) {
     return this.prisma.siteSettings.findMany({
@@ -775,8 +748,6 @@ export class AdminCompatController {
       pendingApplications: 0,
     };
   }
-
-  @Public()
   @Get('logs/audit')
   async listAuditLogs(
     @Query('page') page = '1',
@@ -830,8 +801,6 @@ export class AdminCompatController {
       },
     };
   }
-
-  @Public()
   @Get('settings/currencies')
   async getCurrencies() {
     const meta: Record<string, { name: string; symbol: string; flag: string }> = {
@@ -862,8 +831,6 @@ export class AdminCompatController {
       };
     });
   }
-
-  @Public()
   @Post('settings/currencies')
   async saveCurrencies(@Body() body: any) {
     const supported = ['USD', 'EUR', 'GBP', 'AED', 'SAR'];
@@ -899,8 +866,6 @@ export class AdminCompatController {
 
     return { success: true, updated: saved.length, currencies: await this.getCurrencies() };
   }
-
-  @Public()
   @Patch('settings/:key')
   async updateSetting(@Param('key') key: string, @Body() body: any) {
     const inferredGroup = key.startsWith('legal_') || key.startsWith('about_') || key.startsWith('contact_') || key.startsWith('faq_')
@@ -917,8 +882,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Post('settings/mail/test')
   async sendMailSettingsTest(@Body() body: any) {
     const to = String(body?.to || '').trim();
@@ -929,33 +892,22 @@ export class AdminCompatController {
     await this.mailService.sendTestEmail(to);
     return { success: true };
   }
-
-  @Public()
   @Get('mail/templates')
   async listMailTemplates() {
     return { templates: await this.mailService.listManagedTemplates() };
   }
-
-  @Public()
   @Put('mail/templates/:emailType')
   async saveMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
     return this.mailService.saveManagedTemplate(emailType, body);
   }
-
-  @Public()
   @Post('mail/templates/:emailType/preview')
   async previewMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
     return this.mailService.previewManagedTemplate(emailType, body);
   }
-
-
-  @Public()
   @Get('referrals/rules')
   async listReferralRules() {
     return this.prisma.referralRule.findMany({ orderBy: [{ tierLevel: 'asc' }, { createdAt: 'desc' }] });
   }
-
-  @Public()
   @Post('referrals/rules')
   async createReferralRule(@Body() body: any) {
     return this.prisma.referralRule.create({
@@ -982,8 +934,6 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Patch('referrals/rules/:id')
   async updateReferralRule(@Param('id') id: string, @Body() body: any) {
     return this.prisma.referralRule.update({
@@ -1011,21 +961,15 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Delete('referrals/rules/:id')
   async deleteReferralRule(@Param('id') id: string) {
     await this.prisma.referralRule.delete({ where: { id } });
     return { success: true };
   }
-
-  @Public()
   @Get('referrals/missions')
   async listReferralMissions() {
     return this.prisma.mission.findMany({ orderBy: { createdAt: 'desc' } });
   }
-
-  @Public()
   @Post('referrals/missions')
   async createReferralMission(@Body() body: any) {
     return this.prisma.mission.create({
@@ -1043,8 +987,6 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Patch('referrals/missions/:id')
   async updateReferralMission(@Param('id') id: string, @Body() body: any) {
     return this.prisma.mission.update({
@@ -1063,15 +1005,11 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Delete('referrals/missions/:id')
   async deleteReferralMission(@Param('id') id: string) {
     await this.prisma.mission.delete({ where: { id } });
     return { success: true };
   }
-
-  @Public()
   @Post('customers/:id/referrals/tier')
   async setCustomerReferralTier(@Param('id') id: string, @Body() body: any) {
     const rule = await this.prisma.referralRule.findUnique({ where: { id: body.referralRuleId } });
@@ -1079,8 +1017,6 @@ export class AdminCompatController {
     await this.prisma.userReferral.updateMany({ where: { referrerId: id }, data: { referralRuleId: rule.id } });
     return { success: true, rule };
   }
-
-  @Public()
   @Post('customers/:id/referrals/mission-complete')
   async completeCustomerReferralMission(@Param('id') id: string, @Body() body: any) {
     const mission = await this.prisma.mission.findUnique({ where: { id: body.missionId } });
@@ -1091,7 +1027,7 @@ export class AdminCompatController {
       create: { userId: id, missionId: mission.id, currentValue: mission.targetValue, isCompleted: true, completedAt: new Date() },
     });
     return { success: true, progress };
-  }  @Public()
+  }
   @Get('finance/deposits')
   async getDeposits(@Query('status') status?: string, @Query('limit') limit?: string) {
     const take = Math.min(Number(limit || 100), 200);
@@ -1120,8 +1056,6 @@ export class AdminCompatController {
       })),
     };
   }
-
-  @Public()
   @Post('finance/deposits/:id/approve')
   async approveDeposit(@Param('id') id: string) {
     const deposit = await this.prisma.paymentTransaction.findUnique({ where: { id } });
@@ -1158,8 +1092,6 @@ export class AdminCompatController {
 
     return { success: true };
   }
-
-  @Public()
   @Post('finance/deposits/:id/reject')
   async rejectDeposit(@Param('id') id: string, @Body() body: any) {
     await this.prisma.paymentTransaction.update({
@@ -1168,8 +1100,6 @@ export class AdminCompatController {
     });
     return { success: true };
   }
-
-  @Public()
   @Get('finance/transactions')
   async getFinanceTransactions(@Query('limit') limit?: string) {
     const take = Math.min(Number(limit || 100), 200);
@@ -1196,8 +1126,6 @@ export class AdminCompatController {
       };
     });
   }
-
-  @Public()
   @Post('finance/manual-adjust')
   async manualBalanceAdjust(@Body() body: any) {
     const amount = Number(body.amount || 0);
@@ -1226,8 +1154,6 @@ export class AdminCompatController {
     });
     return { success: true };
   }
-
-  @Public()
   @Patch('customers/:id/lootbox-rights')
   async updateCustomerLootboxRights(@Param('id') id: string, @Body() body: any) {
     const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
@@ -1247,8 +1173,6 @@ export class AdminCompatController {
 
     return { success: true, extraLootboxRights: updated.extraLootboxRights };
   }
-
-  @Public()
   @Patch('customers/:id/wallet')
   async updateCustomerWallet(@Param('id') id: string, @Body() body: any) {
     const fieldMap: Record<string, { column: string; balanceField: any }> = {
@@ -1310,8 +1234,6 @@ export class AdminCompatController {
       };
     });
   }
-
-  @Public()
   @Get('customers/:id')
   async getCustomerDetail(@Param('id') id: string) {
     const user: any = await this.prisma.user.findUnique({
@@ -1363,8 +1285,6 @@ export class AdminCompatController {
       },
     };
   }
-
-  @Public()
   @Get('invoices')
   async getInvoices(@Query('status') status?: string) {
     const where = status ? { status: status as any } : {};
@@ -1394,8 +1314,6 @@ export class AdminCompatController {
       total,
     };
   }
-
-  @Public()
   @Post('invoices')
   async createInvoice(@Body() body: any) {
     if (body.runBatch) return this.createBatchInvoices(Boolean(body.forceAll));
@@ -1403,8 +1321,6 @@ export class AdminCompatController {
     const invoice = await this.createInvoiceForUser(body.userId, body.type);
     return { success: true, invoiceNumber: invoice.invoiceNumber, invoice };
   }
-
-  @Public()
   @Post('invoices/:id/issue')
   async issueInvoice(@Param('id') id: string) {
     const settings = await this.getInvoiceSettings();
@@ -1421,8 +1337,6 @@ export class AdminCompatController {
     });
     return { success: true, invoice };
   }
-
-  @Public()
   @Get('invoices/:id/pdf')
   async getInvoicePdf(@Param('id') id: string) {
     const invoice = await this.prisma.invoice.findUnique({
@@ -1434,14 +1348,10 @@ export class AdminCompatController {
     const billing = invoice.billingEntity || await this.getDefaultBillingEntityFromSettings(settings);
     return this.renderInvoiceHtml(invoice, billing, settings.invoice_pdf_format || 'classic');
   }
-
-  @Public()
   @Get('sliders')
   async getSliders() {
     return this.prisma.slider.findMany({ orderBy: { sortOrder: 'asc' } });
   }
-
-  @Public()
   @Post('sliders')
   async createSlider(@Body() body: any) {
     const count = await this.prisma.slider.count();
@@ -1456,8 +1366,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('sliders/:id')
   async updateSlider(@Param('id') id: string, @Body() body: any) {
     return this.prisma.slider.update({
@@ -1472,14 +1380,10 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Delete('sliders/:id')
   async deleteSlider(@Param('id') id: string) {
     return this.prisma.slider.delete({ where: { id } });
   }
-
-  @Public()
   @Get('categories')
   async getCategories() {
     const categories = await this.prisma.productCategory.findMany({
@@ -1508,8 +1412,6 @@ export class AdminCompatController {
       createdAt: category.createdAt,
     }));
   }
-
-  @Public()
   @Post('categories')
   async createCategory(@Body() body: any) {
     return this.prisma.productCategory.create({
@@ -1531,8 +1433,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('categories/:id')
   async updateCategory(@Param('id') id: string, @Body() body: any) {
     return this.prisma.productCategory.update({
@@ -1555,14 +1455,10 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
     return this.prisma.productCategory.delete({ where: { id } });
   }
-
-  @Public()
   @Get('products')
   async getProducts(@Query('categoryId') categoryId?: string) {
     const products = await this.prisma.product.findMany({
@@ -1614,8 +1510,6 @@ export class AdminCompatController {
       createdAt: product.createdAt,
     }));
   }
-
-  @Public()
   @Get('products/pricing')
   async getAdvancedPricing(
     @Query('page') page = '1',
@@ -1712,8 +1606,6 @@ export class AdminCompatController {
       pageSize: take,
     };
   }
-
-  @Public()
   @Put('products/pricing/update')
   async updateSinglePrice(@Body() body: any) {
     const price = Number(body.calculatedPrice || 0);
@@ -1769,8 +1661,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Put('products/pricing/bulk-update')
   async bulkUpdatePrices(@Body() body: any) {
     const products = await this.prisma.product.findMany({
@@ -1842,8 +1732,6 @@ export class AdminCompatController {
 
     return { success: true, updatedCount: updates.length };
   }
-
-  @Public()
   @Patch('products/:id/pricing/base')
   async updateBasePricing(@Param('id') id: string, @Body() body: any) {
     return this.prisma.product.update({
@@ -1854,8 +1742,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Get('providers')
   async getProviders() {
     const providers = await this.prisma.botProvider.findMany({ orderBy: { priority: 'asc' } });
@@ -1873,8 +1759,6 @@ export class AdminCompatController {
       lastBalanceSync: provider.lastBalanceSync,
     }));
   }
-
-  @Public()
   @Get('member-types')
   async getMemberTypes() {
     const memberTypes = await this.prisma.memberType.findMany({
@@ -1893,8 +1777,6 @@ export class AdminCompatController {
       createdAt: memberType.createdAt,
     }));
   }
-
-  @Public()
   @Post('member-types')
   async createMemberType(@Body() body: any) {
     return this.prisma.memberType.create({
@@ -1907,8 +1789,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('member-types/:id')
   async updateMemberType(@Param('id') id: string, @Body() body: any) {
     return this.prisma.memberType.update({
@@ -1922,8 +1802,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Delete('member-types/:id')
   async deleteMemberType(@Param('id') id: string) {
     return this.prisma.memberType.delete({ where: { id } });
@@ -1955,8 +1833,6 @@ export class AdminCompatController {
       createdAt: plan.createdAt,
     };
   }
-
-  @Public()
   @Get('vip-plans')
   async getVipPlans() {
     const plans = await this.prisma.subscriptionPlan.findMany({
@@ -1970,8 +1846,6 @@ export class AdminCompatController {
     } as any);
     return plans.map((plan: any) => this.mapVipPlan(plan));
   }
-
-  @Public()
   @Post('vip-plans')
   async createVipPlan(@Body() body: any) {
     const prices = Array.isArray(body.prices) ? body.prices.filter((price: any) => Number(price.price) > 0) : [];
@@ -2009,8 +1883,6 @@ export class AdminCompatController {
 
     return this.mapVipPlan(plan);
   }
-
-  @Public()
   @Patch('vip-plans/:id')
   async updateVipPlan(@Param('id') id: string, @Body() body: any) {
     const prices = Array.isArray(body.prices) ? body.prices.filter((price: any) => Number(price.price) > 0) : [];
@@ -2050,15 +1922,11 @@ export class AdminCompatController {
 
     return this.mapVipPlan(plan);
   }
-
-  @Public()
   @Delete('vip-plans/:id')
   async deleteVipPlan(@Param('id') id: string) {
     await this.prisma.subscriptionPlan.delete({ where: { id } });
     return { success: true };
   }
-
-  @Public()
   @Get('dealer-groups')
   async getDealerGroups() {
     const groups = await this.prisma.dealerGroup.findMany({
@@ -2080,8 +1948,6 @@ export class AdminCompatController {
       createdAt: group.createdAt,
     }));
   }
-
-  @Public()
   @Post('dealer-groups')
   async createDealerGroup(@Body() body: any) {
     return this.prisma.dealerGroup.create({
@@ -2096,8 +1962,6 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Patch('dealer-groups/:id')
   async updateDealerGroup(@Param('id') id: string, @Body() body: any) {
     return this.prisma.dealerGroup.update({
@@ -2113,15 +1977,11 @@ export class AdminCompatController {
       } as any,
     });
   }
-
-  @Public()
   @Delete('dealer-groups/:id')
   async deleteDealerGroup(@Param('id') id: string) {
     await this.prisma.dealerGroup.delete({ where: { id } });
     return { success: true };
   }
-
-  @Public()
   @Get('users')
   async getUsers() {
     const users = await this.prisma.user.findMany({
@@ -2153,8 +2013,6 @@ export class AdminCompatController {
       lastLoginAt: user.lastLoginAt,
     }));
   }
-
-  @Public()
   @Patch('users/:id')
   async updateUser(@Param('id') id: string, @Body() body: any) {
     return this.prisma.user.update({
@@ -2167,8 +2025,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Post('providers')
   async createProvider(@Body() body: any) {
     return this.prisma.botProvider.create({
@@ -2186,8 +2042,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('providers/:id')
   async updateProvider(@Param('id') id: string, @Body() body: any) {
     return this.prisma.botProvider.update({
@@ -2206,14 +2060,10 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Delete('providers/:id')
   async deleteProvider(@Param('id') id: string) {
     return this.prisma.botProvider.delete({ where: { id } });
   }
-
-  @Public()
   @Post('providers/:id/sync-balance')
   async syncProviderBalance(@Param('id') id: string) {
     const provider = await this.prisma.botProvider.findUnique({ where: { id } });
@@ -2231,8 +2081,6 @@ export class AdminCompatController {
 
     return { balance };
   }
-
-  @Public()
   @Get('1epin/products')
   async getOneEpinProducts(@Query('providerId') providerId?: string) {
     const provider = providerId ? await this.prisma.botProvider.findUnique({ where: { id: providerId } }) : null;
@@ -2243,8 +2091,6 @@ export class AdminCompatController {
       products: result.Products || [],
     };
   }
-
-  @Public()
   @Get('product-providers')
   async getAllProductProviders(@Query('providerId') providerId?: string) {
     const links = await this.prisma.productProvider.findMany({
@@ -2273,8 +2119,6 @@ export class AdminCompatController {
       isActive: link.isActive,
     }));
   }
-
-  @Public()
   @Get('products/:id/providers')
   async getProductProviders(@Param('id') productId: string) {
     const links = await this.prisma.productProvider.findMany({
@@ -2296,8 +2140,6 @@ export class AdminCompatController {
       isActive: link.isActive,
     }));
   }
-
-  @Public()
   @Post('products/:id/providers')
   async addProductProvider(@Param('id') productId: string, @Body() body: any) {
     return this.prisma.productProvider.upsert({
@@ -2325,8 +2167,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('product-providers/:id')
   async updateProductProvider(@Param('id') id: string, @Body() body: any) {
     return this.prisma.productProvider.update({
@@ -2340,14 +2180,10 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Delete('product-providers/:id')
   async removeProductProvider(@Param('id') id: string) {
     return this.prisma.productProvider.delete({ where: { id } });
   }
-
-  @Public()
   @Post('products')
   async createProduct(@Body() body: any) {
     return this.prisma.product.create({
@@ -2378,8 +2214,6 @@ export class AdminCompatController {
       },
     });
   }
-
-  @Public()
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() body: any) {
     return this.prisma.$transaction(async (tx) => {
@@ -2421,8 +2255,6 @@ export class AdminCompatController {
       return product;
     });
   }
-
-  @Public()
   @Delete('products/:id')
   async deleteProduct(@Param('id') id: string) {
     return this.prisma.product.delete({ where: { id } });
@@ -2589,8 +2421,6 @@ export class AdminCompatController {
 
     return { success: true, message: 'Sipariş serbest bırakıldı' };
   }
-
-  @Public()
   @Post('orders/:orderId/deliver')
   async deliverOrder(@Param('orderId') orderId: string, @Body() body: any) {
     const note = String(body?.note || body?.reason || '').trim();
@@ -2683,8 +2513,6 @@ export class AdminCompatController {
       refunds,
     };
   }
-
-  @Public()
   @Post('orders/:orderId/cancel')
   async cancelOrder(@Param('orderId') orderId: string, @Body() body: any) {
     const reason = String(body?.reason || body?.note || '').trim();
@@ -2714,8 +2542,6 @@ export class AdminCompatController {
       updated: cancellable.length,
     };
   }
-
-  @Public()
   @Post('orders/:subOrderId/complete-topup')
   async completeTopupOrder(@Param('subOrderId') subOrderId: string) {
     const subOrder = await this.prisma.subOrder.findUnique({
@@ -2738,8 +2564,6 @@ export class AdminCompatController {
     await this.awardPointsForDeliveredSubOrder(updated);
     return updated;
   }
-
-  @Public()
   @Post('orders/:subOrderId/assign-epin')
   async assignEpinToOrder(
     @Param('subOrderId') subOrderId: string,
@@ -2780,8 +2604,6 @@ export class AdminCompatController {
 
     return { success: true, insertedCount: epins.count };
   }
-
-  @Public()
   @Get('points/summary')
   async getPointsSummary(@Query('userId') userId?: string) {
     if (!userId) {
@@ -2835,8 +2657,6 @@ export class AdminCompatController {
       },
     };
   }
-
-  @Public()
   @Post('points/convert')
   async convertPoints(@Body() body: any) {
     const user = await this.getPointsUser(body.userId);
@@ -2874,8 +2694,6 @@ export class AdminCompatController {
 
     return { success: true, convertedTl: requestedTl, spentPoints: pointsToSpend, balanceAfter };
   }
-
-  @Public()
   @Get('points/lootboxes')
   async getPointLootBoxes() {
     for (const preset of this.getDefaultLootBoxes()) {
@@ -2890,8 +2708,6 @@ export class AdminCompatController {
 
     return boxes.map((box: any) => this.formatLootBox(box));
   }
-
-  @Public()
   @Patch('points/lootboxes/:id')
   async updatePointLootBox(@Param('id') id: string, @Body() body: any) {
     const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
@@ -2926,8 +2742,6 @@ export class AdminCompatController {
     const updated = await this.prisma.lootBox.findUnique({ where: { id: dbBox.id }, include: { rewards: true } });
     return { success: true, lootBox: this.formatLootBox(updated) };
   }
-
-  @Public()
   @Delete('points/lootboxes/:id')
   async deletePointLootBox(@Param('id') id: string) {
     const presetNames = this.getDefaultLootBoxes().map((box) => box.name);
@@ -2953,8 +2767,6 @@ export class AdminCompatController {
       message: presetNames.includes(dbBox.name) ? 'Varsayılan kasa gizlendi.' : 'Kasa silindi.',
     };
   }
-
-  @Public()
   @Post('points/lootboxes/:id/open')
   async openPointLootBox(@Param('id') id: string, @Body() body: any) {
     if (!body.userId) {
@@ -3061,8 +2873,6 @@ export class AdminCompatController {
 
     return { success: true, reward, remaining: accessType === 'POINTS' ? null : Math.max(dailyLimit - opensToday - 1, 0) };
   }
-
-  @Public()
   @Get('orders/processing')
   async getOrdersForProcessing() {
     const subOrders = await this.prisma.subOrder.findMany({

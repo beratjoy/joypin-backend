@@ -33,17 +33,18 @@ export class RbacGuard implements CanActivate {
     }
 
     // Route'a tanımlanmış izinleri al
-    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
+    const request = context.switchToHttp().getRequest();
+
+    let requiredPermissions = this.reflector.getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       context.getHandler(),
       context.getClass(),
-    ]);
+    ]) || this.inferAdminPermissions(request);
 
     // Eğer route'a permission tanımlanmamışsa geç
     if (!requiredPermissions || requiredPermissions.length === 0) {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
     const user = request.user;
 
     if (!user?.id) {
@@ -95,5 +96,30 @@ export class RbacGuard implements CanActivate {
 
     const codes = staffProfile.role.permissions.map(rp => rp.permission.code);
     return new Set(codes);
+  }
+
+  private inferAdminPermissions(request: any): string[] | undefined {
+    const path = String(request.path || request.url || '').toLowerCase();
+    if (!path.startsWith('/api/admin')) return undefined;
+
+    const method = String(request.method || 'GET').toUpperCase();
+    const read = method === 'GET' || method === 'HEAD';
+    const rules: Array<[RegExp, string, string]> = [
+      [/\/api\/admin\/(settings|sliders|payment-methods|mail|translations|seed-|currencies)/, 'system.settings', 'system.settings'],
+      [/\/api\/admin\/(products|categories|member-types|points|vip)/, 'products.view', 'products.manage'],
+      [/\/api\/admin\/orders/, 'orders.view', 'orders.manage'],
+      [/\/api\/admin\/(stocks|stock-pools)/, 'stocks.view', 'stocks.manage_pools'],
+      [/\/api\/admin\/(users|customers|dealer-groups)/, 'users.view', 'users.manage'],
+      [/\/api\/admin\/(finance|invoices|reports)/, 'finance.view_reports', 'finance.manage_wallets'],
+      [/\/api\/admin\/(staff|security)/, 'staff.view_audit', 'staff.manage_users'],
+      [/\/api\/admin\/(logs|bot)/, 'staff.view_audit', 'system.integrations'],
+      [/\/api\/admin\/(campaigns|coupons|reviews)/, 'campaigns.view', 'campaigns.manage'],
+      [/\/api\/admin\/(referrals|affiliates)/, 'affiliates.view', 'affiliates.manage'],
+      [/\/api\/admin\/tickets/, 'users.view', 'users.manage'],
+    ];
+
+    const match = rules.find(([pattern]) => pattern.test(path));
+    if (!match) return ['system.settings'];
+    return [read ? match[1] : match[2]];
   }
 }

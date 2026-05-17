@@ -3,15 +3,14 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
+import * as crypto from 'crypto';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  // ─── Winston Structured Logging ─────────────────────────
   const isProduction = process.env.NODE_ENV === 'production';
 
   const winstonLogger = WinstonModule.createLogger({
     transports: [
-      // Console — Dev: pretty, Prod: JSON
       new winston.transports.Console({
         level: isProduction ? 'info' : 'debug',
         format: isProduction
@@ -27,18 +26,30 @@ async function bootstrap() {
               }),
             ),
       }),
-
-      ...(!isProduction
-        ? []
-        : []),
     ],
   });
 
   const app = await NestFactory.create(AppModule, {
     logger: winstonLogger,
+    rawBody: true,
   });
 
   app.setGlobalPrefix('api');
+  app.set('trust proxy', 1);
+
+  app.use((req: any, res: any, next: any) => {
+    const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+    req.id = requestId;
+    res.setHeader('X-Request-Id', requestId);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (isProduction) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+    }
+    next();
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -48,33 +59,34 @@ async function bootstrap() {
     }),
   );
 
+  const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: allowedOrigins,
     credentials: true,
   });
 
-  // ─── Swagger / OpenAPI Dokümantasyonu ───────────────────
   const swaggerConfig = new DocumentBuilder()
     .setTitle('JoyPin E-Pin Platform API')
     .setDescription(
-      `## 🎮 JoyPin — Global E-Pin & Top-Up Platform API
+      `## JoyPin - Global E-Pin & Top-Up Platform API
 
-### Mimari
-Sistem **Orchestrator (Merkezi Beyin)** mimarisi kullanır.
-Harici bot sunucularını HTTP webhook ile yönetir.
+### Architecture
+The system uses an orchestrator architecture and coordinates external bot/provider callbacks.
 
-### Yetkilendirme
-- **JWT Bearer** — Kullanıcı/Admin endpoint'leri
-- **X-Bot-Callback-Key** — Bot callback endpoint'leri (JWT gerektirmez)
+### Authorization
+- JWT Bearer for customer and admin endpoints
+- X-Bot-Callback-Key for bot callback endpoints
 
-### Bot Entegrasyon Akışı
-1. Ödeme onayı → Sistem bot'a webhook gönderir
-2. Bot \\"accepted\\" → SubOrder = PROCESSING
-3. Bot e-pin satın alır → POST /api/bot/callback
-4. Sistem e-pin'leri şifreler → SubOrder = DELIVERED
+### Bot Integration Flow
+1. Payment is approved and the system sends a webhook to the bot/provider.
+2. Accepted provider work moves the sub-order to processing.
+3. Provider delivers the e-pin/top-up through callback.
+4. The system stores delivery data and marks the sub-order delivered.
 
-### İletişim
-API entegrasyon desteği: **api-support@joypin.com**`,
+API support: api-support@joypin.com`,
     )
     .setVersion('1.0.0')
     .setContact('JoyPin API Team', 'https://joypin.com', 'api-support@joypin.com')
@@ -87,35 +99,40 @@ API entegrasyon desteği: **api-support@joypin.com**`,
       { type: 'apiKey', in: 'header', name: 'X-Bot-Callback-Key', description: 'Bot callback authentication key' },
       'BotCallbackKey',
     )
-    .addTag('Auth', 'Kayıt, giriş, OTP doğrulama')
-    .addTag('Users', 'Kullanıcı yönetimi')
-    .addTag('Products', 'Ürün kataloğu ve fiyatlandırma')
-    .addTag('Orders', 'Sipariş oluşturma, takip, iptal/iade')
-    .addTag('Wallets', 'Cüzdan bakiye ve hareket yönetimi')
-    .addTag('E-Pins', 'E-Pin stok yönetimi ve şifre çözme')
-    .addTag('Payments', 'Ödeme gateway\'leri ve webhook\'lar')
-    .addTag('Bot Integration', 'Harici bot webhook & callback endpoint\'leri')
-    .addTag('Tickets', 'Destek talepleri')
-    .addTag('Currency', 'Döviz kurları')
+    .addTag('Auth', 'Registration, login and OTP')
+    .addTag('Users', 'User management')
+    .addTag('Products', 'Catalog and pricing')
+    .addTag('Orders', 'Order creation, tracking and refunds')
+    .addTag('Wallets', 'Wallet balances and transactions')
+    .addTag('E-Pins', 'E-pin inventory and delivery')
+    .addTag('Payments', 'Payment gateways and webhooks')
+    .addTag('Bot Integration', 'External bot and provider callbacks')
+    .addTag('Tickets', 'Support tickets')
+    .addTag('Currency', 'Exchange rates')
     .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document, {
-    customSiteTitle: 'JoyPin API — Swagger UI',
-    customCss: `.swagger-ui .topbar { background-color: #1a1a2e; }`,
-    swaggerOptions: {
-      persistAuthorization: true,
-      docExpansion: 'none',
-      filter: true,
-      tagsSorter: 'alpha',
-    },
-  });
+  if (!isProduction || process.env.ENABLE_SWAGGER === 'true') {
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document, {
+      customSiteTitle: 'JoyPin API - Swagger UI',
+      customCss: `.swagger-ui .topbar { background-color: #1a1a2e; }`,
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'none',
+        filter: true,
+        tagsSorter: 'alpha',
+      },
+    });
+  }
 
   const port = process.env.PORT || process.env.APP_PORT || 4000;
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
-  logger.log(`🚀 E-Pin Platform API running on http://localhost:${port}/api`);
-  logger.log(`📚 Swagger UI: http://localhost:${port}/api/docs`);
+  logger.log(`E-Pin Platform API running on http://localhost:${port}/api`);
+  if (!isProduction || process.env.ENABLE_SWAGGER === 'true') {
+    logger.log(`Swagger UI: http://localhost:${port}/api/docs`);
+  }
 }
+
 bootstrap();
