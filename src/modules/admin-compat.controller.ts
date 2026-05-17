@@ -2264,6 +2264,7 @@ export class AdminCompatController {
       hasApiKey: Boolean(provider.encryptedApiKey),
       hasApiSecret: Boolean(provider.encryptedApiSecret),
       priority: provider.priority,
+      tenantIds: provider.tenantIds || [],
       lastBalanceSync: provider.lastBalanceSync,
     }));
   }
@@ -3930,6 +3931,7 @@ export class AdminCompatController {
       name: box.name,
       price: Number(box.price || 0),
       isPointPrice: box.isPointPrice,
+      tenantIds: box.tenantIds || [],
       accessType,
       imageColor,
       rewards: box.rewards.map((reward: any) => ({
