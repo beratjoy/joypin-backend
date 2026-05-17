@@ -408,6 +408,33 @@ export class AdminCompatController {
     return Boolean(order || payment);
   }
 
+  private async userTenantSummaries(users: any[]) {
+    const tenantIds = Array.from(new Set(users.flatMap((user: any) => [
+      ...(user.orders || []).map((order: any) => order.tenantId),
+      ...(user.paymentTransactions || []).map((payment: any) => payment.tenantId),
+    ]).filter(Boolean))) as string[];
+    const tenants = tenantIds.length
+      ? await this.prisma.$queryRawUnsafe<any[]>(
+          `SELECT id, name, "publicName" FROM "tenant_brands" WHERE id = ANY($1::text[])`,
+          tenantIds,
+        ).catch(() => [])
+      : [];
+    const tenantMap = new Map(tenants.map((tenant) => [tenant.id, tenant]));
+    return new Map(users.map((user: any) => {
+      const ids = Array.from(new Set([
+        ...(user.orders || []).map((order: any) => order.tenantId),
+        ...(user.paymentTransactions || []).map((payment: any) => payment.tenantId),
+      ].filter(Boolean))) as string[];
+      return [user.id, {
+        tenantIds: ids,
+        tenantNames: ids.map((id) => {
+          const tenant = tenantMap.get(id);
+          return tenant?.publicName || tenant?.name || id;
+        }),
+      }];
+    }));
+  }
+
   private normalizeAdminOrder(order: any) {
     const customerName = order.user
       ? `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim() || order.user.email
@@ -1514,14 +1541,20 @@ export class AdminCompatController {
     return { success: true };
   }
   @Post('customers/:id/referrals/tier')
-  async setCustomerReferralTier(@Param('id') id: string, @Body() body: any) {
+  async setCustomerReferralTier(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     const rule = await this.prisma.referralRule.findUnique({ where: { id: body.referralRuleId } });
     if (!rule) return { success: false, message: 'Kademe bulunamadı' };
     await this.prisma.userReferral.updateMany({ where: { referrerId: id }, data: { referralRuleId: rule.id } });
     return { success: true, rule };
   }
   @Post('customers/:id/referrals/mission-complete')
-  async completeCustomerReferralMission(@Param('id') id: string, @Body() body: any) {
+  async completeCustomerReferralMission(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     const mission = await this.prisma.mission.findUnique({ where: { id: body.missionId } });
     if (!mission) return { success: false, message: 'Görev bulunamadı' };
     const progress = await this.prisma.userMissionProgress.upsert({
@@ -1694,7 +1727,10 @@ export class AdminCompatController {
     return { success: true };
   }
   @Patch('customers/:id/lootbox-rights')
-  async updateCustomerLootboxRights(@Param('id') id: string, @Body() body: any) {
+  async updateCustomerLootboxRights(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
     const mode = body.mode || 'add';
     const user = await this.prisma.user.findUnique({ where: { id } });
@@ -1713,7 +1749,10 @@ export class AdminCompatController {
     return { success: true, extraLootboxRights: updated.extraLootboxRights };
   }
   @Patch('customers/:id/wallet')
-  async updateCustomerWallet(@Param('id') id: string, @Body() body: any) {
+  async updateCustomerWallet(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     const fieldMap: Record<string, { column: string; balanceField: any }> = {
       balanceCurrent: { column: 'balanceCurrent', balanceField: 'CURRENT' },
       balanceBonus: { column: 'balanceBonus', balanceField: 'BONUS' },
@@ -1774,18 +1813,23 @@ export class AdminCompatController {
     });
   }
   @Get('customers/:id')
-  async getCustomerDetail(@Param('id') id: string) {
+  async getCustomerDetail(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) return null;
     const user: any = await this.prisma.user.findUnique({
       where: { id },
       include: {
         wallet: true,
         memberType: true,
         dealerGroup: true,
+        orders: { select: { tenantId: true }, ...(this.isTenantScoped(tenantId) ? { where: { tenantId } } : {}) },
+        paymentTransactions: { select: { tenantId: true }, ...(this.isTenantScoped(tenantId) ? { where: { tenantId } } : {}) },
         _count: { select: { orders: true, paymentTransactions: true } },
       },
     } as any);
 
     if (!user) return null;
+    const tenantSummaries = await this.userTenantSummaries([user]);
+    const tenantSummary = tenantSummaries.get(user.id) || { tenantIds: [], tenantNames: [] };
 
     return {
       id: user.id,
@@ -1816,10 +1860,12 @@ export class AdminCompatController {
         balanceLavBlocked: user.wallet.balanceLottery,
       } : null,
       extraLootboxRights: Number((user as any).extraLootboxRights || 0),
+      tenantIds: tenantSummary.tenantIds,
+      tenantNames: tenantSummary.tenantNames,
       adminNotes: [],
       _count: {
-        orders: user._count?.orders || 0,
-        paymentTransactions: user._count?.paymentTransactions || 0,
+        orders: this.isTenantScoped(tenantId) ? (user.orders?.length || 0) : (user._count?.orders || 0),
+        paymentTransactions: this.isTenantScoped(tenantId) ? (user.paymentTransactions?.length || 0) : (user._count?.paymentTransactions || 0),
         adminNotes: 0,
       },
     };
@@ -2546,17 +2592,34 @@ export class AdminCompatController {
     return { success: true };
   }
   @Get('users')
-  async getUsers() {
+  async getUsers(@Query('tenantId') tenantId?: string) {
+    const scoped = this.isTenantScoped(tenantId);
     const users = await this.prisma.user.findMany({
+      where: scoped
+        ? {
+            OR: [
+              { orders: { some: { tenantId } } },
+              { paymentTransactions: { some: { tenantId } } },
+            ],
+          }
+        : {},
       include: {
         memberType: true,
         dealerGroup: true,
-        orders: true,
+        orders: {
+          select: { id: true, tenantId: true },
+          ...(scoped ? { where: { tenantId } } : {}),
+        },
+        paymentTransactions: {
+          select: { id: true, tenantId: true },
+          ...(scoped ? { where: { tenantId } } : {}),
+        },
         wallet: true,
       },
       orderBy: { createdAt: 'desc' },
       take: 500,
     });
+    const tenantSummaries = await this.userTenantSummaries(users);
 
     return users.map((user: any) => ({
       id: user.id,
@@ -2572,12 +2635,17 @@ export class AdminCompatController {
       dealerGroupName: user.dealerGroup?.name || null,
       balance: Number(user.wallet?.balanceCurrent || 0),
       orderCount: user.orders?.length || 0,
+      tenantIds: tenantSummaries.get(user.id)?.tenantIds || [],
+      tenantNames: tenantSummaries.get(user.id)?.tenantNames || [],
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt,
     }));
   }
   @Patch('users/:id')
-  async updateUser(@Param('id') id: string, @Body() body: any) {
+  async updateUser(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
     return this.prisma.user.update({
       where: { id },
       data: {

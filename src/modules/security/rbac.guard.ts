@@ -144,6 +144,18 @@ export class RbacGuard implements CanActivate {
     if (!allowedTenantIds.includes(tenantId)) {
       throw new ForbiddenException('Bu site icin yetkiniz yok');
     }
+
+    const method = String(request.method || 'GET').toUpperCase();
+    if (!['GET', 'HEAD'].includes(method) && request.body && Object.prototype.hasOwnProperty.call(request.body, 'tenantIds')) {
+      const bodyTenantIds = this.normalizeTenantIds(request.body.tenantIds);
+      if (bodyTenantIds.length === 0) {
+        throw new ForbiddenException('Site kapsami zorunlu');
+      }
+      const forbiddenTenantId = bodyTenantIds.find((id) => !allowedTenantIds.includes(id));
+      if (forbiddenTenantId) {
+        throw new ForbiddenException('Bu site icin yetkiniz yok');
+      }
+    }
   }
 
   private inferAdminPermissions(request: any): string[] | undefined {

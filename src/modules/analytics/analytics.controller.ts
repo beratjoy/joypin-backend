@@ -22,9 +22,9 @@ export class AnalyticsController {
    * Ana analitik özet — 5 dk cache
    */
   @Get('summary')
-  async getSummary(@Query('refresh') refresh?: string) {
+  async getSummary(@Query('refresh') refresh?: string, @Query('tenantId') tenantId?: string) {
     const forceRefresh = refresh === 'true';
-    const summary = await this.analytics.getSummary(forceRefresh);
+    const summary = await this.analytics.getSummary(forceRefresh, tenantId);
     return { success: true, data: summary };
   }
 
@@ -43,9 +43,9 @@ export class AnalyticsController {
    * Günlük ciro + kar grafiği (son N gün)
    */
   @Get('chart/daily')
-  async getDailyChart(@Query('days') days?: string) {
+  async getDailyChart(@Query('days') days?: string, @Query('tenantId') tenantId?: string) {
     const numDays = Math.min(Number(days) || 30, 90);
-    const chartData = await this.analytics.getDailyChartData(numDays);
+    const chartData = await this.analytics.getDailyChartData(numDays, tenantId);
     return { success: true, data: chartData };
   }
 
@@ -53,8 +53,8 @@ export class AnalyticsController {
    * Kategori bazlı satış dağılımı (Pie chart)
    */
   @Get('chart/categories')
-  async getCategoryChart() {
-    const data = await this.analytics.getCategoryDistribution();
+  async getCategoryChart(@Query('tenantId') tenantId?: string) {
+    const data = await this.analytics.getCategoryDistribution(tenantId);
     return { success: true, data };
   }
 

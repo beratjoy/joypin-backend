@@ -30,10 +30,7 @@ export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
 
   // Basit bellek önbelleği
-  private cache: { data: AnalyticsSummary | null; expiresAt: number } = {
-    data: null,
-    expiresAt: 0,
-  };
+  private cache = new Map<string, { data: AnalyticsSummary; expiresAt: number }>();
   private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 dakika
 
   constructor(
@@ -44,21 +41,24 @@ export class AnalyticsService {
   /**
    * Ana analitik özet verisi — önbellekli
    */
-  async getSummary(forceRefresh = false): Promise<AnalyticsSummary> {
+  async getSummary(forceRefresh = false, tenantId?: string): Promise<AnalyticsSummary> {
+    const scopedTenantId = tenantId && tenantId !== 'all' ? tenantId : undefined;
+    const cacheKey = scopedTenantId || 'global';
     // Cache kontrolü
-    if (!forceRefresh && this.cache.data && Date.now() < this.cache.expiresAt) {
-      return this.cache.data;
+    const cached = this.cache.get(cacheKey);
+    if (!forceRefresh && cached && Date.now() < cached.expiresAt) {
+      return cached.data;
     }
 
-    this.logger.log('Computing analytics summary...');
+    this.logger.log(`Computing analytics summary${scopedTenantId ? ` for tenant ${scopedTenantId}` : ''}...`);
     const now = new Date();
 
     const [finance, topProducts, topMemberTypes, lowStock, users] = await Promise.all([
-      this.computeFinance(now),
-      this.computeTopProducts(now),
-      this.computeTopMemberTypes(now),
-      this.computeLowStock(),
-      this.computeUserMetrics(now),
+      this.computeFinance(now, scopedTenantId),
+      this.computeTopProducts(now, scopedTenantId),
+      this.computeTopMemberTypes(now, scopedTenantId),
+      this.computeLowStock(scopedTenantId),
+      this.computeUserMetrics(now, scopedTenantId),
     ]);
 
     const summary: AnalyticsSummary = {
@@ -71,33 +71,34 @@ export class AnalyticsService {
     };
 
     // Önbelleğe al
-    this.cache = { data: summary, expiresAt: Date.now() + this.CACHE_TTL_MS };
+    this.cache.set(cacheKey, { data: summary, expiresAt: Date.now() + this.CACHE_TTL_MS });
     return summary;
   }
 
   // ─────────────────────────────────────────────────────────
   // FİNANS — Günlük / Haftalık / Aylık
   // ─────────────────────────────────────────────────────────
-  private async computeFinance(now: Date) {
+  private async computeFinance(now: Date, tenantId?: string) {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [today, week, month] = await Promise.all([
-      this.getFinancePeriod(todayStart, now),
-      this.getFinancePeriod(weekStart, now),
-      this.getFinancePeriod(monthStart, now),
+      this.getFinancePeriod(todayStart, now, tenantId),
+      this.getFinancePeriod(weekStart, now, tenantId),
+      this.getFinancePeriod(monthStart, now, tenantId),
     ]);
 
     return { today, week, month };
   }
 
-  private async getFinancePeriod(from: Date, to: Date) {
+  private async getFinancePeriod(from: Date, to: Date, tenantId?: string) {
     // Sub-order bazlı hesaplama (totalPrice = satış, unitCost * quantity = maliyet)
     const subOrders = await this.prisma.subOrder.findMany({
       where: {
         status: 'DELIVERED',
         createdAt: { gte: from, lte: to },
+        ...(tenantId ? { parentOrder: { tenantId } } : {}),
       },
       select: {
         totalPrice: true,
@@ -124,7 +125,7 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // EN ÇOK SATAN İLK 5 ÜRÜN (son 30 gün)
   // ─────────────────────────────────────────────────────────
-  private async computeTopProducts(now: Date) {
+  private async computeTopProducts(now: Date, tenantId?: string) {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const result = await this.prisma.subOrder.groupBy({
@@ -132,6 +133,7 @@ export class AnalyticsService {
       where: {
         status: 'DELIVERED',
         createdAt: { gte: thirtyDaysAgo },
+        ...(tenantId ? { parentOrder: { tenantId } } : {}),
       },
       _sum: { totalPrice: true, quantity: true },
       orderBy: { _sum: { quantity: 'desc' } },
@@ -157,7 +159,7 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // EN KARLI ÜYE TİPİ (son 30 gün)
   // ─────────────────────────────────────────────────────────
-  private async computeTopMemberTypes(now: Date) {
+  private async computeTopMemberTypes(now: Date, tenantId?: string) {
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     // Siparişleri kullanıcı üzerinden member type'a bağla
@@ -166,6 +168,7 @@ export class AnalyticsService {
         status: 'COMPLETED',
         createdAt: { gte: thirtyDaysAgo },
         userId: { not: null },
+        ...(tenantId ? { tenantId } : {}),
       },
       include: {
         user: {
@@ -199,7 +202,7 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // KRİTİK STOK — 10 adedin altına düşenler
   // ─────────────────────────────────────────────────────────
-  private async computeLowStock() {
+  private async computeLowStock(tenantId?: string) {
     const products = await this.prisma.product.findMany({
       where: {
         isActive: true,
@@ -211,12 +214,17 @@ export class AnalyticsService {
         name: true,
         stockCount: true,
         lowStockThreshold: true,
+        tenantIds: true,
       },
       orderBy: { stockCount: 'asc' },
-      take: 20,
+      take: tenantId ? 100 : 20,
     });
 
-    return products.map(p => ({
+    return products.filter((product: any) => {
+      if (!tenantId) return true;
+      const tenantIds = Array.isArray(product.tenantIds) ? product.tenantIds.map(String).filter(Boolean) : [];
+      return tenantIds.length === 0 || tenantIds.includes(tenantId);
+    }).slice(0, 20).map(p => ({
       id: p.id,
       name: p.name,
       stockCount: p.stockCount,
@@ -227,22 +235,32 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // KULLANICI METRİKLERİ
   // ─────────────────────────────────────────────────────────
-  private async computeUserMetrics(now: Date) {
+  private async computeUserMetrics(now: Date, tenantId?: string) {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
+    const scopedUserWhere = tenantId
+      ? {
+          OR: [
+            { orders: { some: { tenantId } } },
+            { paymentTransactions: { some: { tenantId } } },
+          ],
+        }
+      : {};
+
     const [todayNew, todayInactive, totalActive] = await Promise.all([
       this.prisma.user.count({
-        where: { createdAt: { gte: todayStart } },
+        where: { createdAt: { gte: todayStart }, ...scopedUserWhere },
       }),
       this.prisma.user.count({
         where: {
           status: 'ACTIVE',
           lastLoginAt: { lte: thirtyDaysAgo },
+          ...scopedUserWhere,
         },
       }),
       this.prisma.user.count({
-        where: { status: 'ACTIVE' },
+        where: { status: 'ACTIVE', ...scopedUserWhere },
       }),
     ]);
 
@@ -252,7 +270,8 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // CHART VERİSİ — Son 30 gün günlük ciro + kar
   // ─────────────────────────────────────────────────────────
-  async getDailyChartData(days = 30): Promise<{ date: string; revenue: number; profit: number }[]> {
+  async getDailyChartData(days = 30, tenantId?: string): Promise<{ date: string; revenue: number; profit: number }[]> {
+    const scopedTenantId = tenantId && tenantId !== 'all' ? tenantId : undefined;
     const now = new Date();
     const results: { date: string; revenue: number; profit: number }[] = [];
 
@@ -264,6 +283,7 @@ export class AnalyticsService {
         where: {
           status: 'DELIVERED',
           createdAt: { gte: dayStart, lt: dayEnd },
+          ...(scopedTenantId ? { parentOrder: { tenantId: scopedTenantId } } : {}),
         },
         select: { totalPrice: true, unitCost: true, quantity: true },
       });
@@ -288,13 +308,15 @@ export class AnalyticsService {
   // ─────────────────────────────────────────────────────────
   // KATEGORİ BAZLI SATIŞ DAĞILIMI (Pie chart)
   // ─────────────────────────────────────────────────────────
-  async getCategoryDistribution(): Promise<{ category: string; revenue: number; count: number }[]> {
+  async getCategoryDistribution(tenantId?: string): Promise<{ category: string; revenue: number; count: number }[]> {
+    const scopedTenantId = tenantId && tenantId !== 'all' ? tenantId : undefined;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
     const subOrders = await this.prisma.subOrder.findMany({
       where: {
         status: 'DELIVERED',
         createdAt: { gte: thirtyDaysAgo },
+        ...(scopedTenantId ? { parentOrder: { tenantId: scopedTenantId } } : {}),
       },
       select: {
         totalPrice: true,

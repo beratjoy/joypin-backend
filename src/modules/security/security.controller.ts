@@ -259,6 +259,19 @@ export class SecurityController {
     if (body.password && body.password.length < 8) {
       throw new BadRequestException('Personel sifresi en az 8 karakter olmalidir.');
     }
+    const existingProfile = await this.prisma.staffProfile.findUnique({
+      where: { id },
+      select: { id: true, tenantIds: true },
+    });
+    if (!existingProfile) {
+      throw new BadRequestException('Personel bulunamadi.');
+    }
+    if (tenantId && tenantId !== 'all') {
+      const existingTenantIds = this.normalizeTenantIds((existingProfile as any).tenantIds);
+      if (existingTenantIds.length === 0 || !existingTenantIds.includes(tenantId)) {
+        throw new BadRequestException('Personel bu site kapsaminda bulunamadi.');
+      }
+    }
 
     const profile = await this.prisma.staffProfile.update({
       where: { id },
