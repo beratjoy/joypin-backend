@@ -269,7 +269,7 @@ export class AdminCompatController {
         fixedFee: body.fixedFee !== undefined ? Number(body.fixedFee || 0) : undefined,
         sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder || 0) : undefined,
         isActive: body.isActive,
-        tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
+        tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
       },
     });
     return { success: true, paymentMethod };
@@ -2646,7 +2646,7 @@ export class AdminCompatController {
           isActive: body.isActive,
           sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder || 0) : undefined,
           allowedCountries: body.allowedCountries,
-          tenantIds: body.tenantIds !== undefined || tenantId ? scopedTenantIds : undefined,
+          tenantIds: body.tenantIds !== undefined ? scopedTenantIds : undefined,
           iconUrl: body.imageUrl,
           merchantImageUrl: body.marketingImage,
           sliderImageUrl: body.sliderImage,
