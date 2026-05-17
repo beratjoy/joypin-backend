@@ -26,6 +26,35 @@ export class StorefrontCompatController {
     return cdnBase && pathname.startsWith('/') ? `${cdnBase}${pathname}` : pathname;
   }
 
+  private knownAssetHosts() {
+    const configured = (process.env.CDN_REWRITE_HOSTS || '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+    return new Set([
+      'epin365.com',
+      'www.epin365.com',
+      'cdn.epin365.com',
+      'joypin.com',
+      'www.joypin.com',
+      'cdn.joypin.com',
+      ...configured,
+    ]);
+  }
+
+  private normalizeStoredAssetUrl(url: string) {
+    try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.toLowerCase();
+      const isKnownHost = this.knownAssetHosts().has(hostname);
+      const isAssetPath = /^\/(uploads|images)\//i.test(parsed.pathname);
+      if (isKnownHost && isAssetPath) return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   private normalizeImageUrl(url?: string | null, slug?: string | null) {
     const value = (url || '').trim();
     const knownSlug = (slug || '').toLowerCase();
@@ -47,14 +76,8 @@ export class StorefrontCompatController {
     };
 
     if (value.startsWith('/')) return this.toCdnUrl(value);
-    if (/^https?:\/\/(www\.)?epin365\.com\/(uploads|images)\//i.test(value)) {
-      const parsed = new URL(value);
-      return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
-    }
-    if (/^https?:\/\/cdn\.epin365\.com\/(uploads|images)\//i.test(value)) {
-      const parsed = new URL(value);
-      return this.toCdnUrl(`${parsed.pathname}${parsed.search}`);
-    }
+    const normalizedAssetUrl = this.normalizeStoredAssetUrl(value);
+    if (normalizedAssetUrl) return normalizedAssetUrl;
     if (value.includes('cdn.joypin.com')) {
       const fileSlug = value.split('/').pop()?.replace(/\.(webp|png|jpe?g|avif)$/i, '').toLowerCase();
       return this.toCdnUrl(localGameImages[fileSlug || ''] || localGameImages[knownSlug] || this.fallbackImage);
