@@ -86,6 +86,34 @@ export class AdminCompatController {
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
   }
 
+  private isTenantScoped(tenantId?: string) {
+    return Boolean(tenantId && tenantId !== 'all');
+  }
+
+  private reviewVisibleForTenant(review: any, tenantId?: string) {
+    if (!this.isTenantScoped(tenantId)) return true;
+    return review.order?.tenantId === tenantId
+      || this.visibleForTenant(review.product || {}, tenantId)
+      || this.visibleForTenant(review.category || {}, tenantId);
+  }
+
+  private async tenantInvoiceWhere(status?: string, tenantId?: string) {
+    const where: any = status ? { status: status as any } : {};
+    if (!this.isTenantScoped(tenantId)) return where;
+
+    const orderIds = await this.prisma.order.findMany({
+      where: { tenantId },
+      select: { id: true },
+      take: 5000,
+    });
+    where.items = { some: { orderId: { in: orderIds.map((order) => order.id) } } };
+    return where;
+  }
+
+  private assertReviewTenant(review: any, tenantId?: string) {
+    if (!this.reviewVisibleForTenant(review, tenantId)) throw new NotFoundException('Kayıt bulunamadı');
+  }
+
   @Get('tenants')
   async listTenants() {
     await this.ensureDefaultTenant();
@@ -759,7 +787,12 @@ export class AdminCompatController {
     };
   }
   @Get('reviews')
-  async listReviews(@Query('status') status?: string, @Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
+  async listReviews(
+    @Query('status') status?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('productId') productId?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
     const reviews = await this.prisma.productReview.findMany({
       where: {
         ...(status ? { status: status as any } : {}),
@@ -767,17 +800,21 @@ export class AdminCompatController {
         ...(productId ? { productId } : {}),
       },
       include: {
-        product: { select: { id: true, name: true } },
-        category: { select: { id: true, name: true } },
-        order: { select: { id: true, orderNumber: true } },
+        product: { select: { id: true, name: true, tenantIds: true } },
+        category: { select: { id: true, name: true, tenantIds: true } },
+        order: { select: { id: true, orderNumber: true, tenantId: true } },
       },
       orderBy: { reviewedAt: 'desc' },
       take: 100,
     });
-    return { reviews: reviews.map((review: any) => this.formatReview(review)) };
+    return { reviews: reviews.filter((review: any) => this.reviewVisibleForTenant(review, tenantId)).map((review: any) => this.formatReview(review)) };
   }
   @Get('reviews/public')
-  async listPublicReviews(@Query('categoryId') categoryId?: string, @Query('productId') productId?: string) {
+  async listPublicReviews(
+    @Query('categoryId') categoryId?: string,
+    @Query('productId') productId?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
     const reviews = await this.prisma.productReview.findMany({
       where: {
         status: 'APPROVED' as any,
@@ -785,14 +822,14 @@ export class AdminCompatController {
         ...(productId ? { productId } : {}),
       },
       include: {
-        product: { select: { id: true, name: true } },
-        category: { select: { id: true, name: true } },
-        order: { select: { id: true, orderNumber: true } },
+        product: { select: { id: true, name: true, tenantIds: true } },
+        category: { select: { id: true, name: true, tenantIds: true } },
+        order: { select: { id: true, orderNumber: true, tenantId: true } },
       },
       orderBy: [{ isFeatured: 'desc' }, { reviewedAt: 'desc' }],
       take: 24,
     });
-    return { reviews: reviews.map((review: any) => this.formatReview(review)) };
+    return { reviews: reviews.filter((review: any) => this.reviewVisibleForTenant(review, tenantId)).map((review: any) => this.formatReview(review)) };
   }
   @Post('reviews')
   async createReview(@Body() body: any) {
@@ -830,7 +867,17 @@ export class AdminCompatController {
     return { success: true, review: this.formatReview(review) };
   }
   @Patch('reviews/:id')
-  async updateReview(@Param('id') id: string, @Body() body: any) {
+  async updateReview(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.productReview.findUnique({
+      where: { id },
+      include: {
+        product: { select: { tenantIds: true } },
+        category: { select: { tenantIds: true } },
+        order: { select: { tenantId: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Yorum bulunamadı');
+    this.assertReviewTenant(existing, tenantId);
     const review = await this.prisma.productReview.update({
       where: { id },
       data: {
@@ -844,21 +891,32 @@ export class AdminCompatController {
         approvedAt: body.status === 'APPROVED' ? new Date() : undefined,
       } as any,
       include: {
-        product: { select: { id: true, name: true } },
-        category: { select: { id: true, name: true } },
-        order: { select: { id: true, orderNumber: true } },
+        product: { select: { id: true, name: true, tenantIds: true } },
+        category: { select: { id: true, name: true, tenantIds: true } },
+        order: { select: { id: true, orderNumber: true, tenantId: true } },
       },
     });
     return { success: true, review: this.formatReview(review) };
   }
   @Delete('reviews/:id')
-  async deleteReview(@Param('id') id: string) {
+  async deleteReview(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.productReview.findUnique({
+      where: { id },
+      include: {
+        product: { select: { tenantIds: true } },
+        category: { select: { tenantIds: true } },
+        order: { select: { tenantId: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Yorum bulunamadı');
+    this.assertReviewTenant(existing, tenantId);
     await this.prisma.productReview.delete({ where: { id } });
     return { success: true };
   }
   @Get('tickets')
-  async getTickets() {
+  async getTickets(@Query('tenantId') tenantId?: string) {
     const tickets = await this.prisma.ticket.findMany({
+      where: this.isTenantScoped(tenantId) ? { tenantId } : {},
       include: { messages: { orderBy: { createdAt: 'asc' } } },
       orderBy: { updatedAt: 'desc' },
       take: 100,
@@ -896,14 +954,15 @@ export class AdminCompatController {
     });
   }
   @Get('tickets/:id')
-  async getTicket(@Param('id') id: string) {
-    const tickets = await this.getTickets();
+  async getTicket(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const tickets = await this.getTickets(tenantId);
     return tickets.find((ticket: any) => ticket.id === id) || null;
   }
   @Post('tickets/:id/reply')
-  async replyTicket(@Param('id') id: string, @Body() body: any) {
+  async replyTicket(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const ticket = await this.prisma.ticket.findUnique({ where: { id } });
     if (!ticket) return { success: false, error: 'Ticket bulunamadı' };
+    if (this.isTenantScoped(tenantId) && ticket.tenantId !== tenantId) return { success: false, error: 'Ticket bulunamadı' };
 
     await this.prisma.$transaction([
       this.prisma.ticketMessage.create({
@@ -922,7 +981,10 @@ export class AdminCompatController {
     return { success: true };
   }
   @Patch('tickets/:id')
-  async updateTicket(@Param('id') id: string, @Body() body: any) {
+  async updateTicket(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const ticket = await this.prisma.ticket.findUnique({ where: { id } });
+    if (!ticket) throw new NotFoundException('Ticket bulunamadı');
+    if (this.isTenantScoped(tenantId) && ticket.tenantId !== tenantId) throw new NotFoundException('Ticket bulunamadı');
     const data: any = {};
     if (body.status) data.status = body.status;
     if (body.assignedToId !== undefined) data.assignedToId = body.assignedToId;
@@ -987,7 +1049,7 @@ export class AdminCompatController {
       pendingPayments,
       pendingBalanceDeposits,
       pendingWithdrawals,
-      pendingReviews,
+      pendingReviewsRaw,
       pendingTickets,
     ] = await Promise.all([
       this.prisma.order.count({
@@ -1010,13 +1072,26 @@ export class AdminCompatController {
       this.prisma.withdrawalRequest.count({
         where: { status: { in: ['PENDING', 'UNDER_REVIEW'] as any } },
       }),
-      this.prisma.productReview.count({
-        where: { status: 'PENDING' as any },
-      }),
+      this.isTenantScoped(tenantId)
+        ? this.prisma.productReview.findMany({
+            where: { status: 'PENDING' as any },
+            include: {
+              product: { select: { tenantIds: true } },
+              category: { select: { tenantIds: true } },
+              order: { select: { tenantId: true } },
+            },
+            take: 500,
+          })
+        : this.prisma.productReview.count({
+            where: { status: 'PENDING' as any },
+          }),
       this.prisma.ticket.count({
         where: { ...(tenantId && tenantId !== 'all' ? { tenantId } : {}), status: { in: ['OPEN', 'AWAITING_REPLY'] as any } },
       }),
     ]);
+    const pendingReviews = Array.isArray(pendingReviewsRaw)
+      ? pendingReviewsRaw.filter((review: any) => this.reviewVisibleForTenant(review, tenantId)).length
+      : pendingReviewsRaw;
 
     return {
       pendingOrders,
@@ -1425,11 +1500,12 @@ export class AdminCompatController {
     return { success: true, progress };
   }
   @Get('finance/deposits')
-  async getDeposits(@Query('status') status?: string, @Query('limit') limit?: string) {
+  async getDeposits(@Query('status') status?: string, @Query('limit') limit?: string, @Query('tenantId') tenantId?: string) {
     const take = Math.min(Number(limit || 100), 200);
     const deposits = await this.prisma.paymentTransaction.findMany({
       where: {
         gateway: 'BANK_TRANSFER' as any,
+        ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
         ...(status ? { status: status.toUpperCase() as any } : {}),
       },
       include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
@@ -1453,9 +1529,10 @@ export class AdminCompatController {
     };
   }
   @Post('finance/deposits/:id/approve')
-  async approveDeposit(@Param('id') id: string) {
+  async approveDeposit(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
     const deposit = await this.prisma.paymentTransaction.findUnique({ where: { id } });
     if (!deposit) return { success: false, message: 'Talep bulunamadı' };
+    if (this.isTenantScoped(tenantId) && deposit.tenantId !== tenantId) return { success: false, message: 'Talep bulunamadı' };
     if (deposit.status === 'COMPLETED') return { success: true };
 
     const wallet = await this.prisma.wallet.upsert({
@@ -1489,7 +1566,10 @@ export class AdminCompatController {
     return { success: true };
   }
   @Post('finance/deposits/:id/reject')
-  async rejectDeposit(@Param('id') id: string, @Body() body: any) {
+  async rejectDeposit(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const deposit = await this.prisma.paymentTransaction.findUnique({ where: { id } });
+    if (!deposit) return { success: false, message: 'Talep bulunamadı' };
+    if (this.isTenantScoped(tenantId) && deposit.tenantId !== tenantId) return { success: false, message: 'Talep bulunamadı' };
     await this.prisma.paymentTransaction.update({
       where: { id },
       data: { status: 'FAILED', failureReason: body.reason || 'Admin tarafından reddedildi' },
@@ -1682,8 +1762,8 @@ export class AdminCompatController {
     };
   }
   @Get('invoices')
-  async getInvoices(@Query('status') status?: string) {
-    const where = status ? { status: status as any } : {};
+  async getInvoices(@Query('status') status?: string, @Query('tenantId') tenantId?: string) {
+    const where = await this.tenantInvoiceWhere(status, tenantId);
     const [invoices, total] = await Promise.all([
       this.prisma.invoice.findMany({
         where,
@@ -3293,9 +3373,12 @@ export class AdminCompatController {
     return { success: true, reward, remaining: accessType === 'POINTS' ? null : Math.max(dailyLimit - opensToday - 1, 0) };
   }
   @Get('orders/processing')
-  async getOrdersForProcessing() {
+  async getOrdersForProcessing(@Query('tenantId') tenantId?: string) {
     const subOrders = await this.prisma.subOrder.findMany({
-      where: { status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any } },
+      where: {
+        status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any },
+        ...(this.isTenantScoped(tenantId) ? { parentOrder: { tenantId } } : {}),
+      },
       include: { parentOrder: { include: { user: true } }, product: true, items: true, botProvider: true },
       orderBy: { createdAt: 'desc' },
     });
