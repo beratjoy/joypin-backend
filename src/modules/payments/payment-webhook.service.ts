@@ -46,13 +46,13 @@ export class PaymentWebhookService {
     });
 
     if (!transaction.orderId) {
-      await this.processWalletTopup(transaction.userId, payload.amount, payload.gateway);
+      await this.processWalletTopup(transaction.userId, payload.amount, payload.gateway, transaction.tenantId);
     } else {
       await this.processOrderPayment(transaction.orderId, payload.gateway);
     }
   }
 
-  private async processWalletTopup(userId: string, amount: number, gateway: string): Promise<void> {
+  private async processWalletTopup(userId: string, amount: number, gateway: string, tenantId?: string | null): Promise<void> {
     this.logger.log(`[Webhook] Wallet topup: User ${userId}, Amount: ${amount}`);
 
     await this.prisma.$transaction(async (tx) => {
@@ -64,6 +64,7 @@ export class PaymentWebhookService {
       await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: tenantId || undefined,
           type: 'CREDIT',
           balanceField: 'CURRENT',
           amount,

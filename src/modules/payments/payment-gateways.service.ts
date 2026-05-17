@@ -362,6 +362,7 @@ export class PaymentGatewaysService {
         wallet: {
           connect: { userId: tx.userId },
         },
+        tenantId: tx.tenantId || undefined,
         type: 'CREDIT',
         balanceField: 'CURRENT',
         amount: tx.netAmount,

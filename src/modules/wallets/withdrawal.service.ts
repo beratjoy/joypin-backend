@@ -121,6 +121,7 @@ export class WithdrawalService {
     await this.prisma.walletTransaction.create({
       data: {
         walletId: wallet.id,
+        tenantId: withdrawal.tenantId || undefined,
         type: 'FREEZE',
         balanceField: 'WITHDRAWABLE',
         amount: totalDeduction,
@@ -344,6 +345,7 @@ export class WithdrawalService {
       await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: withdrawal.tenantId || undefined,
           type: 'UNFREEZE',
           balanceField: 'WITHDRAWABLE',
           amount: totalAmount,
@@ -432,6 +434,7 @@ export class WithdrawalService {
       await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: withdrawal.tenantId || undefined,
           type: 'DEBIT',
           balanceField: 'FROZEN',
           amount: totalAmount,

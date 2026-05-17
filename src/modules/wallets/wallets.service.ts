@@ -61,6 +61,7 @@ export class WalletsService {
     userId: string;
     balanceField: BalanceField;
     amount: number;
+    tenantId?: string | null;
     description?: string;
     orderId?: string;
     referenceType?: string;
@@ -86,6 +87,7 @@ export class WalletsService {
       return tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: params.tenantId || undefined,
           type: 'CREDIT',
           balanceField: params.balanceField,
           amount: params.amount,
@@ -108,6 +110,7 @@ export class WalletsService {
     userId: string;
     balanceField: BalanceField;
     amount: number;
+    tenantId?: string | null;
     description?: string;
     orderId?: string;
     referenceType?: string;
@@ -147,6 +150,7 @@ export class WalletsService {
       return tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: params.tenantId || undefined,
           type: 'DEBIT',
           balanceField: params.balanceField,
           amount: params.amount,
@@ -169,6 +173,7 @@ export class WalletsService {
     fromField: BalanceField;
     toField: BalanceField;
     amount: number;
+    tenantId?: string | null;
     description?: string;
     performedById?: string;
   }) {
@@ -176,6 +181,7 @@ export class WalletsService {
       userId: params.userId,
       balanceField: params.fromField,
       amount: params.amount,
+      tenantId: params.tenantId,
       description: `Transfer → ${params.toField}: ${params.description || ''}`,
       referenceType: 'transfer',
       performedById: params.performedById,
@@ -185,6 +191,7 @@ export class WalletsService {
       userId: params.userId,
       balanceField: params.toField,
       amount: params.amount,
+      tenantId: params.tenantId,
       description: `Transfer ← ${params.fromField}: ${params.description || ''}`,
       referenceType: 'transfer',
       performedById: params.performedById,
@@ -194,9 +201,9 @@ export class WalletsService {
   /**
    * Cüzdan işlem geçmişi.
    */
-  async getTransactions(walletId: string, limit = 50, offset = 0) {
+  async getTransactions(walletId: string, limit = 50, offset = 0, tenantId?: string | null) {
     return this.prisma.walletTransaction.findMany({
-      where: { walletId },
+      where: { walletId, ...(tenantId ? { tenantId } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,

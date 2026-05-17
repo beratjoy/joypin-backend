@@ -107,6 +107,7 @@ export class AffiliateService {
   async approveCommission(transactionId: string, adminUserId: string): Promise<void> {
     const tx = await this.prisma.affiliateTransaction.findUnique({
       where: { id: transactionId },
+      include: { order: { select: { tenantId: true } } },
     });
 
     if (!tx || tx.status !== 'PENDING') {
@@ -136,6 +137,7 @@ export class AffiliateService {
       this.prisma.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: tx.order?.tenantId || undefined,
           type: 'CREDIT',
           balanceField: 'COMMISSION',
           amount: tx.commissionAmount,

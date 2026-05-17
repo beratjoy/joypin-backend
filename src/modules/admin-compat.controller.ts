@@ -542,6 +542,7 @@ export class AdminCompatController {
     await tx.walletTransaction.create({
       data: {
         walletId: wallet.id,
+        tenantId: order.tenantId || undefined,
         type: 'CREDIT' as any,
         balanceField: 'CURRENT' as any,
         amount: refundAmount,
@@ -1818,6 +1819,7 @@ export class AdminCompatController {
     const walletTx = await this.prisma.walletTransaction.create({
       data: {
         walletId: wallet.id,
+        tenantId: deposit.tenantId || undefined,
         type: 'CREDIT',
         balanceField: 'CURRENT',
         amount,
@@ -1856,6 +1858,7 @@ export class AdminCompatController {
       where: this.isTenantScoped(tenantId)
         ? {
             OR: [
+              { tenantId },
               { order: { is: { tenantId } } },
               { paymentTx: { is: { tenantId } } },
             ],
@@ -1870,7 +1873,7 @@ export class AdminCompatController {
       orderBy: { createdAt: 'desc' },
       take,
     });
-    const tenantIds = Array.from(new Set(transactions.map((tx: any) => tx.order?.tenantId || tx.paymentTx?.tenantId).filter(Boolean))) as string[];
+    const tenantIds = Array.from(new Set(transactions.map((tx: any) => tx.tenantId || tx.order?.tenantId || tx.paymentTx?.tenantId).filter(Boolean))) as string[];
     const tenants = tenantIds.length
       ? await this.prisma.$queryRawUnsafe<any[]>(
           `SELECT id, name, "publicName" FROM "tenant_brands" WHERE id = ANY($1::text[])`,
@@ -1882,7 +1885,7 @@ export class AdminCompatController {
     return transactions.map((tx: any) => {
       const amount = Number(tx.amount || 0);
       const balanceAfter = Number(tx.balanceAfter || 0);
-      const txTenantId = tx.order?.tenantId || tx.paymentTx?.tenantId || null;
+      const txTenantId = tx.tenantId || tx.order?.tenantId || tx.paymentTx?.tenantId || null;
       const txTenant = txTenantId ? tenantMap.get(txTenantId) : null;
       return {
         id: tx.id,
@@ -1921,6 +1924,7 @@ export class AdminCompatController {
     await this.prisma.walletTransaction.create({
       data: {
         walletId: wallet.id,
+        tenantId: this.isTenantScoped(tenantId) ? tenantId : undefined,
         type: body.type === 'debit' ? 'DEBIT' : 'CREDIT',
         balanceField: 'CURRENT',
         amount,
@@ -1997,6 +2001,7 @@ export class AdminCompatController {
         await tx.walletTransaction.create({
           data: {
             walletId: wallet.id,
+            tenantId: this.isTenantScoped(tenantId) ? tenantId : undefined,
             type: txType,
             balanceField: selected.balanceField,
             amount: txAmount,
@@ -3508,7 +3513,7 @@ export class AdminCompatController {
     };
   }
   @Post('points/convert')
-  async convertPoints(@Body() body: any) {
+  async convertPoints(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const user = await this.getPointsUser(body.userId);
     const requestedTl = Math.floor(Number(body.amountTl || Math.floor(user.pointsBalance / 100)));
     if (requestedTl < 100) return { success: false, message: 'En az 100 TL puan dönüşümü yapılabilir' };
@@ -3532,6 +3537,7 @@ export class AdminCompatController {
     await this.prisma.walletTransaction.create({
       data: {
         walletId: wallet.id,
+        tenantId: this.isTenantScoped(tenantId) ? tenantId : undefined,
         type: 'CREDIT',
         balanceField: 'CURRENT',
         amount: requestedTl,
@@ -3621,15 +3627,16 @@ export class AdminCompatController {
     };
   }
   @Post('points/lootboxes/:id/open')
-  async openPointLootBox(@Param('id') id: string, @Body() body: any) {
+  async openPointLootBox(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     if (!body.userId) {
       return { success: false, requiresLogin: true, message: 'Çark çevirmek için üye girişi yapmalısınız.' };
     }
     const user = await this.getPointsUser(body.userId);
     const dbBox = ['daily-free', 'vip-exclusive', 'points-case'].includes(id)
-      ? await this.getOrCreatePresetLootBox(id)
+      ? await this.getOrCreatePresetLootBox(id, tenantId)
       : await this.prisma.lootBox.findUnique({ where: { id }, include: { rewards: true } });
     if (!dbBox) return { success: false, message: 'Kasa bulunamadı' };
+    if (!this.visibleForTenant(dbBox, tenantId)) return { success: false, message: 'Kasa bulunamadı' };
     const boxMeta = this.formatLootBox(dbBox);
     const accessType = boxMeta.accessType;
 
@@ -3691,6 +3698,7 @@ export class AdminCompatController {
       await this.prisma.walletTransaction.create({
         data: {
           walletId: wallet.id,
+          tenantId: this.isTenantScoped(tenantId) ? tenantId : this.normalizeTenantIds((dbBox as any).tenantIds)[0] || undefined,
           type: 'CREDIT',
           balanceField: 'CURRENT',
           amount: reward.value,

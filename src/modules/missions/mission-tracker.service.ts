@@ -15,6 +15,12 @@ export class MissionTrackerService {
 
   constructor(private prisma: PrismaService) {}
 
+  private normalizeTenantIds(value: unknown): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((id) => String(id).trim()).filter(Boolean).filter((id) => id !== 'all');
+  }
+
   /**
    * Yeni üye kayıt olduğunda referrer'ın REFERRAL_COUNT görevlerini güncelle
    */
@@ -90,6 +96,7 @@ export class MissionTrackerService {
           await this.prisma.walletTransaction.create({
             data: {
               walletId: wallet.id,
+              tenantId: this.normalizeTenantIds((mission as any).tenantIds)[0] || undefined,
               type: 'CREDIT',
               balanceField: 'BONUS',
               amount: mission.rewardAmount,

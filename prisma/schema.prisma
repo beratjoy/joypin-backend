@@ -949,6 +949,7 @@ model Wallet {
 
 model WalletTransaction {
   id       String @id @default(uuid())
+  tenantId String?
   walletId String
   wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
@@ -971,6 +972,7 @@ model WalletTransaction {
   createdAt DateTime @default(now())
 
   @@index([walletId])
+  @@index([tenantId, createdAt])
   @@index([orderId])
   @@index([createdAt])
   @@map("wallet_transactions")

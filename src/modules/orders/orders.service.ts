@@ -228,6 +228,7 @@ export class OrdersService {
         await tx.walletTransaction.create({
           data: {
             walletId: wallet.id,
+            tenantId,
             type: 'DEBIT',
             balanceField: 'CURRENT',
             amount: totalAmount,

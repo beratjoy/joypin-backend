@@ -312,7 +312,7 @@ export class CustomerCompatController {
         ? this.prisma.walletTransaction.findMany({
             where: {
               walletId: user.wallet.id,
-              ...(tenant?.id ? { OR: [{ order: { tenantId: tenant.id } }, { orderId: null }] } : {}),
+              ...(tenant?.id ? { OR: [{ tenantId: tenant.id }, { order: { tenantId: tenant.id } }] } : {}),
             },
             include: { order: { select: { tenantId: true } } },
             orderBy: { createdAt: 'desc' },
