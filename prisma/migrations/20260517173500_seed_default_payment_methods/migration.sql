@@ -9,7 +9,8 @@ INSERT INTO "payment_methods" (
   "feePercent",
   "fixedFee",
   "sortOrder",
-  "isActive"
+  "isActive",
+  "updatedAt"
 ) VALUES (
   'default-bank-transfer',
   'Banka Havalesi / EFT',
@@ -21,7 +22,8 @@ INSERT INTO "payment_methods" (
   0,
   0,
   10,
-  true
+  true,
+  CURRENT_TIMESTAMP
 )
 ON CONFLICT ("code") DO UPDATE SET
   "name" = EXCLUDED."name",
