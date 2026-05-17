@@ -15,9 +15,31 @@ export class MailCampaignController {
     private readonly mailService: MailService,
   ) {}
 
+  private normalizeTenantIds(value: any): string[] {
+    if (!value) return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    return values.map((item) => String(item).trim()).filter(Boolean).filter((item) => item !== 'all');
+  }
+
+  private isTenantScoped(tenantId?: string) {
+    return Boolean(tenantId && tenantId !== 'all');
+  }
+
+  private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string) {
+    if (!this.isTenantScoped(tenantId)) return true;
+    const tenantIds = this.normalizeTenantIds(item.tenantIds);
+    return tenantIds.length === 0 || tenantIds.includes(String(tenantId));
+  }
+
+  private scopedTenantIds(bodyTenantIds: any, queryTenantId?: string) {
+    if (bodyTenantIds !== undefined) return this.normalizeTenantIds(bodyTenantIds);
+    if (this.isTenantScoped(queryTenantId)) return [String(queryTenantId)];
+    return undefined;
+  }
+
   /** Tüm kampanyaları listele */
   @Get()
-  async list(@Query('status') status?: string) {
+  async list(@Query('status') status?: string, @Query('tenantId') tenantId?: string) {
     const where: any = {};
     if (status) where.status = status;
 
@@ -26,16 +48,17 @@ export class MailCampaignController {
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    return { campaigns };
+    return { campaigns: campaigns.filter((campaign: any) => this.visibleForTenant(campaign, tenantId)) };
   }
 
   /** Tek kampanya detayı */
   @Get(':id')
-  async getOne(@Param('id') id: string) {
+  async getOne(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
     const campaign = await this.prisma.emailCampaign.findUnique({
       where: { id },
     });
     if (!campaign) return { error: 'Campaign not found' };
+    if (!this.visibleForTenant(campaign as any, tenantId)) return { error: 'Campaign not found' };
     return { campaign };
   }
 
@@ -49,9 +72,11 @@ export class MailCampaignController {
     targetType?: string;
     targetFilter?: any;
     scheduledAt?: string;
-  }) {
+    tenantIds?: string[];
+  }, @Query('tenantId') tenantId?: string) {
     const campaign = await this.prisma.emailCampaign.create({
       data: {
+        tenantIds: this.scopedTenantIds(body.tenantIds, tenantId),
         title: body.title,
         subject: body.subject,
         bodyHtml: body.bodyHtml,
@@ -67,10 +92,13 @@ export class MailCampaignController {
 
   /** Kampanya güncelle */
   @Put(':id')
-  async update(@Param('id') id: string, @Body() body: any) {
+  async update(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.emailCampaign.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) return { error: 'Campaign not found' };
     const { title, subject, bodyHtml, previewText, targetType, targetFilter, scheduledAt, status } = body;
     const data: any = {};
 
+    if (body.tenantIds !== undefined) data.tenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     if (title) data.title = title;
     if (subject) data.subject = subject;
     if (bodyHtml) data.bodyHtml = bodyHtml;
@@ -93,13 +121,17 @@ export class MailCampaignController {
   /** Kampanyayı sil (sadece DRAFT/CANCELLED) */
   @Delete(':id')
   @HttpCode(204)
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.emailCampaign.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) return;
     await this.prisma.emailCampaign.delete({ where: { id } });
   }
 
   /** Kampanyayı iptal et */
   @Post(':id/cancel')
-  async cancel(@Param('id') id: string) {
+  async cancel(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.emailCampaign.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) return { error: 'Campaign not found' };
     const campaign = await this.prisma.emailCampaign.update({
       where: { id },
       data: { status: 'CANCELLED' },
@@ -109,7 +141,9 @@ export class MailCampaignController {
 
   /** Kampanyayı hemen gönder (SCHEDULED → anında) */
   @Post(':id/send-now')
-  async sendNow(@Param('id') id: string) {
+  async sendNow(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.emailCampaign.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) return { error: 'Campaign not found' };
     const campaign = await this.prisma.emailCampaign.update({
       where: { id },
       data: { scheduledAt: new Date(), status: 'SCHEDULED' },
@@ -123,16 +157,22 @@ export class MailCampaignController {
 
   /** Genel email analytics dashboard */
   @Get('analytics/overview')
-  async analyticsOverview() {
+  async analyticsOverview(@Query('tenantId') tenantId?: string) {
     const now = new Date();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const visibleCampaignIds = this.isTenantScoped(tenantId)
+      ? (await this.prisma.emailCampaign.findMany({ select: { id: true, tenantIds: true } }))
+          .filter((campaign: any) => this.visibleForTenant(campaign, tenantId))
+          .map((campaign) => campaign.id)
+      : null;
+    const campaignScope = visibleCampaignIds ? { campaignId: { in: visibleCampaignIds } } : {};
 
     // Son 30 gün email logları
     const [totalSent, totalOpened, totalClicked, totalBounced] = await Promise.all([
-      this.prisma.emailLog.count({ where: { sentAt: { gte: thirtyDaysAgo } } }),
-      this.prisma.emailLog.count({ where: { status: 'OPENED', openedAt: { gte: thirtyDaysAgo } } }),
-      this.prisma.emailLog.count({ where: { status: 'CLICKED', clickedAt: { gte: thirtyDaysAgo } } }),
-      this.prisma.emailLog.count({ where: { status: 'BOUNCED', createdAt: { gte: thirtyDaysAgo } } }),
+      this.prisma.emailLog.count({ where: { sentAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
+      this.prisma.emailLog.count({ where: { status: 'OPENED', openedAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
+      this.prisma.emailLog.count({ where: { status: 'CLICKED', clickedAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
+      this.prisma.emailLog.count({ where: { status: 'BOUNCED', createdAt: { gte: thirtyDaysAgo }, ...campaignScope } }),
     ]);
 
     // Kurtarılan satışlar (recovered carts)
@@ -151,7 +191,7 @@ export class MailCampaignController {
     // Tip bazlı breakdown
     const typeBreakdown = await this.prisma.emailLog.groupBy({
       by: ['emailType'],
-      where: { createdAt: { gte: thirtyDaysAgo } },
+      where: { createdAt: { gte: thirtyDaysAgo }, ...campaignScope },
       _count: true,
     });
 
@@ -180,7 +220,7 @@ export class MailCampaignController {
 
   /** Kampanya bazlı detaylı metrikler */
   @Get(':id/analytics')
-  async campaignAnalytics(@Param('id') id: string) {
+  async campaignAnalytics(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
     // Metrikleri güncelle
     await this.mailService.refreshCampaignMetrics(id);
 
@@ -189,6 +229,7 @@ export class MailCampaignController {
     });
 
     if (!campaign) return { error: 'Campaign not found' };
+    if (!this.visibleForTenant(campaign as any, tenantId)) return { error: 'Campaign not found' };
 
     // Günlük açılma/tıklanma grafiği (son 7 gün)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -217,6 +258,7 @@ export class MailCampaignController {
   async calendarEvents(
     @Query('start') start?: string,
     @Query('end') end?: string,
+    @Query('tenantId') tenantId?: string,
   ) {
     const where: any = {};
     if (start) where.scheduledAt = { gte: new Date(start) };
@@ -226,6 +268,7 @@ export class MailCampaignController {
       where: { ...where, scheduledAt: { not: null } },
       select: {
         id: true,
+        tenantIds: true,
         title: true,
         scheduledAt: true,
         status: true,
@@ -236,7 +279,7 @@ export class MailCampaignController {
     });
 
     // FullCalendar formatında döndür
-    return campaigns.map(c => ({
+    return campaigns.filter((campaign: any) => this.visibleForTenant(campaign, tenantId)).map(c => ({
       id: c.id,
       title: c.title,
       start: c.scheduledAt,

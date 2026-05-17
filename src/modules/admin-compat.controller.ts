@@ -1035,6 +1035,211 @@ export class AdminCompatController {
     return this.prisma.ticket.update({ where: { id }, data });
   }
 
+  private mapCoupon(coupon: any) {
+    return {
+      ...coupon,
+      value: Number(coupon.value || 0),
+      minOrderAmount: Number(coupon.minOrderAmount || 0),
+      maxDiscountAmount: Number(coupon.maxDiscountAmount || 0),
+      tenantIds: this.normalizeTenantIds(coupon.tenantIds),
+    };
+  }
+
+  @Get('coupons')
+  async listAdminCoupons(@Query('tenantId') tenantId?: string) {
+    const coupons = await this.prisma.discountCoupon.findMany({
+      include: { _count: { select: { usages: true, userCoupons: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    return coupons.filter((coupon: any) => this.visibleForTenant(coupon, tenantId)).map((coupon: any) => this.mapCoupon(coupon));
+  }
+
+  @Post('coupons')
+  async createAdminCoupon(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const coupon = await this.prisma.discountCoupon.create({
+      data: {
+        tenantIds: scopedTenantIds,
+        code: String(body.code || '').trim().toUpperCase(),
+        name: body.name || null,
+        description: body.description || null,
+        type: body.type || 'PERCENTAGE',
+        value: Number(body.value || 0),
+        currency: body.currency || 'TRY',
+        minOrderAmount: Number(body.minOrderAmount || 0),
+        maxDiscountAmount: Number(body.maxDiscountAmount || 0),
+        maxUsageTotal: Number(body.maxUsageTotal || 0),
+        maxUsagePerUser: Number(body.maxUsagePerUser || 1),
+        applicableProductIds: Array.isArray(body.applicableProductIds) ? body.applicableProductIds : [],
+        applicableCategoryIds: Array.isArray(body.applicableCategoryIds) ? body.applicableCategoryIds : [],
+        applicableUserRoles: Array.isArray(body.applicableUserRoles) ? body.applicableUserRoles : [],
+        targetAudience: body.targetAudience || 'ALL',
+        showAsBanner: Boolean(body.showAsBanner),
+        showAsPopup: Boolean(body.showAsPopup),
+        bannerTitle: body.bannerTitle || null,
+        bannerDescription: body.bannerDescription || null,
+        popupTitle: body.popupTitle || null,
+        popupDescription: body.popupDescription || null,
+        popupCta: body.popupCta || null,
+        popupRedirectUrl: body.popupRedirectUrl || null,
+        validFrom: body.validFrom ? new Date(body.validFrom) : null,
+        validUntil: body.validUntil ? new Date(body.validUntil) : null,
+        status: body.status || 'ACTIVE',
+      } as any,
+      include: { _count: { select: { usages: true, userCoupons: true } } },
+    });
+    return this.mapCoupon(coupon);
+  }
+
+  @Patch('coupons/:id')
+  async updateAdminCoupon(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.discountCoupon.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Kupon bulunamadı');
+    const coupon = await this.prisma.discountCoupon.update({
+      where: { id },
+      data: {
+        tenantIds: body.tenantIds !== undefined ? this.scopedTenantIds(body.tenantIds, tenantId) : undefined,
+        code: body.code === undefined ? undefined : String(body.code).trim().toUpperCase(),
+        name: body.name === undefined ? undefined : body.name || null,
+        description: body.description === undefined ? undefined : body.description || null,
+        type: body.type,
+        value: body.value === undefined ? undefined : Number(body.value || 0),
+        currency: body.currency,
+        minOrderAmount: body.minOrderAmount === undefined ? undefined : Number(body.minOrderAmount || 0),
+        maxDiscountAmount: body.maxDiscountAmount === undefined ? undefined : Number(body.maxDiscountAmount || 0),
+        maxUsageTotal: body.maxUsageTotal === undefined ? undefined : Number(body.maxUsageTotal || 0),
+        maxUsagePerUser: body.maxUsagePerUser === undefined ? undefined : Number(body.maxUsagePerUser || 1),
+        applicableProductIds: body.applicableProductIds,
+        applicableCategoryIds: body.applicableCategoryIds,
+        applicableUserRoles: body.applicableUserRoles,
+        targetAudience: body.targetAudience,
+        showAsBanner: body.showAsBanner === undefined ? undefined : Boolean(body.showAsBanner),
+        showAsPopup: body.showAsPopup === undefined ? undefined : Boolean(body.showAsPopup),
+        bannerTitle: body.bannerTitle === undefined ? undefined : body.bannerTitle || null,
+        bannerDescription: body.bannerDescription === undefined ? undefined : body.bannerDescription || null,
+        popupTitle: body.popupTitle === undefined ? undefined : body.popupTitle || null,
+        popupDescription: body.popupDescription === undefined ? undefined : body.popupDescription || null,
+        popupCta: body.popupCta === undefined ? undefined : body.popupCta || null,
+        popupRedirectUrl: body.popupRedirectUrl === undefined ? undefined : body.popupRedirectUrl || null,
+        validFrom: body.validFrom === undefined ? undefined : body.validFrom ? new Date(body.validFrom) : null,
+        validUntil: body.validUntil === undefined ? undefined : body.validUntil ? new Date(body.validUntil) : null,
+        status: body.status,
+      } as any,
+      include: { _count: { select: { usages: true, userCoupons: true } } },
+    });
+    return this.mapCoupon(coupon);
+  }
+
+  @Delete('coupons/:id')
+  async deleteAdminCoupon(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.discountCoupon.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Kupon bulunamadı');
+    await this.prisma.discountCoupon.delete({ where: { id } });
+    return { success: true };
+  }
+
+  private reportDateWhere(startDate?: string, endDate?: string) {
+    const createdAt: any = {};
+    if (startDate) createdAt.gte = new Date(startDate);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      createdAt.lte = end;
+    }
+    return Object.keys(createdAt).length ? { createdAt } : {};
+  }
+
+  @Get('reports/sales')
+  async getSalesReport(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('categoryName') categoryName?: string,
+    @Query('productName') productName?: string,
+    @Query('userEmail') userEmail?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    const subOrderFilters: any[] = [];
+    if (productName) subOrderFilters.push({ product: { name: { contains: productName, mode: 'insensitive' } } });
+    if (categoryName) subOrderFilters.push({ product: { category: { name: { contains: categoryName, mode: 'insensitive' } } } });
+    const where: any = {
+      ...this.reportDateWhere(startDate, endDate),
+      ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
+      ...(userEmail ? { user: { email: { contains: userEmail, mode: 'insensitive' } } } : {}),
+      ...(subOrderFilters.length ? { subOrders: { some: { AND: subOrderFilters } } } : {}),
+    };
+    const orders = await this.prisma.order.findMany({
+      where,
+      include: {
+        user: { select: { id: true, firstName: true, lastName: true, email: true } },
+        subOrders: { include: { product: { include: { category: true } } } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    const totalAmount = orders.reduce((sum: number, order: any) => sum + Number(order.totalAmount || 0), 0);
+    const totalNet = orders.reduce((sum: number, order: any) => sum + Number(order.netAmount || order.totalAmount || 0), 0);
+    return {
+      summary: {
+        totalOrders: orders.length,
+        totalAmount,
+        totalNet,
+        completedOrders: orders.filter((order: any) => ['COMPLETED', 'DELIVERED'].includes(order.status)).length,
+      },
+      orders: orders.map((order: any) => ({
+        ...order,
+        totalAmount: Number(order.totalAmount || 0),
+        netAmount: Number(order.netAmount || order.totalAmount || 0),
+      })),
+    };
+  }
+
+  @Get('reports/customers')
+  async getCustomersReport(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('userEmail') userEmail?: string,
+    @Query('memberTypeId') memberTypeId?: string,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    const orderWhere: any = {
+      ...this.reportDateWhere(startDate, endDate),
+      ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
+    };
+    const users = await this.prisma.user.findMany({
+      where: {
+        ...(userEmail ? { email: { contains: userEmail, mode: 'insensitive' } } : {}),
+        ...(memberTypeId ? { memberTypeId } : {}),
+        ...(this.isTenantScoped(tenantId) ? { orders: { some: { tenantId } } } : {}),
+      },
+      include: {
+        memberType: true,
+        orders: { where: orderWhere, select: { id: true, totalAmount: true, netAmount: true, status: true, createdAt: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    const customers = users
+      .map((user: any) => ({
+        id: user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        memberType: user.memberType,
+        totalOrders: user.orders.length,
+        totalSpent: user.orders.reduce((sum: number, order: any) => sum + Number(order.totalAmount || 0), 0),
+      }))
+      .filter((user: any) => user.totalOrders > 0 || !startDate && !endDate);
+    return {
+      summary: {
+        totalCustomers: customers.length,
+        totalOrders: customers.reduce((sum: number, user: any) => sum + user.totalOrders, 0),
+        totalSpent: customers.reduce((sum: number, user: any) => sum + user.totalSpent, 0),
+      },
+      customers,
+    };
+  }
+
   private getOneEpinCredentials(provider?: any) {
     const config = provider?.config || {};
     return {
