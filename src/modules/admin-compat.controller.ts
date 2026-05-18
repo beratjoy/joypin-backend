@@ -3,7 +3,7 @@ import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/comm
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
 import { Roles } from './auth/decorators/roles.decorator';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 @Controller('admin')
 @Roles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'SUPPORT')
@@ -78,6 +78,10 @@ export class AdminCompatController {
     if (explicit.length > 0) return explicit;
     if (queryTenantId && queryTenantId !== 'all') return [queryTenantId];
     return undefined;
+  }
+
+  private hashStockCode(code: string) {
+    return createHash('sha256').update(code.trim()).digest('hex');
   }
 
   private visibleForTenant(item: { tenantIds?: unknown }, tenantId?: string) {
@@ -3390,6 +3394,148 @@ export class AdminCompatController {
     };
   }
 
+  @Post('orders/:orderId/stock-codes')
+  async addOrderStockCodes(@Param('orderId') orderId: string, @Body() body: any) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: { include: { product: true } } },
+    });
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    const subOrder = body?.subOrderId
+      ? order.subOrders.find((item: any) => item.id === body.subOrderId)
+      : order.subOrders[0];
+    if (!subOrder?.productId) throw new BadRequestException('Stok eklenecek ürün bulunamadı');
+
+    const rawCodes = String(body?.codes || '')
+      .split(/[,\n;]+/)
+      .map((code) => code.trim())
+      .filter(Boolean);
+    if (rawCodes.length === 0) throw new BadRequestException('En az 1 e-pin kodu girilmelidir');
+
+    const costPrice = Number(body?.costPrice || 0);
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
+      throw new BadRequestException('Geçerli maliyet girilmelidir');
+    }
+
+    let poolLink = await this.prisma.stockPoolProduct.findFirst({
+      where: { productId: subOrder.productId },
+      include: { pool: true },
+    });
+
+    if (!poolLink) {
+      const pool = await this.prisma.stockPool.create({
+        data: {
+          name: `${subOrder.product?.name || subOrder.productName || subOrder.productId} Stok Havuzu`,
+          description: `Sipariş modalından otomatik oluşturuldu: ${order.orderNumber}`,
+          products: { create: { productId: subOrder.productId } },
+        },
+      });
+      poolLink = { poolId: pool.id, productId: subOrder.productId, pool } as any;
+    }
+
+    const uniqueCodes = Array.from(new Set(rawCodes));
+    const hashes = uniqueCodes.map((code) => this.hashStockCode(code));
+    const existing = await this.prisma.epinCode.findMany({
+      where: { OR: [{ code: { in: uniqueCodes } }, { codeHash: { in: hashes } }] },
+      select: { code: true, codeHash: true },
+    });
+    const existingCodes = new Set(existing.map((item) => item.code));
+    const existingHashes = new Set(existing.map((item) => item.codeHash).filter(Boolean));
+    const newCodes = uniqueCodes.filter((code) => !existingCodes.has(code) && !existingHashes.has(this.hashStockCode(code)));
+    if (newCodes.length === 0) {
+      throw new BadRequestException('Girilen kodların tamamı zaten stokta mevcut');
+    }
+
+    const batchId = randomUUID();
+    await this.prisma.epinCode.createMany({
+      data: newCodes.map((code) => ({
+        poolId: poolLink!.poolId,
+        code,
+        codeHash: this.hashStockCode(code),
+        costPrice,
+        currency: (body?.currency || subOrder.currency || 'TRY') as any,
+        supplier: String(body?.supplier || 'Manuel Stok'),
+        priority: Number(body?.priority || 0),
+        allowResellers: body?.allowResellers !== false,
+        batchId,
+        notes: body?.notes || `Sipariş ${order.orderNumber} için modal üzerinden eklendi`,
+      })),
+      skipDuplicates: true,
+    });
+
+    if (!subOrder.product?.hasInfiniteStock) {
+      await this.prisma.product.update({
+        where: { id: subOrder.productId },
+        data: { stockCount: { increment: newCodes.length } },
+      }).catch(() => null);
+    }
+
+    if (costPrice > 0) {
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: { unitCost: costPrice },
+      }).catch(() => null);
+    }
+
+    const refreshed = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
+    });
+    const [withStaff] = await this.attachAssignedStaff(refreshed ? [refreshed] : []);
+    const [withTenant] = await this.attachTenant(withStaff ? [withStaff] : []);
+
+    return {
+      success: true,
+      added: newCodes.length,
+      duplicates: rawCodes.length - newCodes.length,
+      poolId: poolLink.poolId,
+      order: withTenant ? this.normalizeAdminOrder(withTenant) : null,
+    };
+  }
+
+  @Post('orders/:orderId/cost')
+  async updateOrderCost(@Param('orderId') orderId: string, @Body() body: any) {
+    const unitCost = Number(body?.unitCost);
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      throw new BadRequestException('Geçerli maliyet girilmelidir');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { subOrders: true },
+    });
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    const targetIds = body?.subOrderId
+      ? order.subOrders.filter((subOrder: any) => subOrder.id === body.subOrderId).map((subOrder: any) => subOrder.id)
+      : order.subOrders.map((subOrder: any) => subOrder.id);
+    if (targetIds.length === 0) throw new BadRequestException('Güncellenecek kalem bulunamadı');
+
+    await this.prisma.subOrder.updateMany({
+      where: { id: { in: targetIds } },
+      data: {
+        unitCost,
+        adminNote: body?.note
+          ? String(body.note)
+          : `Manuel maliyet girildi: ${unitCost}`,
+      },
+    });
+
+    const refreshed = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
+    });
+    const [withStaff] = await this.attachAssignedStaff(refreshed ? [refreshed] : []);
+    const [withTenant] = await this.attachTenant(withStaff ? [withStaff] : []);
+
+    return {
+      success: true,
+      updated: targetIds.length,
+      order: withTenant ? this.normalizeAdminOrder(withTenant) : null,
+    };
+  }
+
   @Post('orders/:orderId/release')
   async releaseOrder(@Param('orderId') orderId: string) {
     const order = await this.prisma.order.update({
@@ -4224,6 +4370,18 @@ export class AdminCompatController {
       'Dijital urun teslimat durumu, oyuncu/hesap alanlari ve tedarikci kaydi eklendi.',
       'Teslim/iptal notlari, finans loglari, webhook ve audit izleri eklendi.',
       'Urun/hizmet dijital oldugu icin fiziksel kargo bilgisi beklenmez; teslimat kaniti sistem ve tedarikci kayitlariyla sunulur.',
+    ].forEach((item) => add(`- ${item}`));
+
+    addSection('7. Stripe / Kart Itirazi Icin Gonderilecek Kanit Paketi');
+    [
+      'Satis makbuzu: siparis numarasi, urun adi, adet, tutar, para birimi, odeme yontemi ve gateway islem referansi.',
+      'Musteri kimligi: e-posta, telefon, hesap olusturma/tarih bilgisi, varsa onceki siparisler ve IP adresi.',
+      'Dijital teslimat kaniti: oyuncu ID/server/hesap alanlari, teslim tarihi, teslim edilen e-pin/API referansi ve tedarikci kaydi.',
+      'Kullanim/erişim kaniti: musteri hesabina yukleme yapildigini veya kodun teslim edildigini gosteren sistem kaydi.',
+      'Musteri iletisimleri: destek talebi, e-posta, chat veya teslim/iptal konusmalari varsa ek belge olarak eklenmeli.',
+      'Sartlar ve politikalar: checkout sirasinda kabul edilen mesafeli satis, iade, teslimat ve dijital urun kosullari.',
+      'Risk ve guvenlik: 3D Secure, AVS/CVC, risk skoru, webhook loglari ve odeme dogrulama bilgileri.',
+      'PDF/JPEG/PNG formatinda ek dosya olarak yuklenebilir; Stripe dispute alaninda mumkun oldugunca ilgili evidence alanlari doldurulmalidir.',
     ].forEach((item) => add(`- ${item}`));
 
     add('', { gap: true });
