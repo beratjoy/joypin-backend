@@ -2,6 +2,7 @@
 import { ForbiddenException, NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
+import { ReferralGuardService } from './referrals/referral-guard.service';
 import { Roles } from './auth/decorators/roles.decorator';
 import { createHash, randomUUID } from 'crypto';
 
@@ -11,6 +12,7 @@ export class AdminCompatController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
+    private readonly referralGuard: ReferralGuardService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -2176,6 +2178,76 @@ export class AdminCompatController {
   async deleteReferralRule(@Param('id') id: string) {
     await this.prisma.referralRule.delete({ where: { id } });
     return { success: true };
+  }
+  @Get('referrals/guard/settings')
+  async getReferralGuardSettings() {
+    return this.referralGuard.getSettings();
+  }
+  @Patch('referrals/guard/settings')
+  async updateReferralGuardSettings(@Body() body: any) {
+    return this.referralGuard.saveSettings(body || {});
+  }
+  @Get('referrals/history')
+  async listReferralHistory(@Query('status') status?: string, @Query('limit') limit?: string) {
+    const take = Math.min(Math.max(Number(limit || 100), 1), 300);
+    const where: any = {};
+    if (status && status !== 'ALL') where.riskStatus = status;
+
+    const [referrals, riskEvents] = await Promise.all([
+      this.prisma.userReferral.findMany({
+        where,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          referrer: { select: { id: true, email: true, firstName: true, lastName: true } },
+          referredUser: { select: { id: true, email: true, firstName: true, lastName: true, createdAt: true } },
+          referralRule: { select: { id: true, name: true } },
+          transactions: { select: { id: true, commissionAmount: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 5 },
+          riskEvents: { orderBy: { createdAt: 'desc' }, take: 5 },
+        },
+      }),
+      this.prisma.referralRiskEvent.findMany({
+        take: 50,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const summary = {
+      total: await this.prisma.userReferral.count(),
+      clear: await this.prisma.userReferral.count({ where: { riskStatus: 'CLEAR' } }),
+      suspicious: await this.prisma.userReferral.count({ where: { riskStatus: 'SUSPICIOUS' } }),
+      held: await this.prisma.userReferral.count({ where: { riskStatus: 'HELD' } }),
+      blockedEvents: await this.prisma.referralRiskEvent.count({ where: { action: 'BLOCK' } }),
+      alerts: await this.prisma.referralRiskEvent.count({ where: { severity: { in: ['HIGH', 'CRITICAL'] } } }),
+    };
+
+    return { summary, referrals, riskEvents };
+  }
+  @Post('referrals/history/:id/review')
+  async reviewReferralHistory(@Param('id') id: string, @Body() body: any) {
+    const approve = body?.action === 'APPROVE';
+    const referral = await this.prisma.userReferral.update({
+      where: { id },
+      data: {
+        isActive: approve,
+        riskStatus: approve ? 'REVIEWED_OK' : 'BLOCKED',
+        reviewedAt: new Date(),
+        blockedAt: approve ? null : new Date(),
+      },
+    });
+    await this.prisma.referralRiskEvent.create({
+      data: {
+        userReferralId: referral.id,
+        referrerId: referral.referrerId,
+        referredUserId: referral.referredUserId,
+        eventType: 'ADMIN_REVIEW',
+        severity: approve ? 'LOW' : 'HIGH',
+        score: referral.riskScore,
+        action: approve ? 'APPROVE' : 'BLOCK',
+        reasons: [{ code: 'ADMIN_REVIEW', message: body?.note || (approve ? 'Admin onayladi' : 'Admin engelledi'), points: 0 }] as any,
+      },
+    });
+    return { success: true, referral };
   }
   @Get('referrals/missions')
   async listReferralMissions(@Query('tenantId') tenantId?: string) {

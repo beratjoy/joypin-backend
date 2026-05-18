@@ -1052,15 +1052,50 @@ model UserReferral {
   totalEarnings     Decimal @default(0) @db.Decimal(14, 4)
   totalTransactions Int     @default(0)
   isActive          Boolean @default(true)
+  riskStatus        String  @default("CLEAR") @db.VarChar(30)
+  riskScore         Int     @default(0)
+  riskReasons       Json?
+  signupIp          String? @db.VarChar(45)
+  signupUserAgent   String? @db.VarChar(500)
+  blockedAt         DateTime?
+  reviewedAt        DateTime?
 
   transactions ReferralTransaction[]
+  riskEvents   ReferralRiskEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([referrerId, referredUserId])
   @@index([referrerId])
+  @@index([riskStatus, createdAt])
   @@map("user_referrals")
+}
+
+model ReferralRiskEvent {
+  id             String   @id @default(uuid())
+  userReferralId String?
+  userReferral   UserReferral? @relation(fields: [userReferralId], references: [id], onDelete: SetNull)
+  referrerId     String?
+  referredUserId String?
+  tenantId       String?
+  eventType      String   @db.VarChar(80)
+  severity       String   @db.VarChar(20)
+  score          Int      @default(0)
+  action         String   @db.VarChar(30)
+  reasons        Json?
+  metadata       Json?
+  ipAddress      String?  @db.VarChar(45)
+  userAgent      String?  @db.VarChar(500)
+  createdAt      DateTime @default(now())
+  resolvedAt     DateTime?
+  resolvedBy     String?
+
+  @@index([createdAt])
+  @@index([severity, action])
+  @@index([referrerId])
+  @@index([referredUserId])
+  @@map("referral_risk_events")
 }
 
 model ReferralTransaction {

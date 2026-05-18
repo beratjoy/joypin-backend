@@ -40,8 +40,12 @@ export class AuthController {
     },
     @Headers('x-forwarded-host') forwardedHost?: string,
     @Headers('host') host?: string,
+    @Headers('cf-connecting-ip') cfIp?: string,
+    @Headers('x-forwarded-for') forwardedFor?: string,
+    @Headers('user-agent') userAgent?: string,
   ) {
-    return this.authService.register({ ...body, tenantHost: forwardedHost || host });
+    const ipAddress = (cfIp || forwardedFor?.split(',')[0] || '').trim() || undefined;
+    return this.authService.register({ ...body, tenantHost: forwardedHost || host, ipAddress, userAgent });
   }
 
   @Public()

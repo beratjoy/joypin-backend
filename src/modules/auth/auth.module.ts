@@ -8,12 +8,14 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { OtpService } from './otp.service';
 import { UsersModule } from '../users/users.module';
 import { MissionsModule } from '../missions/missions.module';
+import { ReferralsModule } from '../referrals/referrals.module';
 
 @Module({
   imports: [
     ConfigModule,
     UsersModule,
     MissionsModule,
+    ReferralsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

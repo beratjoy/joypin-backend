@@ -14,6 +14,7 @@ import { UserRole, UserStatus } from '@prisma/client';
 import { normalizeCountryCode, normalizeCurrency, walletCanChangeCurrency } from '../../common/locale-currency';
 import { MailService } from '../mail/mail.service';
 import { MissionTrackerService } from '../missions/mission-tracker.service';
+import { ReferralGuardService } from '../referrals/referral-guard.service';
 
 export interface JwtPayload {
   sub: string;
@@ -42,6 +43,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly missions: MissionTrackerService,
+    private readonly referralGuard: ReferralGuardService,
   ) {}
 
   /**
@@ -57,6 +59,8 @@ export class AuthService {
     countryCode?: string;
     preferredCurrency?: string;
     tenantHost?: string;
+    ipAddress?: string;
+    userAgent?: string;
   }): Promise<AuthTokens> {
     // E-posta benzersizlik kontrolü
     const normalizedEmail = params.email.trim().toLowerCase();
@@ -116,16 +120,42 @@ export class AuthService {
       });
 
       if (activeRule) {
-        await this.prisma.userReferral.create({
-          data: {
-            referrerId,
-            referredUserId: user.id,
-            referralRuleId: activeRule.id,
-          },
-        });
-        await this.missions.onNewReferral(referrerId).catch((error) => {
-          this.logger.warn(`[Mission] Referral mission update skipped for ${referrerId}: ${error instanceof Error ? error.message : error}`);
-        });
+        const guardInput = {
+          referrerId,
+          referredUserId: user.id,
+          referredEmail: normalizedEmail,
+          ipAddress: params.ipAddress,
+          userAgent: params.userAgent,
+          tenantId,
+        };
+        const decision = await this.referralGuard.evaluate(guardInput);
+
+        if (decision.action === 'BLOCK') {
+          await this.referralGuard.recordEvent(guardInput, decision);
+          this.logger.warn(`[ReferralGuard] Referral blocked: referrer=${referrerId}, user=${user.id}, score=${decision.score}`);
+        } else {
+          const shouldHold = decision.action === 'HOLD';
+          const userReferral = await this.prisma.userReferral.create({
+            data: {
+              referrerId,
+              referredUserId: user.id,
+              referralRuleId: activeRule.id,
+              isActive: !shouldHold,
+              riskStatus: decision.action === 'ALLOW' ? 'CLEAR' : shouldHold ? 'HELD' : 'SUSPICIOUS',
+              riskScore: decision.score,
+              riskReasons: decision.reasons as any,
+              signupIp: params.ipAddress || null,
+              signupUserAgent: params.userAgent ? params.userAgent.slice(0, 500) : null,
+              blockedAt: shouldHold ? new Date() : null,
+            } as any,
+          });
+          await this.referralGuard.recordEvent(guardInput, decision, userReferral.id);
+          if (!shouldHold) {
+            await this.missions.onNewReferral(referrerId).catch((error) => {
+              this.logger.warn(`[Mission] Referral mission update skipped for ${referrerId}: ${error instanceof Error ? error.message : error}`);
+            });
+          }
+        }
       }
     }
 
