@@ -1484,6 +1484,75 @@ export class AdminCompatController {
 
     return response.json();
   }
+
+  private isJoyalisverisProvider(provider?: any) {
+    const haystack = `${provider?.name || ''} ${provider?.apiUrl || ''}`.toLowerCase();
+    return haystack.includes('joyalisveris') || haystack.includes('hyperteknoloji') || haystack.includes('hyper teknoloji');
+  }
+
+  private getJoyalisverisConfig(provider?: any) {
+    const config = provider?.config || {};
+    return {
+      baseUrl: String(provider?.apiUrl || config.baseUrl || 'https://api.joyalisveris.com').replace(/\/$/, ''),
+      token: provider?.encryptedApiKey || config.token || config.apiToken || process.env.JOYALISVERIS_API_TOKEN,
+      apiKey: provider?.encryptedApiSecret || config.apiKey || process.env.JOYALISVERIS_API_KEY,
+      regionCode: config.regionCode || process.env.JOYALISVERIS_REGION_CODE || 'TR',
+    };
+  }
+
+  private async getJoyalisverisProducts(provider: any) {
+    const config = this.getJoyalisverisConfig(provider);
+    if (!config.token) {
+      return { success: false, message: 'Joyalışveriş API token eksik', products: [] };
+    }
+
+    const response = await fetch(`${config.baseUrl}/Products/List`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.token}`,
+        ...(config.apiKey ? { ApiKey: config.apiKey } : {}),
+        'h-region-code': config.regionCode,
+      },
+      body: JSON.stringify({ page: 0, pageSize: 5000, detailed: true }),
+      signal: AbortSignal.timeout(45000),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.success) {
+      return {
+        success: false,
+        message: data?.message || data?.title || `Joyalışveriş API ${response.status}`,
+        products: [],
+      };
+    }
+
+    const rawProducts = Array.isArray(data.data) ? data.data : [];
+    const normalizedProducts = rawProducts.map((product: any) => ({
+      ProductId: product.productID,
+      ProductName: product.productName,
+      ProductPrice: Number(product.buyPrice || product.salePrice || product.listPrice || 0),
+      CategoryId: product.productCategoryID,
+      CategoryName: product.productCategoryName,
+      CategoryType: product.productTypeID ? String(product.productTypeID) : undefined,
+      Stock: Number(product.totalStock || 0),
+      ListPrice: Number(product.listPrice || 0),
+      SalePrice: Number(product.salePrice || 0),
+      BuyPrice: Number(product.buyPrice || 0),
+      Image: product.productData?.productMainImage || null,
+      Slug: product.productSlug || null,
+      IsActive: product.status !== false && product.status !== 'PASSIVE',
+      RegionList: product.regionList || null,
+      PlatformList: product.platformList || null,
+    }));
+    const products = normalizedProducts.slice(0, 5000);
+
+    return {
+      success: true,
+      message: `${rawProducts.length} Joyalışveriş ürünü çekildi, ilk ${products.length} ürün gösteriliyor`,
+      products,
+    };
+  }
   @Get('settings')
   async getSettings(@Query('group') group?: string, @Query('tenantId') tenantId?: string) {
     const globalRows = await this.prisma.siteSettings.findMany({
@@ -3184,6 +3253,30 @@ export class AdminCompatController {
       success: result.ResultCode === '00',
       message: result.ResultMessage,
       products: result.Products || [],
+    };
+  }
+  @Get('providers/:id/products')
+  async getProviderProducts(@Param('id') id: string) {
+    const provider = await this.prisma.botProvider.findUnique({ where: { id } });
+    if (!provider) throw new NotFoundException('Tedarikçi bulunamadı');
+
+    if (this.isJoyalisverisProvider(provider)) {
+      return this.getJoyalisverisProducts(provider);
+    }
+
+    if (provider.name?.toLowerCase().includes('1epin')) {
+      const result = await this.oneEpinRequest('allproducts', {}, provider);
+      return {
+        success: result.ResultCode === '00',
+        message: result.ResultMessage,
+        products: result.Products || [],
+      };
+    }
+
+    return {
+      success: false,
+      message: `${provider.name} için ürün çekme adaptörü tanımlı değil`,
+      products: [],
     };
   }
   @Get('product-providers')
