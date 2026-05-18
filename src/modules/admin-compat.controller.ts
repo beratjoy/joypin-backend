@@ -1739,6 +1739,25 @@ export class AdminCompatController {
   async previewMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
     return this.mailService.previewManagedTemplate(emailType, body);
   }
+  @Post('mail/templates/:emailType/test')
+  async testMailTemplate(@Param('emailType') emailType: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const to = String(body?.to || '').trim();
+    if (!to || !to.includes('@')) {
+      throw new BadRequestException('Valid test email is required');
+    }
+
+    return this.mailService.sendManagedTemplateTest(emailType, to, body, this.isTenantScoped(tenantId) ? tenantId : undefined);
+  }
+  @Get('mail/logs')
+  async listMailLogs(@Query('emailType') emailType?: string, @Query('limit') limit?: string, @Query('tenantId') tenantId?: string) {
+    return {
+      logs: await this.mailService.listRecentEmailLogs(
+        emailType ? String(emailType) : undefined,
+        this.isTenantScoped(tenantId) ? tenantId : undefined,
+        Number(limit || 15),
+      ),
+    };
+  }
   @Get('referrals/rules')
   async listReferralRules(@Query('tenantId') tenantId?: string) {
     const rules = await this.prisma.referralRule.findMany({ orderBy: [{ tierLevel: 'asc' }, { createdAt: 'desc' }] });

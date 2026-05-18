@@ -847,6 +847,49 @@ export class MailService {
     };
   }
 
+  async sendManagedTemplateTest(emailType: string, to: string, input?: { subject?: string; bodyHtml?: string }, tenantId?: string) {
+    const event = MAIL_EVENTS.find((item) => item.emailType === emailType);
+    if (!event) throw new Error('Unsupported email type');
+    const preview = await this.previewManagedTemplate(emailType, input);
+    await this.send({
+      to,
+      subject: `[TEST] ${preview.subject}`,
+      html: preview.html,
+      emailType,
+      tenantId,
+      metadata: {
+        source: 'admin_mail_template_test',
+        originalSubject: preview.subject,
+      },
+      templateVars: this.sampleVarsFor(emailType),
+    });
+    return { success: true };
+  }
+
+  async listRecentEmailLogs(emailType?: string, tenantId?: string, limit = 15) {
+    const take = Math.max(1, Math.min(Number(limit) || 15, 50));
+    return this.prisma.emailLog.findMany({
+      where: {
+        ...(emailType ? { emailType: emailType as any } : {}),
+        ...(tenantId && tenantId !== 'all' ? { tenantId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true,
+        email: true,
+        emailType: true,
+        subject: true,
+        status: true,
+        sentAt: true,
+        openedAt: true,
+        clickedAt: true,
+        errorMessage: true,
+        createdAt: true,
+      },
+    });
+  }
+
   async recordOpen(trackingId: string): Promise<void> {
     try {
       await this.prisma.emailLog.updateMany({
