@@ -480,6 +480,100 @@ export class AdminCompatController {
     };
   }
 
+  private buildOrderTimeline(order: any, auditLogs: any[], emailLogs: any[]) {
+    const entries = [
+      { at: order.createdAt, title: 'Sipariş oluşturuldu', detail: order.orderNumber || order.id, tone: 'blue' },
+      ...(order.paymentStatus === 'PAID' ? [{ at: order.updatedAt || order.createdAt, title: 'Ödeme alındı', detail: order.paymentMethod || 'Ödeme', tone: 'emerald' }] : []),
+      ...(order.subOrders || []).flatMap((subOrder: any) => [
+        subOrder.status === 'DELIVERED' || Number(subOrder.deliveredCount || 0) > 0
+          ? { at: subOrder.updatedAt || order.updatedAt, title: 'Teslimat yapıldı', detail: `${subOrder.product?.name || 'Ürün'} - ${subOrder.deliveredCount || subOrder.quantity || 0} adet`, tone: 'emerald' }
+          : null,
+        subOrder.status === 'PENDING_STOCK'
+          ? { at: subOrder.updatedAt || order.updatedAt, title: 'Stok bekliyor', detail: subOrder.lastError || 'Kod/stok bekleniyor', tone: 'amber' }
+          : null,
+        subOrder.status === 'CANCELLED'
+          ? { at: subOrder.updatedAt || order.updatedAt, title: 'İptal edildi', detail: subOrder.cancelReason || 'İptal', tone: 'red' }
+          : null,
+      ].filter(Boolean)),
+      ...emailLogs.map((log: any) => ({
+        at: log.sentAt || log.createdAt,
+        title: log.status === 'SENT' ? 'Mail gönderildi' : 'Mail gönderimi başarısız',
+        detail: `${log.emailType} - ${log.email}`,
+        tone: log.status === 'SENT' ? 'emerald' : 'red',
+      })),
+      ...auditLogs.filter((log: any) => log.action === 'VIEW_EPIN').map((log: any) => ({
+        at: log.createdAt,
+        title: 'Epin görüntülendi/kopyalandı',
+        detail: log.details?.scope === 'all' ? 'Tüm epinler' : 'Tek epin',
+        tone: 'violet',
+      })),
+    ].filter((entry: any) => entry?.at);
+
+    return entries.sort((a: any, b: any) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  }
+
+  private async enrichAdminOrderDetail(order: any) {
+    const [auditLogs, emailLogs, stockCodes] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: { entityType: 'Order', entityId: order.id },
+        include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }).catch(() => []),
+      this.prisma.emailLog.findMany({
+        where: { orderId: order.id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }).catch(() => []),
+      this.prisma.epinCode.findMany({
+        where: { orderId: order.id },
+        include: { pool: { select: { id: true, name: true } } },
+        orderBy: { usedAt: 'desc' },
+      }).catch(() => []),
+    ]);
+
+    const copyLogs = auditLogs
+      .filter((log: any) => log.action === 'VIEW_EPIN')
+      .map((log: any) => {
+        const fullName = `${log.user?.firstName || ''} ${log.user?.lastName || ''}`.trim();
+        return {
+          id: log.id,
+          at: log.createdAt,
+          staffName: fullName || log.user?.email || log.userId || 'Sistem',
+          scope: log.details?.scope || 'single',
+          codeCount: Number(log.details?.codeCount || 1),
+        };
+      });
+
+    return {
+      ...order,
+      orderTimeline: this.buildOrderTimeline(order, auditLogs, emailLogs),
+      stockSources: stockCodes.map((code: any) => ({
+        id: code.id,
+        poolId: code.poolId,
+        poolName: code.pool?.name || 'Stok havuzu',
+        supplier: code.supplier || 'Bilinmiyor',
+        costPrice: Number(code.costPrice || 0),
+        currency: code.currency || 'TRY',
+        usedAt: code.usedAt,
+        batchId: code.batchId || null,
+      })),
+      mailProofs: emailLogs.map((log: any) => ({
+        id: log.id,
+        email: log.email,
+        emailType: log.emailType,
+        subject: log.subject,
+        status: log.status,
+        sentAt: log.sentAt,
+        deliveredAt: log.deliveredAt,
+        openedAt: log.openedAt,
+        openCount: log.openCount,
+        errorMessage: log.errorMessage,
+      })),
+      copyHistory: copyLogs,
+    };
+  }
+
   private async recalculateOrderStatus(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -3287,7 +3381,32 @@ export class AdminCompatController {
     }
     const [withStaff] = await this.attachAssignedStaff([order]);
     const [withTenant] = await this.attachTenant([withStaff]);
-    return this.normalizeAdminOrder(withTenant, req.user?.id);
+    const enriched = await this.enrichAdminOrderDetail(withTenant);
+    return this.normalizeAdminOrder(enriched, req.user?.id);
+  }
+
+  @Post('orders/:orderId/epin-copy-log')
+  async logOrderEpinCopy(@Param('orderId') orderId: string, @Req() req: any, @Body() body: any) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId }, select: { id: true, tenantId: true } });
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: order.tenantId || undefined,
+        userId: req.user?.id || undefined,
+        action: 'VIEW_EPIN',
+        category: 'ORDER',
+        entityType: 'Order',
+        entityId: order.id,
+        details: {
+          event: 'EPIN_COPIED',
+          scope: body?.scope === 'all' ? 'all' : 'single',
+          codeCount: Number(body?.codeCount || 1),
+        },
+        ipAddress: req.ip || req.headers?.['x-forwarded-for'] || '',
+        userAgent: req.headers?.['user-agent'] || '',
+      },
+    });
+    return { success: true };
   }
 
   @Get('orders/:orderId/fraud-doc')
