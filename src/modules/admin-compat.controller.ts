@@ -3360,10 +3360,30 @@ export class AdminCompatController {
   }
 
   @Get('orders')
-  async getOrders(@Req() req: any, @Query('tenantId') tenantId?: string, @Query('status') status?: string) {
+  async getOrders(
+    @Req() req: any,
+    @Query('tenantId') tenantId?: string,
+    @Query('status') status?: string,
+    @Query('processing') processing?: string,
+    @Query('completed') completed?: string,
+  ) {
     const where: any = {};
     if (tenantId && tenantId !== 'all') where.tenantId = tenantId;
     if (status && status !== 'all') where.status = status as any;
+    if (completed === 'true' && (!status || status === 'all')) {
+      where.status = { in: ['COMPLETED', 'DELIVERED'] as any };
+    }
+    if (processing === 'true') {
+      where.status = { notIn: ['COMPLETED', 'DELIVERED', 'CANCELLED', 'REFUNDED'] as any };
+      where.subOrders = {
+        some: {
+          OR: [
+            { status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any } },
+            { status: 'PARTIALLY_DELIVERED' as any },
+          ],
+        },
+      };
+    }
     const orders = await this.prisma.order.findMany({
       where,
       include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
