@@ -984,7 +984,7 @@ export class MailService {
   }
 
   private getSiteUrl(): string {
-    return this.config.get('SITE_URL', 'https://joypin.com');
+    return this.config.get('SITE_URL', 'https://epin365.com');
   }
 
   private async getSiteUrlForTenant(tenantId?: string): Promise<string> {
@@ -1199,7 +1199,7 @@ export class MailService {
       verifyUrl: `${this.getSiteUrl()}/verify`,
       orderUrl: `${this.getSiteUrl()}/tr/dashboard/orders`,
       trackUrl: `${this.getSiteUrl()}/tr/track`,
-      resetUrl: `${this.getSiteUrl()}/tr/forgot-password`,
+      resetUrl: `${this.getSiteUrl()}/tr/reset-password`,
       walletUrl: `${this.getSiteUrl()}/tr/dashboard/balance`,
       checkoutUrl: `${this.getSiteUrl()}/tr/checkout`,
       reactivateUrl: `${this.getSiteUrl()}/reactivate`,

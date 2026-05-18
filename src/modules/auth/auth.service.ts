@@ -186,7 +186,7 @@ export class AuthService {
     return { verified: true };
   }
 
-  async forgotPassword(email: string): Promise<{ success: true }> {
+  async forgotPassword(email: string, countryCode?: string): Promise<{ success: true }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
@@ -203,7 +203,7 @@ export class AuthService {
       },
     });
 
-    const resetUrl = `${this.siteUrl()}/tr/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
+    const resetUrl = `${this.siteUrl()}/${this.normalizeCountryCode(countryCode)}/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
     await this.mail.sendPasswordReset(user.email, {
       firstName: user.firstName || user.email.split('@')[0],
       resetUrl,
@@ -365,5 +365,10 @@ export class AuthService {
 
   private siteUrl(): string {
     return String(this.config.get('SITE_URL') || 'https://epin365.com').replace(/\/$/, '');
+  }
+
+  private normalizeCountryCode(countryCode?: string): string {
+    const code = String(countryCode || 'tr').trim().toLowerCase();
+    return /^[a-z]{2,5}$/.test(code) ? code : 'tr';
   }
 }

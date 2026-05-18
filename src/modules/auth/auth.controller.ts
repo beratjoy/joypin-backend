@@ -74,8 +74,8 @@ export class AuthController {
   @Post('password/forgot')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Şifre sıfırlama maili gönder' })
-  async forgotPassword(@Body() body: { email: string }) {
-    return this.authService.forgotPassword(body.email);
+  async forgotPassword(@Body() body: { email: string; countryCode?: string }) {
+    return this.authService.forgotPassword(body.email, body.countryCode);
   }
 
   @Public()
