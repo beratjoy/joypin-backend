@@ -36,20 +36,35 @@ export class ReferralsService {
 
     const rule = userReferral.referralRule;
     if (!rule.isActive) return transactions;
+    if (rule.incomeModel !== 'PRODUCT_SALE') return transactions;
+    if (!rule.selfEarningEnabled && userReferral.referrerId === params.buyerUserId) return transactions;
+
+    const now = new Date();
+    if (rule.validFrom && rule.validFrom > now) return transactions;
+    if (rule.validUntil && rule.validUntil < now) return transactions;
+
+    const minPurchaseAmount = Number(rule.minPurchaseAmount || 0);
+    const maxPurchaseAmount = Number(rule.maxPurchaseAmount || 0);
+    if (minPurchaseAmount > 0 && params.salePrice < minPurchaseAmount) return transactions;
+    if (maxPurchaseAmount > 0 && params.salePrice > maxPurchaseAmount) return transactions;
+
+    const orderCountLimit = Number(rule.orderCountLimit || 0);
+    if (orderCountLimit > 0 && Number(userReferral.totalTransactions || 0) >= orderCountLimit) return transactions;
 
     // Ürün/kategori filtresi
     if (rule.applicableProductIds.length > 0 && !rule.applicableProductIds.includes(params.productId)) {
       return transactions;
     }
-    if (rule.applicableCategoryIds.length > 0 && params.categoryId && !rule.applicableCategoryIds.includes(params.categoryId)) {
+    if (rule.applicableCategoryIds.length > 0 && (!params.categoryId || !rule.applicableCategoryIds.includes(params.categoryId))) {
       return transactions;
     }
 
     // ─── Komisyon Hesaplama ─────────────────────────────────
-    const profit = params.salePrice - params.costPrice;
-    const baseAmount = rule.calculationBasis === 'PROFIT' ? profit : params.salePrice;
+    const profit = Math.max(0, params.salePrice - params.costPrice);
+    const baseAmount = rule.calculationMethod === 'SALE_PRICE' ? params.salePrice : profit;
 
     let commission = baseAmount * (Number(rule.commissionPercent) / 100);
+    commission += Number(rule.fixedCommission || 0);
 
     const maxCommission = Number(rule.maxCommission);
     if (maxCommission > 0 && commission > maxCommission) {

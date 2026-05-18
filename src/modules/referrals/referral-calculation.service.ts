@@ -284,7 +284,7 @@ export class ReferralCalculationService {
   private async findApplicableRule(
     input: ReferralCommissionInput,
   ) {
-    const { productId, categoryId, buyerUserId } = input;
+    const { productId, categoryId, buyerUserId, salePrice } = input;
 
     // Kullanıcının referral bağlantısını bul
     const userReferral = await this.prisma.userReferral.findFirst({
@@ -300,16 +300,29 @@ export class ReferralCalculationService {
     }
 
     const rule = userReferral.referralRule;
+    const now = new Date();
+    if (!rule.isActive) return null;
+    if (rule.incomeModel !== 'PRODUCT_SALE') return null;
+    if (!rule.selfEarningEnabled && userReferral.referrerId === buyerUserId) return null;
+    if (rule.validFrom && rule.validFrom > now) return null;
+    if (rule.validUntil && rule.validUntil < now) return null;
+
+    const minPurchaseAmount = Number(rule.minPurchaseAmount || 0);
+    const maxPurchaseAmount = Number(rule.maxPurchaseAmount || 0);
+    if (minPurchaseAmount > 0 && salePrice < minPurchaseAmount) return null;
+    if (maxPurchaseAmount > 0 && salePrice > maxPurchaseAmount) return null;
+
+    const orderCountLimit = Number(rule.orderCountLimit || 0);
+    if (orderCountLimit > 0 && Number(userReferral.totalTransactions || 0) >= orderCountLimit) return null;
 
     // Ürün/kategori kontrolü
     const productMatches = 
       rule.applicableProductIds.length === 0 ||
       rule.applicableProductIds.includes(productId);
 
-    const categoryMatches = 
-      !categoryId ||
+    const categoryMatches =
       rule.applicableCategoryIds.length === 0 ||
-      rule.applicableCategoryIds.includes(categoryId);
+      Boolean(categoryId && rule.applicableCategoryIds.includes(categoryId));
 
     if (!productMatches || !categoryMatches) {
       return null;
