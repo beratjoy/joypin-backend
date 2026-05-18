@@ -73,6 +73,7 @@ export class MailService {
     firstName: string;
     otpCode: string;
     userId?: string;
+    tenantId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
       <h2 style="color:#f1f5f9;margin:0 0 8px;">Hoş Geldin, ${data.firstName}! 🎮</h2>
@@ -98,7 +99,7 @@ export class MailService {
 
     await this.send({
       to, subject: `Hoş Geldin ${data.firstName}! E-postanı doğrula 🎮`, html,
-      emailType: 'WELCOME', userId: data.userId,
+      emailType: 'WELCOME', userId: data.userId, tenantId: data.tenantId,
       templateVars: { firstName: data.firstName, otpCode: data.otpCode, verifyUrl: `${this.getSiteUrl()}/verify?email=${encodeURIComponent(to)}` },
     });
   }
@@ -440,6 +441,7 @@ export class MailService {
     resetUrl: string;
     firstName: string;
     userId?: string;
+    tenantId?: string;
   }): Promise<void> {
     const html = this.wrapTemplate(`
       <h2 style="color:#f1f5f9;margin:0 0 8px;">Şifre Sıfırlama 🔒</h2>
@@ -457,7 +459,7 @@ export class MailService {
 
     await this.send({
       to, subject: 'Şifre Sıfırlama — JoyPin', html,
-      emailType: 'PASSWORD_RESET', userId: data.userId,
+      emailType: 'PASSWORD_RESET', userId: data.userId, tenantId: data.tenantId,
       templateVars: { firstName: data.firstName, resetUrl: data.resetUrl },
     });
   }
@@ -494,7 +496,7 @@ export class MailService {
   }
 
   /** OTP / Doğrulama kodu maili */
-  async sendOtp(to: string, data: { code: string; purpose: string; userId?: string }): Promise<void> {
+  async sendOtp(to: string, data: { code: string; purpose: string; userId?: string; tenantId?: string }): Promise<void> {
     const html = this.wrapTemplate(`
       <h2 style="color:#f1f5f9;margin:0 0 8px;">Doğrulama Kodu</h2>
       <p style="color:#94a3b8;font-size:14px;margin:0 0 24px;">${data.purpose}</p>
@@ -512,7 +514,7 @@ export class MailService {
 
     await this.send({
       to, subject: `Doğrulama Kodu: ${data.code}`, html,
-      emailType: 'EMAIL_VERIFICATION', userId: data.userId,
+      emailType: 'EMAIL_VERIFICATION', userId: data.userId, tenantId: data.tenantId,
       templateVars: { code: data.code, purpose: data.purpose },
     });
   }
@@ -1172,6 +1174,29 @@ export class MailService {
     return domain?.hostname ? `https://${domain.hostname}` : this.getSiteUrl();
   }
 
+  private async getTenantMailDefaults(tenantId?: string) {
+    if (!tenantId || tenantId === 'all') return null;
+    const tenant = await this.prisma.tenantBrand.findUnique({
+      where: { id: tenantId },
+      select: {
+        publicName: true,
+        name: true,
+        domains: {
+          where: { isActive: true },
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          take: 1,
+          select: { hostname: true },
+        },
+      },
+    }).catch(() => null);
+    const hostname = tenant?.domains?.[0]?.hostname?.replace(/^www\./, '');
+    return {
+      brandName: tenant?.publicName || tenant?.name || 'JoyPin',
+      fromEmail: hostname ? `noreply@${hostname}` : undefined,
+      replyTo: hostname ? `destek@${hostname}` : undefined,
+    };
+  }
+
   private async getScopedSettings(keys: string[], tenantId?: string): Promise<Record<string, string>> {
     const [globalRows, tenantRows] = await Promise.all([
       this.prisma.siteSettings.findMany({ where: { key: { in: keys } } }),
@@ -1224,8 +1249,12 @@ export class MailService {
       'mail_brand_name',
       'mail_footer_company',
     ];
-    const settings = await this.getScopedSettings(keys, tenantId);
+    const [settings, tenantDefaults] = await Promise.all([
+      this.getScopedSettings(keys, tenantId),
+      this.getTenantMailDefaults(tenantId),
+    ]);
     const port = Number(settings.mail_smtp_port || this.config.get('SMTP_PORT', 465));
+    const brandName = settings.mail_brand_name || tenantDefaults?.brandName || 'JoyPin';
 
     return {
       enabled: (settings.mail_enabled || this.config.get('MAIL_ENABLED', 'true')) !== 'false',
@@ -1234,10 +1263,10 @@ export class MailService {
       secure: (settings.mail_smtp_secure || this.config.get('SMTP_SECURE', 'true')) !== 'false',
       user: settings.mail_smtp_user || this.config.get('SMTP_USER', 'resend'),
       pass: settings.mail_smtp_pass || this.config.get('SMTP_PASS', ''),
-      fromEmail: settings.mail_from_email || this.config.get('SMTP_FROM', 'noreply@joypin.com'),
-      fromName: settings.mail_from_name || settings.mail_brand_name || this.config.get('SMTP_FROM_NAME', 'JoyPin'),
-      replyTo: settings.mail_reply_to || this.config.get('SMTP_REPLY_TO', ''),
-      brandName: settings.mail_brand_name || 'JoyPin',
+      fromEmail: settings.mail_from_email || tenantDefaults?.fromEmail || this.config.get('SMTP_FROM', 'noreply@epin365.com'),
+      fromName: settings.mail_from_name || brandName || this.config.get('SMTP_FROM_NAME', 'JoyPin'),
+      replyTo: settings.mail_reply_to || tenantDefaults?.replyTo || this.config.get('SMTP_REPLY_TO', ''),
+      brandName,
       footerCompany: settings.mail_footer_company || 'Joy Bilisim Yazilim E-Ticaret Danismanlik Limited Sirketi',
     };
   }

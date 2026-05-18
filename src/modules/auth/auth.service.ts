@@ -54,6 +54,7 @@ export class AuthService {
     referralCode?: string;
     countryCode?: string;
     preferredCurrency?: string;
+    tenantHost?: string;
   }): Promise<AuthTokens> {
     // E-posta benzersizlik kontrolü
     const normalizedEmail = params.email.trim().toLowerCase();
@@ -79,6 +80,7 @@ export class AuthService {
     // Kullanıcı oluştur
     const countryCode = normalizeCountryCode(params.countryCode);
     const preferredCurrency = normalizeCurrency(params.preferredCurrency, countryCode);
+    const tenantId = await this.tenantIdForHost(params.tenantHost);
 
     const emailVerificationCode = this.generateNumericCode();
     const user = await this.prisma.user.create({
@@ -128,6 +130,7 @@ export class AuthService {
       firstName: user.firstName || user.email.split('@')[0],
       otpCode: emailVerificationCode,
       userId: user.id,
+      tenantId,
     }).catch((error) => {
       this.logger.warn(`[Mail] Welcome email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
     });
@@ -135,7 +138,7 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  async resendEmailVerification(email: string): Promise<{ success: true }> {
+  async resendEmailVerification(email: string, tenantHost?: string): Promise<{ success: true }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
@@ -154,6 +157,7 @@ export class AuthService {
       firstName: user.firstName || user.email.split('@')[0],
       otpCode: code,
       userId: user.id,
+      tenantId: await this.tenantIdForHost(tenantHost),
     }).catch((error) => {
       this.logger.warn(`[Mail] Verification email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
     });
@@ -186,7 +190,7 @@ export class AuthService {
     return { verified: true };
   }
 
-  async forgotPassword(email: string, countryCode?: string): Promise<{ success: true }> {
+  async forgotPassword(email: string, countryCode?: string, tenantHost?: string): Promise<{ success: true }> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
@@ -203,11 +207,13 @@ export class AuthService {
       },
     });
 
-    const resetUrl = `${this.siteUrl()}/${this.normalizeCountryCode(countryCode)}/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
+    const tenantId = await this.tenantIdForHost(tenantHost);
+    const resetUrl = `${await this.siteUrlForTenant(tenantId)}/${this.normalizeCountryCode(countryCode)}/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
     await this.mail.sendPasswordReset(user.email, {
       firstName: user.firstName || user.email.split('@')[0],
       resetUrl,
       userId: user.id,
+      tenantId,
     }).catch((error) => {
       this.logger.warn(`[Mail] Password reset email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
     });
@@ -365,6 +371,42 @@ export class AuthService {
 
   private siteUrl(): string {
     return String(this.config.get('SITE_URL') || 'https://epin365.com').replace(/\/$/, '');
+  }
+
+  private normalizeHost(host?: string): string {
+    return String(host || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/.*$/, '')
+      .replace(/:\d+$/, '')
+      .replace(/^www\./, '');
+  }
+
+  private async tenantIdForHost(host?: string): Promise<string | undefined> {
+    const normalized = this.normalizeHost(host);
+    if (!normalized) return undefined;
+    const domain = await this.prisma.tenantDomain.findFirst({
+      where: {
+        isActive: true,
+        OR: [
+          { hostname: normalized },
+          { hostname: `www.${normalized}` },
+        ],
+      },
+      select: { tenantId: true },
+    }).catch(() => null);
+    return domain?.tenantId || undefined;
+  }
+
+  private async siteUrlForTenant(tenantId?: string): Promise<string> {
+    if (!tenantId) return this.siteUrl();
+    const domain = await this.prisma.tenantDomain.findFirst({
+      where: { tenantId, isActive: true },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: { hostname: true },
+    }).catch(() => null);
+    return domain?.hostname ? `https://${domain.hostname}` : this.siteUrl();
   }
 
   private normalizeCountryCode(countryCode?: string): string {

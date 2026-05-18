@@ -3,6 +3,7 @@ import {
   Post,
   Body,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -37,8 +38,10 @@ export class AuthController {
       countryCode?: string;
       preferredCurrency?: string;
     },
+    @Headers('x-forwarded-host') forwardedHost?: string,
+    @Headers('host') host?: string,
   ) {
-    return this.authService.register(body);
+    return this.authService.register({ ...body, tenantHost: forwardedHost || host });
   }
 
   @Public()
@@ -58,8 +61,8 @@ export class AuthController {
   @Post('email/resend')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'E-posta doğrulama kodunu yeniden gönder' })
-  async resendEmailVerification(@Body() body: { email: string }) {
-    return this.authService.resendEmailVerification(body.email);
+  async resendEmailVerification(@Body() body: { email: string }, @Headers('x-forwarded-host') forwardedHost?: string, @Headers('host') host?: string) {
+    return this.authService.resendEmailVerification(body.email, forwardedHost || host);
   }
 
   @Public()
@@ -74,8 +77,8 @@ export class AuthController {
   @Post('password/forgot')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Şifre sıfırlama maili gönder' })
-  async forgotPassword(@Body() body: { email: string; countryCode?: string }) {
-    return this.authService.forgotPassword(body.email, body.countryCode);
+  async forgotPassword(@Body() body: { email: string; countryCode?: string }, @Headers('x-forwarded-host') forwardedHost?: string, @Headers('host') host?: string) {
+    return this.authService.forgotPassword(body.email, body.countryCode, forwardedHost || host);
   }
 
   @Public()
