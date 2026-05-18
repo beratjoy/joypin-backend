@@ -352,6 +352,10 @@ export class StorefrontCompatController {
       categoryName: product.category?.name || '',
       categoryId: product.categoryId,
       categorySlug: product.category?.slug || null,
+      allowedCountries: product.allowedCountries || [],
+      categoryAllowedCountries: product.category?.allowedCountries || [],
+      hasInfiniteStock: product.hasInfiniteStock,
+      lowStockThreshold: product.lowStockThreshold,
       stockType: product.hasInfiniteStock ? 'infinite' : 'manual',
       stockCount: product.stockCount,
       topupFields: product.topupFields.map((field: any) => ({
