@@ -256,6 +256,7 @@ export class CustomerCompatController {
           isCompleted: mission.progress[0]?.isCompleted || autoValue >= target,
           rewardType: mission.rewardType,
           rewardAmount: Number(mission.rewardAmount || 0),
+          rewardAutoClaim: Boolean(mission.rewardAutoClaim),
           minTier: mission.minTier,
         };
       });

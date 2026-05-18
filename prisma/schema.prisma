@@ -2697,6 +2697,8 @@ model Mission {
   rewardType    MissionRewardType
   rewardAmount  Decimal           @db.Decimal(12, 4) // Ödül tutarı (200 TL, 500 puan vb)
 
+  rewardAutoClaim Boolean          @default(false) // true = tamamlaninca odul otomatik tanimlanir
+
   isActive      Boolean           @default(true)
   startDate     DateTime?
   endDate       DateTime?

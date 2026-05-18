@@ -25,6 +25,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { StocksModule } from './modules/stocks/stocks.module';
 import { SecurityModule } from './modules/security/security.module';
+import { MissionsModule } from './modules/missions/missions.module';
 import { RbacGuard } from './modules/security/rbac.guard';
 import { AdminCompatController } from './modules/admin-compat.controller';
 import { HealthController } from './health.controller';
@@ -77,6 +78,7 @@ import { I18nCompatController } from './modules/i18n-compat.controller';
 
     // ─── Security & RBAC (Zero-Trust) ──────────────────────
     SecurityModule,
+    MissionsModule,
   ],
   controllers: [AdminCompatController, HealthController, StorefrontCompatController, CustomerCompatController, I18nCompatController],
   providers: [

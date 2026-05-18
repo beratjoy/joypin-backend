@@ -174,6 +174,9 @@ export class MissionTrackerService {
 
       if (targetReached) {
         await this.sendCompletionNotification(userId, mission.title);
+        if ((mission as any).rewardAutoClaim) {
+          await this.claimReward(userId, mission.id);
+        }
         this.logger.log(`[Mission] 🎉 Mission completed: user=${userId}, mission="${mission.title}"`);
       }
     }

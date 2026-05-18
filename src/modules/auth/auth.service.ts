@@ -13,6 +13,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UserRole, UserStatus } from '@prisma/client';
 import { normalizeCountryCode, normalizeCurrency, walletCanChangeCurrency } from '../../common/locale-currency';
 import { MailService } from '../mail/mail.service';
+import { MissionTrackerService } from '../missions/mission-tracker.service';
 
 export interface JwtPayload {
   sub: string;
@@ -40,6 +41,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
+    private readonly missions: MissionTrackerService,
   ) {}
 
   /**
@@ -120,6 +122,9 @@ export class AuthService {
             referredUserId: user.id,
             referralRuleId: activeRule.id,
           },
+        });
+        await this.missions.onNewReferral(referrerId).catch((error) => {
+          this.logger.warn(`[Mission] Referral mission update skipped for ${referrerId}: ${error instanceof Error ? error.message : error}`);
         });
       }
     }
