@@ -116,7 +116,7 @@ export class CustomerCompatController {
     });
     if (!coupon) return { success: false, message: 'Kupon bulunamadı' };
 
-    if (!this.visibleForTenant(coupon, tenant?.id)) return { success: false, message: 'Kupon bulunamadÄ±' };
+    if (!this.visibleForTenant(coupon, tenant?.id)) return { success: false, message: 'Kupon bulunamadı' };
 
     const userCoupon = await this.prisma.userCoupon.upsert({
       where: { userId_couponId: { userId: req.user.id, couponId: coupon.id } },
@@ -414,21 +414,37 @@ export class CustomerCompatController {
       take: 100,
     });
 
-    return orders.flatMap((order) =>
-      order.subOrders.map((subOrder) => ({
-        id: subOrder.id,
+    return orders.map((order) => {
+      const subOrders = order.subOrders.map((subOrder: any) => {
+        const codes = (subOrder.items || [])
+          .filter((item: any) => item.isDelivered && item.externalRef)
+          .map((item: any) => item.externalRef);
+        return {
+          id: subOrder.id,
+          productName: subOrder.product?.name || 'Ürün',
+          productType: subOrder.product?.type || 'EPIN',
+          quantity: subOrder.quantity,
+          totalPrice: Number(subOrder.totalPrice),
+          status: subOrder.status,
+          deliveryType: subOrder.deliveryType,
+          codes,
+        };
+      });
+      const firstSubOrder = order.subOrders[0] as any;
+      return {
+        id: order.id,
         orderNumber: order.orderNumber,
-        productName: subOrder.product?.name || 'Ürün',
-        productImage: subOrder.product?.iconUrl || null,
-        quantity: subOrder.quantity,
-        totalAmount: Number(subOrder.totalPrice),
-        currency: subOrder.currency,
-        status: subOrder.status,
-        epinCode: null,
-        botReference: subOrder.botProviderId || null,
+        productName: firstSubOrder?.product?.name || 'Ürün',
+        productImage: firstSubOrder?.product?.iconUrl || null,
+        quantity: order.subOrders.reduce((sum: number, subOrder: any) => sum + Number(subOrder.quantity || 0), 0),
+        totalAmount: Number(order.totalAmount),
+        currency: order.currency,
+        status: order.status,
+        paymentMethod: order.paymentMethod,
+        subOrders,
         createdAt: order.createdAt,
-      })),
-    );
+      };
+    });
   }
 
   @Get('tickets')
@@ -536,3 +552,4 @@ export class CustomerCompatController {
     return { apiKey: null };
   }
 }
+

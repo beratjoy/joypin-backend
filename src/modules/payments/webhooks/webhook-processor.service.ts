@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
+import { StockDeliveryService } from '../../stocks/stock-delivery.service';
 
 /**
  * Webhook Processor Service
@@ -27,6 +28,7 @@ export class WebhookProcessorService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
+    private readonly stockDelivery: StockDeliveryService,
   ) {}
 
   // ═══════════════════════════════════════════════════════
@@ -226,13 +228,8 @@ export class WebhookProcessorService {
       this.logger.warn(`[Mail] Order paid email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
     });
 
-    // 2) Bakiye yükleme (eğer balance deposit ise)
-    if (!order.userId) {
-      // Guest order — bakiye güncellemesi yok
-    } else {
-      // Sipariş otomasyonu → SubOrder'ları bot'a gönder
-      await this.triggerOrderAutomation(order);
-    }
+    // 2) Siparis otomasyonu -> stok/bot/manual akislarini tetikle
+    await this.triggerOrderAutomation(order);
 
     // 3) WebSocket bildirimi gönder
     await this.sendPaymentNotification(order.userId || '', orderId, provider);
@@ -338,11 +335,47 @@ export class WebhookProcessorService {
   private async triggerOrderAutomation(order: any): Promise<void> {
     for (const subOrder of order.subOrders) {
       if (subOrder.deliveryType === 'EPIN') {
-        // E-pin stoktan ata
-        await this.prisma.subOrder.update({
-          where: { id: subOrder.id },
-          data: { status: 'PROCESSING' },
+        const result = await this.stockDelivery.allocateCodes({
+          productId: subOrder.productId,
+          quantity: subOrder.quantity,
+          userId: order.userId || undefined,
+          orderId: order.id,
+          subOrderId: subOrder.id,
         });
+
+        if (!result.success) {
+          await this.prisma.subOrder.update({
+            where: { id: subOrder.id },
+            data: {
+              status: 'PENDING_STOCK',
+              lastError: result.error || 'Stoktan otomatik teslimat yapilamadi',
+              deliveryNote: result.error || 'Stok bekleniyor',
+            },
+          });
+          continue;
+        }
+
+        const now = new Date();
+        await this.prisma.$transaction([
+          this.prisma.subOrderItem.createMany({
+            data: result.codes.map((item) => ({
+              subOrderId: subOrder.id,
+              externalRef: item.code,
+              isDelivered: true,
+              deliveredAt: now,
+            })),
+          }),
+          this.prisma.subOrder.update({
+            where: { id: subOrder.id },
+            data: {
+              status: 'DELIVERED',
+              deliveredCount: subOrder.quantity,
+              unitCost: result.codes.length > 0 ? result.totalCost / result.codes.length : subOrder.unitCost,
+              deliveryNote: `${result.codes.length} adet e-pin stoktan otomatik teslim edildi`,
+              lastError: null,
+            },
+          }),
+        ]);
       } else if (subOrder.deliveryType === 'API_TOPUP') {
         // Bot fallback zincirini tetikle
         await this.prisma.subOrder.update({
@@ -357,6 +390,39 @@ export class WebhookProcessorService {
         });
       }
     }
+
+    await this.recalculateParentStatus(order.id);
+  }
+
+  private async recalculateParentStatus(orderId: string): Promise<void> {
+    const refreshed = await this.prisma.subOrder.findMany({
+      where: { parentOrderId: orderId },
+      select: { status: true, deliveredCount: true },
+    });
+    const statuses = refreshed.map((item) => item.status);
+    const allDelivered = statuses.length > 0 && statuses.every((status) => status === 'DELIVERED');
+    const allCancelled = statuses.length > 0 && statuses.every((status) => status === 'CANCELLED');
+    const allRefunded = statuses.length > 0 && statuses.every((status) => status === 'REFUNDED');
+    const someDelivered = refreshed.some(
+      (item) =>
+        item.status === 'DELIVERED' ||
+        item.status === 'PARTIALLY_DELIVERED' ||
+        Number(item.deliveredCount || 0) > 0,
+    );
+    const someProcessing = statuses.some((status) => status === 'PROCESSING' || status === 'AWAITING_FALLBACK');
+    const nextStatus = allDelivered
+      ? 'COMPLETED'
+      : allCancelled
+        ? 'CANCELLED'
+        : allRefunded
+          ? 'REFUNDED'
+          : someDelivered
+            ? 'PARTIALLY_DELIVERED'
+            : someProcessing
+              ? 'PROCESSING'
+              : 'PENDING';
+
+    await this.prisma.order.update({ where: { id: orderId }, data: { status: nextStatus as any } });
   }
 
   /**

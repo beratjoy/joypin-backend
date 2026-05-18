@@ -4,12 +4,14 @@ import { OrdersController } from './orders.controller';
 import { EPinsModule } from '../epins/epins.module';
 import { WalletsModule } from '../wallets/wallets.module';
 import { BotsModule } from '../bots/bots.module';
+import { StocksModule } from '../stocks/stocks.module';
 
 @Module({
   imports: [
     forwardRef(() => EPinsModule),
     forwardRef(() => WalletsModule),
     forwardRef(() => BotsModule),
+    StocksModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

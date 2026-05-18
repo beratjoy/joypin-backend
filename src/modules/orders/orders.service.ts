@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
+import { StockDeliveryService } from '../stocks/stock-delivery.service';
 
 // ─── Shared Types ────────────────────────────────────────────
 interface OrderItemInput {
@@ -33,6 +34,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly stockDelivery: StockDeliveryService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -270,7 +272,105 @@ export class OrdersService {
       this.logger.warn(`[Mail] Order create email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
     });
 
+    if (isWalletPayment) {
+      await this.autoFulfillPaidEpinOrder(order.id).catch((error) => {
+        this.logger.error(`[AutoDelivery] ${order.id}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
+
     return order;
+  }
+
+  private async autoFulfillPaidEpinOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: true,
+        subOrders: {
+          include: {
+            product: true,
+            items: true,
+          },
+        },
+      },
+    });
+    if (!order || order.paymentStatus !== 'PAID') return;
+
+    const deliveredCodes: string[] = [];
+
+    for (const subOrder of order.subOrders) {
+      if (subOrder.deliveryType !== 'EPIN') continue;
+      if (['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status)) continue;
+
+      const alreadyDelivered = subOrder.items.filter((item) => item.isDelivered).length;
+      if (alreadyDelivered >= subOrder.quantity) {
+        await this.prisma.subOrder.update({
+          where: { id: subOrder.id },
+          data: { status: 'DELIVERED', deliveredCount: subOrder.quantity },
+        });
+        continue;
+      }
+
+      const result = await this.stockDelivery.allocateCodes({
+        productId: subOrder.productId,
+        quantity: subOrder.quantity - alreadyDelivered,
+        userId: order.userId || undefined,
+        orderId: order.id,
+        subOrderId: subOrder.id,
+      });
+
+      if (!result.success) {
+        await this.prisma.subOrder.update({
+          where: { id: subOrder.id },
+          data: {
+            status: 'PENDING_STOCK',
+            lastError: result.error || 'Stoktan otomatik teslimat yapilamadi',
+            deliveryNote: result.error || 'Stok bekleniyor',
+          },
+        });
+        continue;
+      }
+
+      const now = new Date();
+      await this.prisma.subOrderItem.createMany({
+        data: result.codes.map((item) => ({
+          subOrderId: subOrder.id,
+          externalRef: item.code,
+          isDelivered: true,
+          deliveredAt: now,
+        })),
+      });
+
+      const nextDeliveredCount = alreadyDelivered + result.codes.length;
+      const fullyDelivered = nextDeliveredCount >= subOrder.quantity;
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: fullyDelivered ? 'DELIVERED' : 'PARTIALLY_DELIVERED',
+          deliveredCount: nextDeliveredCount,
+          unitCost: result.codes.length > 0 ? result.totalCost / result.codes.length : subOrder.unitCost,
+          deliveryNote: `${result.codes.length} adet e-pin stoktan otomatik teslim edildi`,
+          lastError: null,
+        },
+      });
+
+      deliveredCodes.push(...result.codes.map((item) => item.code));
+    }
+
+    await this.recalculateParentStatus(order.id);
+
+    const deliveryEmail = order.user?.email || order.guestEmail;
+    if (deliveredCodes.length > 0 && deliveryEmail) {
+      await this.mail.sendEpinDelivery(deliveryEmail, {
+        orderId: order.orderNumber || order.id,
+        productName: order.subOrders.map((item) => item.product?.name).filter(Boolean).join(', ') || 'Siparis',
+        codes: deliveredCodes,
+        userId: order.userId || undefined,
+        tenantId: order.tenantId || undefined,
+      }).catch((error) => {
+        this.logger.warn(`[Mail] Auto delivery email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
   }
 
   private async sendOrderCreatedEmail(orderId: string, guestTrackingToken?: string) {
@@ -709,13 +809,22 @@ export class OrdersService {
   // ═══════════════════════════════════════════════════════════
 
   async findById(id: string) {
-    return this.prisma.order.findUnique({
+    const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
         subOrders: { include: { product: true, items: true } },
         financialLogs: { orderBy: { createdAt: 'asc' } },
       },
     });
+    if (!order) return null;
+    return {
+      ...order,
+      subOrders: order.subOrders.map((subOrder: any) => ({
+        ...subOrder,
+        epinCode: subOrder.items?.filter((item: any) => item.isDelivered && item.externalRef).map((item: any) => item.externalRef).join('\n') || null,
+        codes: subOrder.items?.filter((item: any) => item.isDelivered && item.externalRef).map((item: any) => item.externalRef) || [],
+      })),
+    };
   }
 
   async findByUserId(userId: string) {
