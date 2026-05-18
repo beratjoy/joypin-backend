@@ -1,5 +1,5 @@
 ﻿import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
 import { Roles } from './auth/decorators/roles.decorator';
@@ -439,13 +439,24 @@ export class AdminCompatController {
     }));
   }
 
-  private normalizeAdminOrder(order: any) {
+  private canViewTopupFields(order: any, viewerId?: string | null) {
+    return Boolean(viewerId && order?.assignedStaffId && order.assignedStaffId === viewerId);
+  }
+
+  private hasTopupFieldData(data: any) {
+    return Boolean(data && typeof data === 'object' && Object.values(data).some((value) => String(value ?? '').trim().length > 0));
+  }
+
+  private normalizeAdminOrder(order: any, viewerId?: string | null) {
     const customerName = order.user
       ? `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim() || order.user.email
       : order.guestEmail || 'Misafir Musteri';
     const customerEmail = order.user?.email || order.guestEmail || '';
+    const canViewTopupFields = this.canViewTopupFields(order, viewerId);
     const normalizedSubOrders = (order.subOrders || []).map((subOrder: any) => ({
       ...subOrder,
+      topupFieldData: canViewTopupFields ? subOrder.topupFieldData : null,
+      hasHiddenTopupFields: !canViewTopupFields && this.hasTopupFieldData(subOrder.topupFieldData),
       productName: subOrder.product?.name || subOrder.productName || 'Urun adi yok',
       productIconUrl: subOrder.product?.iconUrl || subOrder.product?.merchantImageUrl || null,
       productCategoryName: subOrder.product?.category?.name || null,
@@ -3246,7 +3257,7 @@ export class AdminCompatController {
   }
 
   @Get('orders')
-  async getOrders(@Query('tenantId') tenantId?: string, @Query('status') status?: string) {
+  async getOrders(@Req() req: any, @Query('tenantId') tenantId?: string, @Query('status') status?: string) {
     const where: any = {};
     if (tenantId && tenantId !== 'all') where.tenantId = tenantId;
     if (status && status !== 'all') where.status = status as any;
@@ -3257,11 +3268,11 @@ export class AdminCompatController {
     });
     const withStaff = await this.attachAssignedStaff(orders);
     const withTenant = await this.attachTenant(withStaff);
-    return { orders: withTenant.map((order) => this.normalizeAdminOrder(order)) };
+    return { orders: withTenant.map((order) => this.normalizeAdminOrder(order, req.user?.id)) };
   }
 
   @Get('orders/:orderId')
-  async getOrderById(@Param('orderId') orderId: string, @Query('tenantId') tenantId?: string) {
+  async getOrderById(@Param('orderId') orderId: string, @Req() req: any, @Query('tenantId') tenantId?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -3276,11 +3287,11 @@ export class AdminCompatController {
     }
     const [withStaff] = await this.attachAssignedStaff([order]);
     const [withTenant] = await this.attachTenant([withStaff]);
-    return this.normalizeAdminOrder(withTenant);
+    return this.normalizeAdminOrder(withTenant, req.user?.id);
   }
 
   @Get('orders/:orderId/fraud-doc')
-  async getOrderFraudDoc(@Param('orderId') orderId: string, @Res() res: any, @Query('tenantId') tenantId?: string) {
+  async getOrderFraudDoc(@Param('orderId') orderId: string, @Req() req: any, @Res() res: any, @Query('tenantId') tenantId?: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -3300,6 +3311,9 @@ export class AdminCompatController {
 
     if (!order || (this.isTenantScoped(tenantId) && order.tenantId !== tenantId)) {
       throw new NotFoundException('Sipariş bulunamadı');
+    }
+    if (order.subOrders.some((subOrder: any) => this.hasTopupFieldData(subOrder.topupFieldData)) && !this.canViewTopupFields(order, req.user?.id)) {
+      throw new ForbiddenException('Top-up ID bilgileri sadece siparişi işleme alan personele görünür.');
     }
 
     const subOrderIds = order.subOrders.map((subOrder: any) => subOrder.id);
@@ -3363,11 +3377,11 @@ export class AdminCompatController {
       socket.emit('order:claimed', { orderId, orderNumber: order.orderNumber, tenantId: order.tenantId, assignedStaff: withStaff.assignedStaff });
     }
 
-    return { success: true, message: 'Sipariş işleme alındı', order: withStaff };
+    return { success: true, message: 'Sipariş işleme alındı', order: this.normalizeAdminOrder(withStaff, staffId) };
   }
 
   @Post('orders/:orderId/route-providers')
-  async routeOrderProviders(@Param('orderId') orderId: string) {
+  async routeOrderProviders(@Param('orderId') orderId: string, @Req() req: any) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { subOrders: true },
@@ -3390,12 +3404,12 @@ export class AdminCompatController {
     return {
       success: results.some((result: any) => result.success),
       results,
-      order: withStaff || null,
+      order: withStaff ? this.normalizeAdminOrder(withStaff, req.user?.id) : null,
     };
   }
 
   @Post('orders/:orderId/stock-codes')
-  async addOrderStockCodes(@Param('orderId') orderId: string, @Body() body: any) {
+  async addOrderStockCodes(@Param('orderId') orderId: string, @Body() body: any, @Req() req: any) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { subOrders: { include: { product: true } } },
@@ -3490,12 +3504,12 @@ export class AdminCompatController {
       added: newCodes.length,
       duplicates: rawCodes.length - newCodes.length,
       poolId: poolLink.poolId,
-      order: withTenant ? this.normalizeAdminOrder(withTenant) : null,
+      order: withTenant ? this.normalizeAdminOrder(withTenant, req.user?.id) : null,
     };
   }
 
   @Post('orders/:orderId/cost')
-  async updateOrderCost(@Param('orderId') orderId: string, @Body() body: any) {
+  async updateOrderCost(@Param('orderId') orderId: string, @Body() body: any, @Req() req: any) {
     const unitCost = Number(body?.unitCost);
     if (!Number.isFinite(unitCost) || unitCost < 0) {
       throw new BadRequestException('Geçerli maliyet girilmelidir');
@@ -3532,7 +3546,7 @@ export class AdminCompatController {
     return {
       success: true,
       updated: targetIds.length,
-      order: withTenant ? this.normalizeAdminOrder(withTenant) : null,
+      order: withTenant ? this.normalizeAdminOrder(withTenant, req.user?.id) : null,
     };
   }
 
@@ -4033,7 +4047,7 @@ export class AdminCompatController {
     return { success: true, reward, remaining: accessType === 'POINTS' ? null : Math.max(dailyLimit - opensToday - 1, 0) };
   }
   @Get('orders/processing')
-  async getOrdersForProcessing(@Query('tenantId') tenantId?: string) {
+  async getOrdersForProcessing(@Req() req: any, @Query('tenantId') tenantId?: string) {
     const subOrders = await this.prisma.subOrder.findMany({
       where: {
         status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any },
@@ -4046,29 +4060,34 @@ export class AdminCompatController {
     const parentOrders = await this.attachAssignedStaff(subOrders.map((subOrder: any) => subOrder.parentOrder).filter(Boolean));
     const parentMap = new Map(parentOrders.map((order: any) => [order.id, order]));
 
-    return subOrders.map((subOrder: any) => ({
-      id: subOrder.id,
-      parentOrderId: subOrder.parentOrderId,
-      orderNumber: subOrder.parentOrder?.orderNumber || subOrder.parentOrderId,
-      customerName: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || 'Misafir',
-      customerEmail: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || '',
-      productName: subOrder.product?.name || '',
-      productType: subOrder.deliveryType === 'API_TOPUP' || subOrder.topupFieldData ? 'TOPUP' : 'EPIN',
-      quantity: subOrder.quantity,
-      totalAmount: Number(subOrder.totalPrice || 0),
-      currency: subOrder.currency,
-      status: subOrder.status,
-      providerName: subOrder.botProvider?.name || null,
-      providerStatus: subOrder.botProvider?.status || null,
-      deliveryNote: subOrder.deliveryNote,
-      lastError: subOrder.lastError,
-      assignedStaffId: subOrder.parentOrder?.assignedStaffId || null,
-      assignedStaff: parentMap.get(subOrder.parentOrderId)?.assignedStaff || null,
-      staffLockedAt: subOrder.parentOrder?.staffLockedAt || null,
-      topupFieldData: subOrder.topupFieldData,
-      epinCodes: [],
-      createdAt: subOrder.createdAt,
-    }));
+    return subOrders.map((subOrder: any) => {
+      const parentOrder = parentMap.get(subOrder.parentOrderId) || subOrder.parentOrder;
+      const canViewTopupFields = this.canViewTopupFields(parentOrder, req.user?.id);
+      return {
+        id: subOrder.id,
+        parentOrderId: subOrder.parentOrderId,
+        orderNumber: subOrder.parentOrder?.orderNumber || subOrder.parentOrderId,
+        customerName: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || 'Misafir',
+        customerEmail: subOrder.parentOrder?.user?.email || subOrder.parentOrder?.guestEmail || '',
+        productName: subOrder.product?.name || '',
+        productType: subOrder.deliveryType === 'API_TOPUP' || subOrder.topupFieldData ? 'TOPUP' : 'EPIN',
+        quantity: subOrder.quantity,
+        totalAmount: Number(subOrder.totalPrice || 0),
+        currency: subOrder.currency,
+        status: subOrder.status,
+        providerName: subOrder.botProvider?.name || null,
+        providerStatus: subOrder.botProvider?.status || null,
+        deliveryNote: subOrder.deliveryNote,
+        lastError: subOrder.lastError,
+        assignedStaffId: subOrder.parentOrder?.assignedStaffId || null,
+        assignedStaff: parentOrder?.assignedStaff || null,
+        staffLockedAt: subOrder.parentOrder?.staffLockedAt || null,
+        topupFieldData: canViewTopupFields ? subOrder.topupFieldData : null,
+        hasHiddenTopupFields: !canViewTopupFields && this.hasTopupFieldData(subOrder.topupFieldData),
+        epinCodes: [],
+        createdAt: subOrder.createdAt,
+      };
+    });
   }
 
   private async createBatchInvoices(forceAll: boolean) {
