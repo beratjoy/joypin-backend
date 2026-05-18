@@ -96,11 +96,35 @@ export class ReferralsService {
       },
     });
 
+    const wallet = await this.prisma.wallet.upsert({
+      where: { userId: userReferral.referrerId },
+      create: {
+        userId: userReferral.referrerId,
+        currency: 'TRY',
+      },
+      update: {},
+    });
+    const updatedWallet = await this.prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { balanceCommission: { increment: commission } },
+    });
+    await this.prisma.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        type: 'CREDIT',
+        balanceField: 'COMMISSION',
+        amount: Math.round(commission * 10000) / 10000,
+        balanceAfter: updatedWallet.balanceCommission,
+        description: `Referans komisyonu: ${params.orderId}`,
+        orderId: params.orderId,
+        referenceType: 'referral',
+        referenceId: savedTx.id,
+      },
+    });
+
     this.logger.log(
       `Referans komisyonu: ${commission.toFixed(4)} (${rule.calculationBasis}, %${rule.commissionPercent})`,
     );
-
-    // TODO: WalletsService.credit() ile referrer'a COMMISSION bakiyesi ekleme
 
     return transactions;
   }
