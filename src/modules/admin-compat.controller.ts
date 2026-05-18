@@ -1514,7 +1514,114 @@ export class AdminCompatController {
       .slice(0, 180) || 'urun';
   }
 
+  private parseProviderBoolean(value: any, fallback = true) {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value > 0;
+    const text = String(value).trim().toLowerCase();
+    if (['true', '1', 'active', 'aktif', 'enabled', 'enable', 'available', 'online', 'yes', 'y'].includes(text)) return true;
+    if (['false', '0', 'passive', 'pasif', 'inactive', 'disabled', 'disable', 'unavailable', 'offline', 'no', 'n', 'closed', 'kapali', 'kapalı'].includes(text)) return false;
+    return fallback;
+  }
+
+  private normalizeProviderProductActive(product: any) {
+    const rawStatus = product?.status ?? product?.Status ?? product?.productStatus ?? product?.ProductStatus ?? product?.state ?? product?.State;
+    const rawActive = product?.isActive ?? product?.IsActive ?? product?.active ?? product?.Active ?? product?.enabled ?? product?.Enabled;
+    if (rawActive !== undefined || rawStatus !== undefined) {
+      const statusText = String(rawStatus ?? '').trim().toLowerCase();
+      if (['passive', 'pasif', 'inactive', 'disabled', 'disable', 'closed', 'kapali', 'kapalı', 'deleted', 'blocked'].includes(statusText)) return false;
+      return this.parseProviderBoolean(rawActive ?? rawStatus, true);
+    }
+    return true;
+  }
+
+  private normalizeProviderFieldKey(value: string, fallback: string) {
+    const key = this.slugifyProviderText(value || fallback).replace(/-/g, '_');
+    return key || fallback;
+  }
+
+  private collectProviderRequiredFields(product: any) {
+    const containers = [
+      product?.RequiredFields,
+      product?.requiredFields,
+      product?.CustomInputFields,
+      product?.customInputFields,
+      product?.Fields,
+      product?.fields,
+      product?.FormFields,
+      product?.formFields,
+      product?.productData?.requiredFields,
+      product?.productData?.fields,
+      product?.productData?.formFields,
+    ].filter(Boolean);
+    const rawFields = containers.flatMap((value: any) => {
+      if (Array.isArray(value)) return value;
+      if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return value.split(',').map((field) => field.trim()).filter(Boolean);
+        }
+      }
+      if (typeof value === 'object') {
+        return Object.entries(value).map(([key, fieldValue]) => {
+          if (typeof fieldValue === 'object' && fieldValue) return { key, ...(fieldValue as Record<string, any>) };
+          return { key, label: String(fieldValue || key) };
+        });
+      }
+      return [];
+    });
+
+    const fields = rawFields.map((field: any, index: number) => {
+      const label = String(field?.fieldLabel || field?.label || field?.name || field?.title || field?.text || field || `Bilgi ${index + 1}`).trim();
+      const key = this.normalizeProviderFieldKey(String(field?.fieldKey || field?.key || field?.code || field?.name || label), `field_${index + 1}`);
+      return {
+        fieldKey: key,
+        fieldLabel: label || `Bilgi ${index + 1}`,
+        fieldType: String(field?.fieldType || field?.type || 'text').toLowerCase() === 'number' ? 'number' : 'text',
+        placeholder: field?.placeholder || field?.hint || label || null,
+        isRequired: this.parseProviderBoolean(field?.isRequired ?? field?.required ?? field?.mandatory, true),
+        sortOrder: index,
+        options: Array.isArray(field?.options) ? field.options : null,
+      };
+    });
+
+    const seen = new Set<string>();
+    return fields.filter((field) => {
+      if (seen.has(field.fieldKey)) return false;
+      seen.add(field.fieldKey);
+      return true;
+    });
+  }
+
+  private isProviderTopupProduct(product: any, explicitType?: string) {
+    if (String(explicitType || '').toUpperCase() === 'TOPUP') return true;
+    if (String(explicitType || '').toUpperCase() === 'EPIN') return false;
+    if (product?.IsTopup !== undefined || product?.isTopup !== undefined) return this.parseProviderBoolean(product.IsTopup ?? product.isTopup, false);
+    if (this.collectProviderRequiredFields(product).length > 0) return true;
+    const haystack = `${product?.CategoryType || ''} ${product?.ProductType || ''} ${product?.productType || ''} ${product?.DeliveryType || ''} ${product?.deliveryType || ''}`.toLowerCase();
+    if (/(top.?up|api|yükleme|yukleme|pinless|instant|id)/i.test(haystack)) return true;
+    return false;
+  }
+
+  private ensureTopupFields(product: any, explicitType?: string) {
+    const fields = this.collectProviderRequiredFields(product);
+    if (!this.isProviderTopupProduct(product, explicitType)) return fields;
+    if (fields.length > 0) return fields;
+    return [{
+      fieldKey: 'player_id',
+      fieldLabel: 'Oyuncu ID',
+      fieldType: 'text',
+      placeholder: 'Oyuncu ID giriniz',
+      isRequired: true,
+      sortOrder: 0,
+      options: null,
+    }];
+  }
+
   private normalizeJoyalisverisProduct(product: any) {
+    const requiredFields = this.ensureTopupFields(product);
     return {
       ProductId: product.productID,
       ProductName: product.productName,
@@ -1528,7 +1635,9 @@ export class AdminCompatController {
       BuyPrice: Number(product.buyPrice || 0),
       Image: product.productData?.productMainImage || null,
       Slug: product.productSlug || null,
-      IsActive: product.status !== false && product.status !== 'PASSIVE',
+      IsActive: this.normalizeProviderProductActive(product),
+      RequiredFields: requiredFields,
+      IsTopup: this.isProviderTopupProduct(product),
       RegionList: product.regionList || null,
       PlatformList: product.platformList || null,
     };
@@ -3335,13 +3444,19 @@ export class AdminCompatController {
         const categoryOk = categoryId === 'all' || String(product.CategoryId || product.CategoryName) === categoryId;
         return categoryOk && (!search || text.includes(search));
       });
+      const normalized = filtered.map((product: any) => ({
+        ...product,
+        IsActive: this.normalizeProviderProductActive(product),
+        RequiredFields: this.ensureTopupFields(product),
+        IsTopup: this.isProviderTopupProduct(product),
+      }));
       const total = filtered.length;
       const totalPages = Math.max(Math.ceil(total / pageSize), 1);
       const safePage = Math.min(page, totalPages);
       return {
         success: result.ResultCode === '00',
         message: result.ResultMessage,
-        products: filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
+        products: normalized.slice((safePage - 1) * pageSize, safePage * pageSize),
         categories: Array.from(categoriesMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr')),
         pagination: { page: safePage, pageSize, total, totalPages },
       };
@@ -3371,7 +3486,12 @@ export class AdminCompatController {
       const result = await this.oneEpinRequest('allproducts', {}, provider);
       const raw = (result.Products || []).find((product: any) => String(product.ProductId) === String(body.providerProductCode));
       if (!raw) throw new NotFoundException('Tedarikçi ürünü bulunamadı');
-      providerProduct = raw;
+      providerProduct = {
+        ...raw,
+        IsActive: this.normalizeProviderProductActive(raw),
+        RequiredFields: this.ensureTopupFields(raw, body.type),
+        IsTopup: this.isProviderTopupProduct(raw, body.type),
+      };
     } else {
       throw new BadRequestException(`${provider.name} için ürün içe aktarma adaptörü tanımlı değil`);
     }
@@ -3402,6 +3522,10 @@ export class AdminCompatController {
         });
     if (!category) throw new NotFoundException('Kategori bulunamadı');
 
+    const inferredType = this.isProviderTopupProduct(providerProduct, body.type) ? 'TOPUP' : 'EPIN';
+    const productType = String(body.type || inferredType).toUpperCase() === 'TOPUP' ? 'TOPUP' : 'EPIN';
+    const topupFields = this.ensureTopupFields(providerProduct, productType);
+    const providerIsActive = this.normalizeProviderProductActive(providerProduct);
     const productSlugBase = this.slugifyProviderText(body.name || providerProduct.ProductName);
     let productSlug = productSlugBase;
     const existingBySlug = await this.prisma.product.findUnique({ where: { slug: productSlug } }).catch(() => null);
@@ -3413,8 +3537,8 @@ export class AdminCompatController {
         slug: productSlug,
         description: body.description || `${provider.name} tedarikçi ürünü`,
         categoryId: category.id,
-        type: body.type || 'EPIN',
-        stockType: body.type === 'TOPUP' ? 'API_TOPUP' : 'EPIN',
+        type: productType as any,
+        stockType: productType === 'TOPUP' ? 'API_TOPUP' : 'EPIN',
         baseCurrency: body.currency || 'TRY',
         baseCost: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
         fixedPrice: Number(providerProduct.SalePrice || providerProduct.ProductPrice || 0),
@@ -3423,12 +3547,23 @@ export class AdminCompatController {
         iconUrl: providerProduct.Image || null,
         merchantImageUrl: providerProduct.Image || null,
         sliderImageUrl: providerProduct.Image || null,
-        isActive: true,
+        isActive: providerIsActive,
+        customInputFields: productType === 'TOPUP'
+          ? topupFields.map((field) => ({
+              key: field.fieldKey,
+              label: field.fieldLabel,
+              type: field.fieldType,
+              required: field.isRequired,
+              placeholder: field.placeholder,
+            }))
+          : undefined,
         tenantIds: scopedTenantIds,
         metadata: {
           providerId: provider.id,
           providerName: provider.name,
           providerProductCode: String(providerProduct.ProductId),
+          providerIsActive,
+          providerRequiredFields: topupFields,
           providerCategoryId: providerProduct.CategoryId || null,
           providerCategoryName: providerProduct.CategoryName || null,
           providerSlug: providerProduct.Slug || null,
@@ -3437,6 +3572,20 @@ export class AdminCompatController {
         },
       },
     });
+    if (productType === 'TOPUP') {
+      await this.prisma.topupField.createMany({
+        data: topupFields.map((field) => ({
+          productId: product.id,
+          fieldKey: field.fieldKey,
+          fieldLabel: field.fieldLabel,
+          fieldType: field.fieldType,
+          placeholder: field.placeholder,
+          isRequired: field.isRequired,
+          sortOrder: field.sortOrder,
+          options: field.options || undefined,
+        })),
+      });
+    }
 
     const link = await this.prisma.productProvider.upsert({
       where: { productId_providerId: { productId: product.id, providerId: provider.id } },
@@ -3444,7 +3593,7 @@ export class AdminCompatController {
         providerProductCode: String(providerProduct.ProductId),
         costPrice: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
         costCurrency: 'TRY',
-        isActive: true,
+        isActive: providerIsActive,
       },
       create: {
         productId: product.id,
@@ -3453,7 +3602,7 @@ export class AdminCompatController {
         costPrice: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
         costCurrency: 'TRY',
         priority: 1,
-        isActive: true,
+        isActive: providerIsActive,
       },
     });
 
