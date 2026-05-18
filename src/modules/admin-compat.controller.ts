@@ -521,7 +521,16 @@ export class AdminCompatController {
         take: 50,
       }).catch(() => []),
       this.prisma.emailLog.findMany({
-        where: { orderId: order.id },
+        where: {
+          OR: [
+            { orderId: order.id },
+            {
+              email: order.user?.email || order.guestEmail || '',
+              createdAt: { gte: order.createdAt },
+              subject: { contains: order.orderNumber || order.id },
+            },
+          ],
+        },
         orderBy: { createdAt: 'desc' },
         take: 20,
       }).catch(() => []),
