@@ -322,6 +322,19 @@ export class StorefrontCompatController {
 
     const basePrice = Number(product.fixedPrice || product.baseCost || 0);
     const discount = Number(product.discountPercent || 0);
+    const relatedProducts = await this.prisma.product.findMany({
+      where: {
+        categoryId: product.categoryId,
+        isActive: true,
+        NOT: { id: product.id },
+      },
+      include: { category: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      take: 12,
+    });
+    const visibleRelatedProducts = relatedProducts
+      .filter((item: any) => this.visibleForTenant(item.category || {}, tenant?.id) && this.visibleForTenant(item, tenant?.id) && this.visibleForCountry(item.category || {}, country) && this.visibleForCountry(item, country))
+      .slice(0, 6);
 
     return {
       id: product.id,
@@ -353,6 +366,25 @@ export class StorefrontCompatController {
       seoTitle: product.seoTitle,
       seoDescription: product.seoDescription,
       seoKeywords: product.seoKeywords,
+      relatedProducts: visibleRelatedProducts.map((item: any) => {
+        const itemBasePrice = Number(item.fixedPrice || item.baseCost || 0);
+        const itemDiscount = Number(item.discountPercent || 0);
+        return {
+          id: item.id,
+          name: item.name,
+          shortName: item.shortName || item.name,
+          slug: item.slug,
+          categoryName: item.category?.name || product.category?.name || '',
+          categorySlug: item.category?.slug || product.category?.slug || null,
+          imageUrl: this.normalizeImageUrl(item.iconUrl || item.merchantImageUrl || item.category?.imageUrl || product.category?.imageUrl, item.category?.slug || item.slug),
+          sliderImageUrl: this.normalizeImageUrl(item.sliderImageUrl || item.merchantImageUrl || item.iconUrl || item.category?.imageUrl || product.category?.imageUrl, item.category?.slug || item.slug),
+          basePrice: itemBasePrice,
+          memberPrice: itemDiscount > 0 ? Number((itemBasePrice * (1 - itemDiscount / 100)).toFixed(2)) : null,
+          currency: item.baseCurrency || 'TRY',
+          inStock: item.hasInfiniteStock || item.stockCount > 0,
+          type: item.type,
+        };
+      }),
     };
   }
 
