@@ -2300,6 +2300,87 @@ export class AdminCompatController {
     await this.prisma.mission.delete({ where: { id } });
     return { success: true };
   }
+  @Get('referrals/missions/rewards')
+  async listMissionRewardHistory(@Query('status') status?: string, @Query('limit') limit?: string, @Query('tenantId') tenantId?: string) {
+    const take = Math.min(Math.max(Number(limit || 150), 1), 500);
+    const where: any = {};
+    if (status === 'CLAIMED') where.rewardClaimed = true;
+    if (status === 'COMPLETED_UNCLAIMED') where.isCompleted = true, where.rewardClaimed = false;
+    if (status === 'IN_PROGRESS') where.isCompleted = false;
+
+    const progressRows = await this.prisma.userMissionProgress.findMany({
+      where,
+      take,
+      orderBy: [{ claimedAt: 'desc' }, { completedAt: 'desc' }, { updatedAt: 'desc' }],
+      include: {
+        user: { select: { id: true, email: true, firstName: true, lastName: true } },
+        mission: true,
+      },
+    });
+
+    const visibleRows = progressRows.filter((row: any) => this.visibleForTenant(row.mission, tenantId));
+    const missionIds = [...new Set(visibleRows.map((row: any) => row.missionId))];
+    const userIds = [...new Set(visibleRows.map((row: any) => row.userId))];
+    const wallets = await this.prisma.wallet.findMany({ where: { userId: { in: userIds } }, select: { id: true, userId: true, currency: true } });
+    const walletByUser = new Map(wallets.map((wallet: any) => [wallet.userId, wallet]));
+    const txs = await this.prisma.walletTransaction.findMany({
+      where: {
+        referenceType: 'mission',
+        referenceId: { in: missionIds },
+        walletId: { in: wallets.map((wallet: any) => wallet.id) },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const txByUserMission = new Map<string, any>();
+    for (const tx of txs as any[]) {
+      const wallet: any = wallets.find((item: any) => item.id === tx.walletId);
+      if (wallet) txByUserMission.set(`${wallet.userId}:${tx.referenceId}`, tx);
+    }
+
+    const rows = visibleRows.map((row: any) => {
+      const wallet = walletByUser.get(row.userId) as any;
+      const tx = txByUserMission.get(`${row.userId}:${row.missionId}`);
+      return {
+        id: row.id,
+        user: row.user,
+        mission: {
+          id: row.mission.id,
+          title: row.mission.title,
+          type: row.mission.type,
+          rewardType: row.mission.rewardType,
+          rewardAmount: Number(row.mission.rewardAmount || 0),
+          rewardAutoClaim: Boolean(row.mission.rewardAutoClaim),
+          tenantIds: row.mission.tenantIds,
+        },
+        currentValue: Number(row.currentValue || 0),
+        targetValue: Number(row.mission.targetValue || 0),
+        isCompleted: row.isCompleted,
+        completedAt: row.completedAt,
+        rewardClaimed: row.rewardClaimed,
+        claimedAt: row.claimedAt,
+        wallet: wallet ? { id: wallet.id, currency: wallet.currency } : null,
+        transaction: tx ? {
+          id: tx.id,
+          amount: Number(tx.amount || 0),
+          balanceField: tx.balanceField,
+          balanceAfter: Number(tx.balanceAfter || 0),
+          createdAt: tx.createdAt,
+          description: tx.description,
+        } : null,
+      };
+    });
+
+    const summary = {
+      total: rows.length,
+      claimed: rows.filter((row) => row.rewardClaimed).length,
+      completedUnclaimed: rows.filter((row) => row.isCompleted && !row.rewardClaimed).length,
+      inProgress: rows.filter((row) => !row.isCompleted).length,
+      paidAmount: rows.reduce((sum, row) => sum + Number(row.transaction?.amount || 0), 0),
+    };
+
+    return { summary, rows };
+  }
   @Post('customers/:id/referrals/tier')
   async setCustomerReferralTier(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     if (!(await this.userVisibleForTenant(id, tenantId))) {
