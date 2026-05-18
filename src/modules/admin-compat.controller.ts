@@ -3464,7 +3464,7 @@ export class AdminCompatController {
     if (tenantId && tenantId !== 'all') where.tenantId = tenantId;
     if (status && status !== 'all') where.status = status as any;
     if (completed === 'true' && (!status || status === 'all')) {
-      where.status = { in: ['COMPLETED', 'DELIVERED', 'CANCELLED', 'REFUNDED'] as any };
+      where.status = { in: ['COMPLETED', 'CANCELLED', 'REFUNDED'] as any };
     }
     if (processing === 'true') {
       where.OR = [
@@ -3473,13 +3473,13 @@ export class AdminCompatController {
           subOrders: {
             some: {
               status: {
-                in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED', 'PARTIALLY_DELIVERED'] as any,
+                in: ['PENDING', 'PROCESSING', 'PENDING_STOCK', 'PENDING_TOPUP', 'MANUAL_INTERVENTION_REQUIRED', 'PARTIALLY_DELIVERED'] as any,
               },
             },
           },
         },
       ];
-      where.NOT = { status: { in: ['COMPLETED', 'DELIVERED', 'CANCELLED', 'REFUNDED'] as any } };
+      where.NOT = { status: { in: ['COMPLETED', 'CANCELLED', 'REFUNDED'] as any } };
     }
     const orders = await this.prisma.order.findMany({
       where,
@@ -4295,7 +4295,7 @@ export class AdminCompatController {
   async getOrdersForProcessing(@Req() req: any, @Query('tenantId') tenantId?: string) {
     const subOrders = await this.prisma.subOrder.findMany({
       where: {
-        status: { in: ['PENDING', 'PROCESSING', 'AWAITING_STOCK', 'MANUAL_INTERVENTION_REQUIRED'] as any },
+        status: { in: ['PENDING', 'PROCESSING', 'PENDING_STOCK', 'PENDING_TOPUP', 'MANUAL_INTERVENTION_REQUIRED', 'PARTIALLY_DELIVERED'] as any },
         ...(this.isTenantScoped(tenantId) ? { parentOrder: { tenantId } } : {}),
       },
       include: { parentOrder: { include: { user: true } }, product: true, items: true, botProvider: true },
