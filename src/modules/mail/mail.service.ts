@@ -763,12 +763,22 @@ export class MailService {
 
     return MAIL_EVENTS.map((event) => {
       const scopedSlug = this.managedTemplateSlug(event.slug, tenantId);
-      const template = templates.find((item: any) => item.emailType === event.emailType && item.slug === scopedSlug)
-        || templates.find((item: any) => item.emailType === event.emailType && this.normalizeTenantIds(item.tenantIds).length === 0 && item.slug === event.slug)
-        || templates.find((item: any) => item.emailType === event.emailType && this.visibleForTenant(item, tenantId));
+      const scopedTemplate = templates.find((item: any) => item.emailType === event.emailType && item.slug === scopedSlug);
+      const globalTemplate = templates.find((item: any) => item.emailType === event.emailType && this.normalizeTenantIds(item.tenantIds).length === 0 && item.slug === event.slug);
+      const visibleTemplate = templates.find((item: any) => item.emailType === event.emailType && this.visibleForTenant(item, tenantId));
+      const template = scopedTemplate || globalTemplate || visibleTemplate;
+      const templateScope = scopedTemplate
+        ? 'TENANT'
+        : globalTemplate
+          ? 'GLOBAL'
+          : template
+            ? 'SHARED'
+            : 'DEFAULT';
       return {
         ...event,
         isEnabled: settingMap.get(this.eventSettingKey(event.emailType)) !== 'false',
+        templateScope,
+        activeTenantId: tenantId || null,
         template: template || {
           id: null,
           slug: event.slug,
