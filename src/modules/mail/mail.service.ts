@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -844,6 +844,45 @@ export class MailService {
     });
 
     return { template, isEnabled: input.isEnabled !== false };
+  }
+
+  async forkManagedTemplateForTenant(emailType: string, input: {
+    subject?: string;
+    bodyHtml?: string;
+    name?: string;
+    description?: string;
+    isActive?: boolean;
+    isEnabled?: boolean;
+  }, tenantId?: string) {
+    if (!tenantId || tenantId === 'all') {
+      throw new BadRequestException('Siteye ozel sablon olusturmak icin tek bir site secin.');
+    }
+
+    const event = MAIL_EVENTS.find((item) => item.emailType === emailType);
+    if (!event) throw new BadRequestException('Unsupported email type');
+
+    const templates = await this.prisma.emailTemplate.findMany({
+      where: { emailType: emailType as any, languageCode: 'tr' },
+      orderBy: { updatedAt: 'desc' },
+    });
+    const source =
+      templates.find((item: any) => item.slug === event.slug) ||
+      templates.find((item: any) => this.visibleForTenant(item, tenantId));
+
+    const template = await this.saveManagedTemplate(emailType, {
+      name: input.name || source?.name || event.name,
+      description: input.description || source?.description || event.description,
+      subject: input.subject || source?.subject || this.defaultSubjectFor(emailType),
+      bodyHtml: input.bodyHtml || source?.bodyHtml || this.defaultBodyFor(emailType),
+      isActive: input.isActive ?? source?.isActive ?? true,
+      isEnabled: input.isEnabled,
+    }, tenantId);
+
+    return {
+      ...template,
+      templateScope: 'TENANT',
+      activeTenantId: tenantId,
+    };
   }
 
   async previewManagedTemplate(emailType: string, input?: { subject?: string; bodyHtml?: string }) {

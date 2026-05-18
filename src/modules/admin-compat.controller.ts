@@ -1735,6 +1735,10 @@ export class AdminCompatController {
   async saveMailTemplate(@Param('emailType') emailType: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     return this.mailService.saveManagedTemplate(emailType, body, this.isTenantScoped(tenantId) ? tenantId : undefined);
   }
+  @Post('mail/templates/:emailType/fork')
+  async forkMailTemplate(@Param('emailType') emailType: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    return this.mailService.forkManagedTemplateForTenant(emailType, body, this.isTenantScoped(tenantId) ? tenantId : undefined);
+  }
   @Post('mail/templates/:emailType/preview')
   async previewMailTemplate(@Param('emailType') emailType: string, @Body() body: any) {
     return this.mailService.previewManagedTemplate(emailType, body);
