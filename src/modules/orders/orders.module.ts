@@ -5,6 +5,7 @@ import { EPinsModule } from '../epins/epins.module';
 import { WalletsModule } from '../wallets/wallets.module';
 import { BotsModule } from '../bots/bots.module';
 import { StocksModule } from '../stocks/stocks.module';
+import { ReferralsModule } from '../referrals/referrals.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { StocksModule } from '../stocks/stocks.module';
     forwardRef(() => WalletsModule),
     forwardRef(() => BotsModule),
     StocksModule,
+    ReferralsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
 import { StockDeliveryService } from '../../stocks/stock-delivery.service';
+import { ReferralsService } from '../../referrals/referrals.service';
 
 /**
  * Webhook Processor Service
@@ -29,6 +30,7 @@ export class WebhookProcessorService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly stockDelivery: StockDeliveryService,
+    private readonly referrals: ReferralsService,
   ) {}
 
   // ═══════════════════════════════════════════════════════
@@ -392,6 +394,40 @@ export class WebhookProcessorService {
     }
 
     await this.recalculateParentStatus(order.id);
+    await this.processReferralCommissionsForOrder(order.id);
+  }
+
+  private async processReferralCommissionsForOrder(orderId: string): Promise<void> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        subOrders: {
+          include: {
+            product: { select: { categoryId: true } },
+          },
+        },
+      },
+    });
+    if (!order?.userId || order.paymentStatus !== 'PAID') return;
+
+    for (const subOrder of order.subOrders) {
+      if (subOrder.status !== 'DELIVERED') continue;
+      const existing = await this.prisma.referralTransaction.findFirst({
+        where: { orderId: order.id, subOrderId: subOrder.id },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      await this.referrals.processReferralCommission({
+        orderId: order.id,
+        subOrderId: subOrder.id,
+        buyerUserId: order.userId,
+        salePrice: Number(subOrder.totalPrice || 0),
+        costPrice: Number(subOrder.unitCost || 0) * Number(subOrder.quantity || 1),
+        productId: subOrder.productId,
+        categoryId: subOrder.product?.categoryId || undefined,
+      });
+    }
   }
 
   private async recalculateParentStatus(orderId: string): Promise<void> {

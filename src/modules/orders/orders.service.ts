@@ -16,6 +16,7 @@ import {
 import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { StockDeliveryService } from '../stocks/stock-delivery.service';
+import { ReferralsService } from '../referrals/referrals.service';
 
 // ─── Shared Types ────────────────────────────────────────────
 interface OrderItemInput {
@@ -35,6 +36,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
     private readonly stockDelivery: StockDeliveryService,
+    private readonly referrals: ReferralsService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -358,6 +360,7 @@ export class OrdersService {
     }
 
     await this.recalculateParentStatus(order.id);
+    await this.processReferralCommissionsForOrder(order.id);
 
     const deliveryEmail = order.user?.email || order.guestEmail;
     if (deliveredCodes.length > 0 && deliveryEmail) {
@@ -623,7 +626,41 @@ export class OrdersService {
     });
 
     await this.recalculateParentStatus(subOrder.parentOrderId);
+    await this.processReferralCommissionsForOrder(subOrder.parentOrderId);
     return updated;
+  }
+
+  private async processReferralCommissionsForOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        subOrders: {
+          include: {
+            product: { select: { categoryId: true } },
+          },
+        },
+      },
+    });
+    if (!order?.userId || order.paymentStatus !== 'PAID') return;
+
+    for (const subOrder of order.subOrders) {
+      if (subOrder.status !== 'DELIVERED') continue;
+      const existing = await this.prisma.referralTransaction.findFirst({
+        where: { orderId: order.id, subOrderId: subOrder.id },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      await this.referrals.processReferralCommission({
+        orderId: order.id,
+        subOrderId: subOrder.id,
+        buyerUserId: order.userId,
+        salePrice: Number(subOrder.totalPrice || 0),
+        costPrice: Number(subOrder.unitCost || 0) * Number(subOrder.quantity || 1),
+        productId: subOrder.productId,
+        categoryId: subOrder.product?.categoryId || undefined,
+      });
+    }
   }
 
   /**
