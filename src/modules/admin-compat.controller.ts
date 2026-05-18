@@ -1500,10 +1500,44 @@ export class AdminCompatController {
     };
   }
 
-  private async getJoyalisverisProducts(provider: any) {
+  private slugifyProviderText(value: string) {
+    return String(value || 'urun')
+      .toLowerCase()
+      .replace(/[çÇ]/g, 'c')
+      .replace(/[şŞ]/g, 's')
+      .replace(/[ğĞ]/g, 'g')
+      .replace(/[üÜ]/g, 'u')
+      .replace(/[öÖ]/g, 'o')
+      .replace(/[ıİ]/g, 'i')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 180) || 'urun';
+  }
+
+  private normalizeJoyalisverisProduct(product: any) {
+    return {
+      ProductId: product.productID,
+      ProductName: product.productName,
+      ProductPrice: Number(product.buyPrice || product.salePrice || product.listPrice || 0),
+      CategoryId: product.productCategoryID,
+      CategoryName: product.productCategoryName,
+      CategoryType: product.productTypeID ? String(product.productTypeID) : undefined,
+      Stock: Number(product.totalStock || 0),
+      ListPrice: Number(product.listPrice || 0),
+      SalePrice: Number(product.salePrice || 0),
+      BuyPrice: Number(product.buyPrice || 0),
+      Image: product.productData?.productMainImage || null,
+      Slug: product.productSlug || null,
+      IsActive: product.status !== false && product.status !== 'PASSIVE',
+      RegionList: product.regionList || null,
+      PlatformList: product.platformList || null,
+    };
+  }
+
+  private async getJoyalisverisRawProducts(provider: any) {
     const config = this.getJoyalisverisConfig(provider);
     if (!config.token) {
-      return { success: false, message: 'Joyalışveriş API token eksik', products: [] };
+      return { success: false, message: 'Joyalışveriş API token eksik', products: [] as any[] };
     }
 
     const response = await fetch(`${config.baseUrl}/Products/List`, {
@@ -1523,34 +1557,48 @@ export class AdminCompatController {
       return {
         success: false,
         message: data?.message || data?.title || `Joyalışveriş API ${response.status}`,
-        products: [],
+        products: [] as any[],
       };
     }
 
-    const rawProducts = Array.isArray(data.data) ? data.data : [];
-    const normalizedProducts = rawProducts.map((product: any) => ({
-      ProductId: product.productID,
-      ProductName: product.productName,
-      ProductPrice: Number(product.buyPrice || product.salePrice || product.listPrice || 0),
-      CategoryId: product.productCategoryID,
-      CategoryName: product.productCategoryName,
-      CategoryType: product.productTypeID ? String(product.productTypeID) : undefined,
-      Stock: Number(product.totalStock || 0),
-      ListPrice: Number(product.listPrice || 0),
-      SalePrice: Number(product.salePrice || 0),
-      BuyPrice: Number(product.buyPrice || 0),
-      Image: product.productData?.productMainImage || null,
-      Slug: product.productSlug || null,
-      IsActive: product.status !== false && product.status !== 'PASSIVE',
-      RegionList: product.regionList || null,
-      PlatformList: product.platformList || null,
-    }));
-    const products = normalizedProducts.slice(0, 5000);
+    return { success: true, message: '', products: Array.isArray(data.data) ? data.data : [] };
+  }
+
+  private async getJoyalisverisProducts(provider: any, query: any = {}) {
+    const result = await this.getJoyalisverisRawProducts(provider);
+    if (!result.success) return { ...result, pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 }, categories: [] };
+
+    const page = Math.max(Number(query.page || 1), 1);
+    const pageSize = Math.min(Math.max(Number(query.pageSize || 50), 10), 250);
+    const search = String(query.search || '').trim().toLowerCase();
+    const categoryId = String(query.categoryId || 'all');
+    const rawProducts = result.products;
+    const categoriesMap = new Map<string, { id: string; name: string; count: number }>();
+    for (const product of rawProducts) {
+      const id = String(product.productCategoryID || 'unknown');
+      const current = categoriesMap.get(id) || { id, name: product.productCategoryName || 'Kategorisiz', count: 0 };
+      current.count += 1;
+      categoriesMap.set(id, current);
+    }
+
+    const filteredProducts = rawProducts.filter((product: any) => {
+      const categoryOk = categoryId === 'all' || String(product.productCategoryID) === categoryId;
+      const text = `${product.productName || ''} ${product.productID || ''} ${product.productCategoryName || ''}`.toLowerCase();
+      return categoryOk && (!search || text.includes(search));
+    });
+    const total = filteredProducts.length;
+    const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+    const safePage = Math.min(page, totalPages);
+    const products = filteredProducts
+      .slice((safePage - 1) * pageSize, safePage * pageSize)
+      .map((product: any) => this.normalizeJoyalisverisProduct(product));
 
     return {
       success: true,
-      message: `${rawProducts.length} Joyalışveriş ürünü çekildi, ilk ${products.length} ürün gösteriliyor`,
+      message: `${rawProducts.length} Joyalışveriş ürünü çekildi`,
       products,
+      categories: Array.from(categoriesMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr')),
+      pagination: { page: safePage, pageSize, total, totalPages },
     };
   }
   @Get('settings')
@@ -2606,6 +2654,9 @@ export class AdminCompatController {
       description: product.description,
       categoryId: product.categoryId,
       categoryName: product.category?.name || '',
+      categoryRequiresUserId: product.category?.requiresUserId || false,
+      categoryUserIdLabel: product.category?.userIdLabel || '',
+      categoryZoneIdLabel: product.category?.zoneIdLabel || null,
       type: product.type || 'EPIN',
       sku: product.slug,
       costPrice: Number(product.baseCost || 0),
@@ -2631,6 +2682,7 @@ export class AdminCompatController {
       bonus: null,
       unitLabel: 'adet',
       discount: Number(product.discountPercent || 0),
+      customInputFields: product.customInputFields || [],
       isPopular: false,
       isPromo: false,
       isLimited: false,
@@ -3256,20 +3308,42 @@ export class AdminCompatController {
     };
   }
   @Get('providers/:id/products')
-  async getProviderProducts(@Param('id') id: string) {
+  async getProviderProducts(@Param('id') id: string, @Query() query: any) {
     const provider = await this.prisma.botProvider.findUnique({ where: { id } });
     if (!provider) throw new NotFoundException('Tedarikçi bulunamadı');
 
     if (this.isJoyalisverisProvider(provider)) {
-      return this.getJoyalisverisProducts(provider);
+      return this.getJoyalisverisProducts(provider, query);
     }
 
     if (provider.name?.toLowerCase().includes('1epin')) {
       const result = await this.oneEpinRequest('allproducts', {}, provider);
+      const allProducts = result.Products || [];
+      const page = Math.max(Number(query.page || 1), 1);
+      const pageSize = Math.min(Math.max(Number(query.pageSize || 50), 10), 250);
+      const search = String(query.search || '').trim().toLowerCase();
+      const categoryId = String(query.categoryId || 'all');
+      const categoriesMap = new Map<string, { id: string; name: string; count: number }>();
+      for (const product of allProducts) {
+        const id = String(product.CategoryId || product.CategoryName || 'unknown');
+        const current = categoriesMap.get(id) || { id, name: product.CategoryName || 'Kategorisiz', count: 0 };
+        current.count += 1;
+        categoriesMap.set(id, current);
+      }
+      const filtered = allProducts.filter((product: any) => {
+        const text = `${product.ProductName || ''} ${product.ProductId || ''} ${product.CategoryName || ''}`.toLowerCase();
+        const categoryOk = categoryId === 'all' || String(product.CategoryId || product.CategoryName) === categoryId;
+        return categoryOk && (!search || text.includes(search));
+      });
+      const total = filtered.length;
+      const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+      const safePage = Math.min(page, totalPages);
       return {
         success: result.ResultCode === '00',
         message: result.ResultMessage,
-        products: result.Products || [],
+        products: filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
+        categories: Array.from(categoriesMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'tr')),
+        pagination: { page: safePage, pageSize, total, totalPages },
       };
     }
 
@@ -3277,7 +3351,113 @@ export class AdminCompatController {
       success: false,
       message: `${provider.name} için ürün çekme adaptörü tanımlı değil`,
       products: [],
+      categories: [],
+      pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 },
     };
+  }
+  @Post('providers/:id/import-product')
+  async importProviderProduct(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const provider = await this.prisma.botProvider.findUnique({ where: { id } });
+    if (!provider) throw new NotFoundException('Tedarikçi bulunamadı');
+
+    let providerProduct: any = null;
+    if (this.isJoyalisverisProvider(provider)) {
+      const result = await this.getJoyalisverisRawProducts(provider);
+      if (!result.success) throw new BadRequestException(result.message || 'Tedarikçi ürünleri çekilemedi');
+      const raw = result.products.find((product: any) => String(product.productID) === String(body.providerProductCode));
+      if (!raw) throw new NotFoundException('Tedarikçi ürünü bulunamadı');
+      providerProduct = this.normalizeJoyalisverisProduct(raw);
+    } else if (provider.name?.toLowerCase().includes('1epin')) {
+      const result = await this.oneEpinRequest('allproducts', {}, provider);
+      const raw = (result.Products || []).find((product: any) => String(product.ProductId) === String(body.providerProductCode));
+      if (!raw) throw new NotFoundException('Tedarikçi ürünü bulunamadı');
+      providerProduct = raw;
+    } else {
+      throw new BadRequestException(`${provider.name} için ürün içe aktarma adaptörü tanımlı değil`);
+    }
+
+    const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const categoryName = body.categoryName || providerProduct.CategoryName || 'Tedarikçi Ürünleri';
+    const categorySlug = this.slugifyProviderText(body.categorySlug || categoryName);
+    const category = body.categoryId
+      ? await this.prisma.productCategory.findUnique({ where: { id: body.categoryId } })
+      : await this.prisma.productCategory.upsert({
+          where: { slug: categorySlug },
+          update: {
+            name: categoryName,
+            tenantIds: scopedTenantIds,
+            imageUrl: providerProduct.Image || undefined,
+            logoUrl: providerProduct.Image || undefined,
+          },
+          create: {
+            name: categoryName,
+            slug: categorySlug,
+            description: `${provider.name} üzerinden içe aktarılan kategori`,
+            imageUrl: providerProduct.Image || null,
+            logoUrl: providerProduct.Image || null,
+            layout: 'jollymax',
+            tenantIds: scopedTenantIds,
+            isActive: true,
+          },
+        });
+    if (!category) throw new NotFoundException('Kategori bulunamadı');
+
+    const productSlugBase = this.slugifyProviderText(body.name || providerProduct.ProductName);
+    let productSlug = productSlugBase;
+    const existingBySlug = await this.prisma.product.findUnique({ where: { slug: productSlug } }).catch(() => null);
+    if (existingBySlug) productSlug = `${productSlugBase}-${providerProduct.ProductId}`;
+    const product = await this.prisma.product.create({
+      data: {
+        name: body.name || providerProduct.ProductName,
+        shortName: body.shortName || providerProduct.ProductName,
+        slug: productSlug,
+        description: body.description || `${provider.name} tedarikçi ürünü`,
+        categoryId: category.id,
+        type: body.type || 'EPIN',
+        stockType: body.type === 'TOPUP' ? 'API_TOPUP' : 'EPIN',
+        baseCurrency: body.currency || 'TRY',
+        baseCost: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
+        fixedPrice: Number(providerProduct.SalePrice || providerProduct.ProductPrice || 0),
+        hasInfiniteStock: Number(providerProduct.Stock || 0) >= 999999,
+        stockCount: Number(providerProduct.Stock || 0),
+        iconUrl: providerProduct.Image || null,
+        merchantImageUrl: providerProduct.Image || null,
+        sliderImageUrl: providerProduct.Image || null,
+        isActive: true,
+        tenantIds: scopedTenantIds,
+        metadata: {
+          providerId: provider.id,
+          providerName: provider.name,
+          providerProductCode: String(providerProduct.ProductId),
+          providerCategoryId: providerProduct.CategoryId || null,
+          providerCategoryName: providerProduct.CategoryName || null,
+          providerSlug: providerProduct.Slug || null,
+          regionList: providerProduct.RegionList || null,
+          platformList: providerProduct.PlatformList || null,
+        },
+      },
+    });
+
+    const link = await this.prisma.productProvider.upsert({
+      where: { productId_providerId: { productId: product.id, providerId: provider.id } },
+      update: {
+        providerProductCode: String(providerProduct.ProductId),
+        costPrice: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
+        costCurrency: 'TRY',
+        isActive: true,
+      },
+      create: {
+        productId: product.id,
+        providerId: provider.id,
+        providerProductCode: String(providerProduct.ProductId),
+        costPrice: Number(providerProduct.BuyPrice || providerProduct.ProductPrice || 0),
+        costCurrency: 'TRY',
+        priority: 1,
+        isActive: true,
+      },
+    });
+
+    return { success: true, category, product, link };
   }
   @Get('product-providers')
   async getAllProductProviders(@Query('providerId') providerId?: string) {
