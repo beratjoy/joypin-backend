@@ -751,6 +751,37 @@ export class MailService {
     return tenantId && tenantId !== 'all' ? `${slug}__${tenantId}` : slug;
   }
 
+  private async logManagedTemplateAudit(input: {
+    tenantId?: string;
+    emailType: string;
+    slug: string;
+    action: 'saved' | 'forked';
+    previousValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+  }) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: input.tenantId || null,
+          action: 'UPDATE' as any,
+          category: 'ADMIN',
+          entityType: 'EMAIL_TEMPLATE',
+          entityId: input.slug,
+          details: {
+            action: input.action,
+            emailType: input.emailType,
+            slug: input.slug,
+            scope: input.tenantId ? 'TENANT' : 'GLOBAL',
+          },
+          previousValue: input.previousValue as any,
+          newValue: input.newValue as any,
+        } as any,
+      });
+    } catch (error) {
+      this.logger.warn(`Mail template audit skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async listManagedTemplates(tenantId?: string) {
     const [templates, settings] = await Promise.all([
       this.prisma.emailTemplate.findMany({
@@ -819,6 +850,10 @@ export class MailService {
       );
     }
 
+    const previousTemplate = await this.prisma.emailTemplate.findUnique({
+      where: { slug_languageCode: { slug, languageCode: 'tr' } },
+    });
+
     const template = await this.prisma.emailTemplate.upsert({
       where: { slug_languageCode: { slug, languageCode: 'tr' } },
       update: {
@@ -843,6 +878,30 @@ export class MailService {
       },
     });
 
+    await this.logManagedTemplateAudit({
+      tenantId,
+      emailType,
+      slug,
+      action: 'saved',
+      previousValue: previousTemplate
+        ? {
+            subject: previousTemplate.subject,
+            bodyHtml: previousTemplate.bodyHtml,
+            isActive: previousTemplate.isActive,
+            tenantIds: previousTemplate.tenantIds,
+            version: previousTemplate.version,
+          }
+        : null,
+      newValue: {
+        subject: template.subject,
+        bodyHtml: template.bodyHtml,
+        isActive: template.isActive,
+        tenantIds: template.tenantIds,
+        version: template.version,
+        isEnabled: input.isEnabled,
+      },
+    });
+
     return { template, isEnabled: input.isEnabled !== false };
   }
 
@@ -855,7 +914,7 @@ export class MailService {
     isEnabled?: boolean;
   }, tenantId?: string) {
     if (!tenantId || tenantId === 'all') {
-      throw new BadRequestException('Siteye ozel sablon olusturmak icin tek bir site secin.');
+      throw new BadRequestException('Siteye özel şablon oluşturmak için tek bir site seçin.');
     }
 
     const event = MAIL_EVENTS.find((item) => item.emailType === emailType);
@@ -877,6 +936,30 @@ export class MailService {
       isActive: input.isActive ?? source?.isActive ?? true,
       isEnabled: input.isEnabled,
     }, tenantId);
+
+    await this.logManagedTemplateAudit({
+      tenantId,
+      emailType,
+      slug: this.managedTemplateSlug(event.slug, tenantId),
+      action: 'forked',
+      previousValue: source
+        ? {
+            slug: source.slug,
+            subject: source.subject,
+            bodyHtml: source.bodyHtml,
+            isActive: source.isActive,
+            tenantIds: source.tenantIds,
+            version: source.version,
+          }
+        : null,
+      newValue: {
+        subject: template.template.subject,
+        bodyHtml: template.template.bodyHtml,
+        isActive: template.template.isActive,
+        tenantIds: template.template.tenantIds,
+        version: template.template.version,
+      },
+    });
 
     return {
       ...template,
