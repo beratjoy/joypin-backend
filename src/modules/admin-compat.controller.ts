@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException, Req, Res, UnauthorizedException 
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
 import { ReferralGuardService } from './referrals/referral-guard.service';
+import { StockDeliveryService } from './stocks/stock-delivery.service';
 import { Roles } from './auth/decorators/roles.decorator';
 import { createHash, randomUUID } from 'crypto';
 
@@ -13,6 +14,7 @@ export class AdminCompatController {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly referralGuard: ReferralGuardService,
+    private readonly stockDelivery: StockDeliveryService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -950,6 +952,115 @@ export class AdminCompatController {
       userId: order.userId || undefined,
       tenantId: order.tenantId || undefined,
     });
+  }
+
+  private async autoDeliverEpinStockForOrder(orderId: string, subOrderId?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: true,
+        subOrders: {
+          include: {
+            product: true,
+            items: true,
+          },
+        },
+      },
+    });
+    if (!order) return { delivered: 0, skipped: true, reason: 'ORDER_NOT_FOUND' };
+    if (order.paymentStatus !== 'PAID') {
+      return { delivered: 0, skipped: true, reason: 'PAYMENT_NOT_PAID' };
+    }
+
+    const targetSubOrders = order.subOrders.filter((subOrder: any) => {
+      if (subOrderId && subOrder.id !== subOrderId) return false;
+      if (subOrder.deliveryType !== 'EPIN') return false;
+      return !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status);
+    });
+
+    const deliveredCodes: string[] = [];
+    const updatedSubOrders: any[] = [];
+    const errors: string[] = [];
+
+    for (const subOrder of targetSubOrders) {
+      const deliveredItems = subOrder.items.filter((item: any) => item.isDelivered).length;
+      const alreadyDelivered = Math.max(Number(subOrder.deliveredCount || 0), deliveredItems);
+      const remaining = Math.max(0, Number(subOrder.quantity || 0) - alreadyDelivered);
+      if (remaining <= 0) continue;
+
+      const result = await this.stockDelivery.allocateCodes({
+        productId: subOrder.productId,
+        quantity: remaining,
+        userId: order.userId || undefined,
+        orderId: order.id,
+        subOrderId: subOrder.id,
+        allowPartial: true,
+      });
+
+      if (!result.success || result.codes.length === 0) {
+        errors.push(result.error || 'Stoktan otomatik teslimat yapilamadi');
+        await this.prisma.subOrder.update({
+          where: { id: subOrder.id },
+          data: {
+            status: 'PENDING_STOCK' as any,
+            lastError: result.error || 'Stoktan otomatik teslimat yapilamadi',
+            deliveryNote: result.error || 'Stok bekleniyor',
+          },
+        }).catch(() => null);
+        continue;
+      }
+
+      const now = new Date();
+      await this.prisma.subOrderItem.createMany({
+        data: result.codes.map((item) => ({
+          subOrderId: subOrder.id,
+          externalRef: item.code,
+          isDelivered: true,
+          deliveredAt: now,
+        })),
+      });
+
+      const nextDeliveredCount = alreadyDelivered + result.codes.length;
+      const fullyDelivered = nextDeliveredCount >= Number(subOrder.quantity || 0);
+      const updated = await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: (fullyDelivered ? 'DELIVERED' : 'PARTIALLY_DELIVERED') as any,
+          deliveredCount: nextDeliveredCount,
+          unitCost: result.codes.length > 0 ? result.totalCost / result.codes.length : subOrder.unitCost,
+          deliveryNote: `${result.codes.length} adet e-pin stok eklenince otomatik teslim edildi`,
+          lastError: fullyDelivered ? null : `${Number(subOrder.quantity || 0) - nextDeliveredCount} adet stok bekliyor`,
+        },
+        include: { parentOrder: true, product: true },
+      });
+      updatedSubOrders.push(updated);
+      deliveredCodes.push(...result.codes.map((item) => item.code));
+    }
+
+    await this.recalculateOrderStatus(order.id);
+
+    for (const updated of updatedSubOrders.filter((subOrder) => subOrder.status === 'DELIVERED')) {
+      await this.awardPointsForDeliveredSubOrder(updated).catch((error) => {
+        console.warn('[AdminCompat] award points skipped:', error);
+      });
+    }
+
+    if (deliveredCodes.length > 0) {
+      const hasPartialDelivery = updatedSubOrders.some((subOrder) => subOrder.status === 'PARTIALLY_DELIVERED');
+      const deliveryMail = hasPartialDelivery
+        ? this.sendPartialDeliveryEmail(order.id, updatedSubOrders, [], 'E-pin stogu eklendigi icin otomatik teslimat yapildi.')
+        : this.sendDeliveryEmail(order.id, deliveredCodes);
+      await deliveryMail.catch((error) => {
+        console.warn('[AdminCompat] stock auto delivery email skipped:', error);
+      });
+    }
+
+    return {
+      delivered: deliveredCodes.length,
+      updated: updatedSubOrders.length,
+      partial: updatedSubOrders.some((subOrder) => subOrder.status === 'PARTIALLY_DELIVERED'),
+      errors,
+    };
   }
 
   private async sendCancellationEmail(orderId: string, reason: string) {
@@ -4225,6 +4336,8 @@ export class AdminCompatController {
       }).catch(() => null);
     }
 
+    const autoDelivery = await this.autoDeliverEpinStockForOrder(orderId, subOrder.id);
+
     const refreshed = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { user: true, subOrders: { include: { product: { include: { category: true } }, items: true, botProvider: true } } },
@@ -4236,6 +4349,8 @@ export class AdminCompatController {
       success: true,
       added: newCodes.length,
       duplicates: rawCodes.length - newCodes.length,
+      autoDelivered: autoDelivery.delivered || 0,
+      autoDelivery,
       poolId: poolLink.poolId,
       order: withTenant ? this.normalizeAdminOrder(withTenant, req.user?.id) : null,
     };

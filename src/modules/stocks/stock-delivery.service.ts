@@ -40,8 +40,9 @@ export class StockDeliveryService {
     userId?: string;
     orderId: string;
     subOrderId: string;
+    allowPartial?: boolean;
   }): Promise<DeliveryResult> {
-    const { productId, quantity, userId, orderId, subOrderId } = params;
+    const { productId, quantity, userId, orderId, subOrderId, allowPartial = false } = params;
 
     return this.prisma.$transaction(async (tx) => {
       // 1. Ürünün bağlı olduğu havuzları bul
@@ -60,6 +61,10 @@ export class StockDeliveryService {
       }
 
       const poolIds = poolLinks.map(p => p.poolId);
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+        select: { hasInfiniteStock: true },
+      });
 
       // 2. Müşterinin bayi olup olmadığını kontrol et
       let isReseller = false;
@@ -93,12 +98,20 @@ export class StockDeliveryService {
         take: quantity,
       });
 
-      if (availableCodes.length < quantity) {
+      if (availableCodes.length < quantity && !allowPartial) {
         return {
           success: false,
           codes: [],
           totalCost: 0,
           error: `Yetersiz stok: ${availableCodes.length} adet mevcut, ${quantity} adet isteniyor`,
+        };
+      }
+      if (availableCodes.length === 0) {
+        return {
+          success: false,
+          codes: [],
+          totalCost: 0,
+          error: `Yetersiz stok: 0 adet mevcut, ${quantity} adet isteniyor`,
         };
       }
 
@@ -129,10 +142,12 @@ export class StockDeliveryService {
       }
 
       // 5. Ürün stockCount güncelle
-      await tx.product.update({
-        where: { id: productId },
-        data: { stockCount: { decrement: quantity } },
-      });
+      if (!product?.hasInfiniteStock) {
+        await tx.product.update({
+          where: { id: productId },
+          data: { stockCount: { decrement: availableCodes.length } },
+        });
+      }
 
       this.logger.log(
         `[StockDelivery] Allocated ${quantity} codes for order ${orderId} | ` +
