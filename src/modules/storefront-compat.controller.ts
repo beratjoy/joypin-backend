@@ -337,6 +337,10 @@ export class StorefrontCompatController {
       imageUrl: this.normalizeImageUrl(product.iconUrl || product.merchantImageUrl || product.category?.imageUrl, product.category?.slug || product.slug),
       sliderImageUrl: this.normalizeImageUrl(product.sliderImageUrl || product.merchantImageUrl || product.iconUrl || product.category?.imageUrl, product.category?.slug || product.slug),
       categoryName: product.category?.name || '',
+      categoryId: product.categoryId,
+      categorySlug: product.category?.slug || null,
+      stockType: product.hasInfiniteStock ? 'infinite' : 'manual',
+      stockCount: product.stockCount,
       topupFields: product.topupFields.map((field: any) => ({
         id: field.id,
         fieldKey: field.fieldKey,
