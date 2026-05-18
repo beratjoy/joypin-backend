@@ -3,12 +3,16 @@ import {
   UnauthorizedException,
   ConflictException,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UserRole, UserStatus } from '@prisma/client';
 import { normalizeCountryCode, normalizeCurrency, walletCanChangeCurrency } from '../../common/locale-currency';
+import { MailService } from '../mail/mail.service';
 
 export interface JwtPayload {
   sub: string;
@@ -34,6 +38,8 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {}
 
   /**
@@ -50,8 +56,9 @@ export class AuthService {
     preferredCurrency?: string;
   }): Promise<AuthTokens> {
     // E-posta benzersizlik kontrolü
+    const normalizedEmail = params.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({
-      where: { email: params.email },
+      where: { email: normalizedEmail },
     });
     if (existing) {
       throw new ConflictException('Bu e-posta adresi zaten kullanılıyor.');
@@ -73,9 +80,10 @@ export class AuthService {
     const countryCode = normalizeCountryCode(params.countryCode);
     const preferredCurrency = normalizeCurrency(params.preferredCurrency, countryCode);
 
+    const emailVerificationCode = this.generateNumericCode();
     const user = await this.prisma.user.create({
       data: {
-        email: params.email,
+        email: normalizedEmail,
         passwordHash,
         firstName: params.firstName,
         lastName: params.lastName,
@@ -86,6 +94,8 @@ export class AuthService {
         referredById: referrerId,
         countryCode,
         preferredCurrency,
+        emailVerificationCode,
+        emailVerificationExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
 
@@ -114,7 +124,120 @@ export class AuthService {
 
     this.logger.log(`Yeni kullanıcı kaydı: ${user.email}`);
 
+    await this.mail.sendWelcome(user.email, {
+      firstName: user.firstName || user.email.split('@')[0],
+      otpCode: emailVerificationCode,
+      userId: user.id,
+    }).catch((error) => {
+      this.logger.warn(`[Mail] Welcome email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
+    });
+
     return this.generateTokens(user);
+  }
+
+  async resendEmailVerification(email: string): Promise<{ success: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!user || user.emailVerified) return { success: true };
+
+    const code = this.generateNumericCode();
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationCode: code,
+        emailVerificationExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+
+    await this.mail.sendWelcome(user.email, {
+      firstName: user.firstName || user.email.split('@')[0],
+      otpCode: code,
+      userId: user.id,
+    }).catch((error) => {
+      this.logger.warn(`[Mail] Verification email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
+    });
+
+    return { success: true };
+  }
+
+  async verifyEmail(email: string, code: string): Promise<{ verified: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!user) throw new BadRequestException('Doğrulama kodu geçersiz.');
+    if (user.emailVerified) return { verified: true };
+    if (!user.emailVerificationCode || user.emailVerificationCode !== String(code || '').trim()) {
+      throw new BadRequestException('Doğrulama kodu geçersiz.');
+    }
+    if (!user.emailVerificationExpiresAt || user.emailVerificationExpiresAt < new Date()) {
+      throw new BadRequestException('Doğrulama kodunun süresi dolmuş.');
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        emailVerificationCode: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+
+    return { verified: true };
+  }
+
+  async forgotPassword(email: string): Promise<{ success: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+    if (!user || user.status === UserStatus.SUSPENDED || user.status === UserStatus.INACTIVE) {
+      return { success: true };
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetTokenHash: this.hashToken(token),
+        passwordResetExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      },
+    });
+
+    const resetUrl = `${this.siteUrl()}/tr/reset-password?email=${encodeURIComponent(user.email)}&token=${token}`;
+    await this.mail.sendPasswordReset(user.email, {
+      firstName: user.firstName || user.email.split('@')[0],
+      resetUrl,
+      userId: user.id,
+    }).catch((error) => {
+      this.logger.warn(`[Mail] Password reset email skipped for ${user.id}: ${error instanceof Error ? error.message : error}`);
+    });
+
+    return { success: true };
+  }
+
+  async resetPassword(email: string, token: string, password: string): Promise<{ success: true }> {
+    if (!password || password.length < 8) {
+      throw new BadRequestException('Şifre en az 8 karakter olmalıdır.');
+    }
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.trim().toLowerCase(),
+        passwordResetTokenHash: this.hashToken(token),
+        passwordResetExpiresAt: { gt: new Date() },
+      },
+    });
+    if (!user) throw new BadRequestException('Şifre sıfırlama bağlantısı geçersiz veya süresi dolmuş.');
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await bcrypt.hash(password, 12),
+        passwordResetTokenHash: null,
+        passwordResetExpiresAt: null,
+      },
+    });
+
+    return { success: true };
   }
 
   /**
@@ -230,5 +353,17 @@ export class AuthService {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
+  }
+
+  private generateNumericCode(): string {
+    return crypto.randomInt(0, 999999).toString().padStart(6, '0');
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+  }
+
+  private siteUrl(): string {
+    return String(this.config.get('SITE_URL') || 'https://epin365.com').replace(/\/$/, '');
   }
 }

@@ -54,6 +54,38 @@ export class AuthController {
     });
   }
 
+  @Public()
+  @Post('email/resend')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'E-posta doğrulama kodunu yeniden gönder' })
+  async resendEmailVerification(@Body() body: { email: string }) {
+    return this.authService.resendEmailVerification(body.email);
+  }
+
+  @Public()
+  @Post('email/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'E-posta doğrulama kodunu onayla' })
+  async verifyEmail(@Body() body: { email: string; code: string }) {
+    return this.authService.verifyEmail(body.email, body.code);
+  }
+
+  @Public()
+  @Post('password/forgot')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Şifre sıfırlama maili gönder' })
+  async forgotPassword(@Body() body: { email: string }) {
+    return this.authService.forgotPassword(body.email);
+  }
+
+  @Public()
+  @Post('password/reset')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Şifre sıfırlama tokenı ile yeni şifre belirle' })
+  async resetPassword(@Body() body: { email: string; token: string; password: string }) {
+    return this.authService.resetPassword(body.email, body.token, body.password);
+  }
+
   @Get('me')
   @ApiBearerAuth('JWT')
   @ApiOperation({ summary: 'Giriş yapan kullanıcının profili' })

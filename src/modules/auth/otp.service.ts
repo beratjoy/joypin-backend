@@ -1,6 +1,8 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 
 /**
  * OTP Servisi — E-Pin şifre çözme ve hassas işlemler için.
@@ -29,7 +31,11 @@ export class OtpService {
   private readonly VERIFIED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 dakika
   private readonly MAX_ATTEMPTS = 5;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   /**
    * OTP kodu üretir ve saklar.
@@ -50,12 +56,26 @@ export class OtpService {
 
     this.otpStore.set(userId, { code, expiresAt, attempts: 0 });
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true },
+    });
+    if (user?.email) {
+      await this.mail.sendOtp(user.email, {
+        code,
+        purpose: 'Hassas işlem doğrulaması için bu kodu kullanın.',
+        userId,
+      }).catch((error) => {
+        this.logger.warn(`[Mail] OTP email skipped for ${userId}: ${error instanceof Error ? error.message : error}`);
+      });
+    }
+
     // TODO: Gerçek SMS gönderimi
     // await this.smsService.send(user.phone, `Doğrulama kodunuz: ${code}`);
 
     this.logger.log(`OTP gönderildi [${userId}]: ${code} (DEV ONLY)`);
 
-    return { message: 'Doğrulama kodu telefonunuza gönderildi.' };
+    return { message: 'Doğrulama kodu e-posta adresinize gönderildi.' };
   }
 
   /**

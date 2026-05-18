@@ -274,6 +274,10 @@ model User {
   // Doğrulama Durumu (Image 5)
   smsVerified      Boolean @default(false)
   emailVerified    Boolean @default(false)
+  emailVerificationCode String? @db.VarChar(12)
+  emailVerificationExpiresAt DateTime?
+  passwordResetTokenHash String? @db.VarChar(128)
+  passwordResetExpiresAt DateTime?
 
   // OTP Ayarları (Giriş OTP / Sipariş OTP ayrımı)
   otpSecret        String?  @db.VarChar(255)
@@ -331,6 +335,7 @@ model User {
   @@index([dealerGroupId])
   @@index([referredById])
   @@index([role, status])
+  @@index([passwordResetTokenHash])
   @@map("users")
 }
 
