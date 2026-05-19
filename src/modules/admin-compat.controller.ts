@@ -3,7 +3,10 @@ import { ForbiddenException, NotFoundException, Req, Res, UnauthorizedException 
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
 import { ReferralGuardService } from './referrals/referral-guard.service';
+import { ReferralsService } from './referrals/referrals.service';
 import { StockDeliveryService } from './stocks/stock-delivery.service';
+import { AuthService } from './auth/auth.service';
+import { OrdersService } from './orders/orders.service';
 import { Roles } from './auth/decorators/roles.decorator';
 import { createHash, randomUUID } from 'crypto';
 
@@ -15,6 +18,9 @@ export class AdminCompatController {
     private readonly mailService: MailService,
     private readonly referralGuard: ReferralGuardService,
     private readonly stockDelivery: StockDeliveryService,
+    private readonly authService: AuthService,
+    private readonly referralsService: ReferralsService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -120,6 +126,491 @@ export class AdminCompatController {
 
   private assertReviewTenant(review: any, tenantId?: string) {
     if (!this.reviewVisibleForTenant(review, tenantId)) throw new NotFoundException('Kayıt bulunamadı');
+  }
+
+  private healthStep(result: any, name: string, ok: boolean, data: Record<string, any> = {}) {
+    result.checks.push({ name, ok, ...data });
+  }
+
+  private async runHealthStep(result: any, name: string, fn: () => Promise<Record<string, any> | void>) {
+    const startedAt = Date.now();
+    try {
+      const data = (await fn()) || {};
+      this.healthStep(result, name, true, { durationMs: Date.now() - startedAt, ...data });
+    } catch (error: any) {
+      this.healthStep(result, name, false, {
+        durationMs: Date.now() - startedAt,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  @Post('system-health/run')
+  async runSystemHealth(@Req() req: any, @Body() body: any) {
+    const suffix = `${Date.now()}`;
+    const shortSuffix = suffix.slice(-8);
+    const tenantId = body?.tenantId && body.tenantId !== 'all' ? body.tenantId : await this.ensureDefaultTenant();
+    const tenant = tenantId
+      ? await this.prisma.tenantBrand.findUnique({ where: { id: tenantId } }).catch(() => null)
+      : null;
+    const tenantIds = tenantId ? [tenantId] : [];
+    const tenantHost = req?.headers?.['x-forwarded-host'] || req?.headers?.host || tenant?.primaryDomain || 'epin365.com';
+    const result: any = {
+      runId: `health-${suffix}`,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      ok: false,
+      tenantId: tenant?.id || tenantId || null,
+      checks: [],
+      ids: {},
+      notes: ['Canli test kayitlari CODEX HEALTH etiketiyle olusturuldu. Gercek musteri verisi silinmez.'],
+    };
+
+    let category: any;
+    let product: any;
+    let topupProduct: any;
+    let mission: any;
+    let coupon: any;
+    let referrerUser: any;
+    let buyerUser: any;
+    let walletOrder: any;
+    let walletSubOrder: any;
+    let failingProvider: any;
+    let manualProvider: any;
+
+    const registerHealthUser = async (email: string, firstName: string, referralCode: string | undefined, ipLast: number) => {
+      await this.authService.register({
+        email,
+        password: `CodexHealth!${suffix}`,
+        firstName,
+        lastName: 'Health',
+        countryCode: 'TR',
+        preferredCurrency: 'TRY',
+        referralCode,
+        tenantHost: String(tenantHost),
+        ipAddress: `198.51.100.${ipLast}`,
+        userAgent: `CodexHealth/${suffix}/${ipLast}`,
+      });
+      return this.prisma.user.findUnique({ where: { email }, include: { wallet: true } });
+    };
+
+    await this.runHealthStep(result, 'Test kategori ve urunleri olusturuldu', async () => {
+      category = await this.prisma.productCategory.create({
+        data: {
+          name: `CODEX HEALTH Kategori ${suffix}`,
+          slug: `codex-health-category-${suffix}`,
+          description: 'Canli sistem saglik testi kategorisi',
+          isActive: true,
+          tenantIds,
+        },
+      });
+      product = await this.prisma.product.create({
+        data: {
+          name: `CODEX HEALTH E-Pin ${suffix}`,
+          shortName: 'CODEX HEALTH',
+          slug: `codex-health-epin-${suffix}`,
+          categoryId: category.id,
+          type: 'EPIN',
+          stockType: 'EPIN',
+          baseCurrency: 'TRY',
+          baseCost: 10,
+          fixedPrice: 20,
+          hasInfiniteStock: true,
+          stockCount: 999,
+          isActive: true,
+          tenantIds,
+        },
+      });
+      topupProduct = await this.prisma.product.create({
+        data: {
+          name: `CODEX HEALTH Topup ${suffix}`,
+          shortName: 'CODEX TOPUP',
+          slug: `codex-health-topup-${suffix}`,
+          categoryId: category.id,
+          type: 'TOPUP',
+          stockType: 'API_TOPUP',
+          baseCurrency: 'TRY',
+          baseCost: 1,
+          fixedPrice: 10,
+          hasInfiniteStock: true,
+          stockCount: 999,
+          isActive: true,
+          customInputFields: [{ key: 'playerId', label: 'Oyuncu ID', required: true }],
+          tenantIds,
+        },
+      });
+      result.ids.productId = product.id;
+      result.ids.topupProductId = topupProduct.id;
+      return { productId: product.id, topupProductId: topupProduct.id };
+    });
+
+    await this.runHealthStep(result, 'Referans kurali, gorev ve kupon hazirlandi', async () => {
+      const referralRule = await this.prisma.referralRule.create({
+        data: {
+          name: `CODEX HEALTH Ref Kural ${suffix}`,
+          description: 'Canli saglik testi referans komisyonu',
+          incomeModel: 'PRODUCT_SALE',
+          referralModel: 'REFERRAL_LINK',
+          calculationMethod: 'SALE_PRICE',
+          calculationBasis: 'SALE_PRICE',
+          commissionPercent: 10,
+          fixedCommission: 0,
+          tierLevel: 1,
+          minPurchaseAmount: 0,
+          maxPurchaseAmount: 0,
+          minSalesAmount: 0,
+          maxCommission: 0,
+          orderCountLimit: 0,
+          selfEarningEnabled: false,
+          applicableProductIds: [],
+          applicableCategoryIds: [],
+          tenantIds,
+          isActive: true,
+        },
+      });
+      mission = await this.prisma.mission.create({
+        data: {
+          title: `CODEX HEALTH 5 Uye Gorevi ${suffix}`,
+          description: '5 referans uye getir, odul otomatik tanimlansin',
+          type: 'REFERRAL_COUNT',
+          targetValue: 5,
+          rewardType: 'CASH_BALANCE',
+          rewardAmount: 7,
+          rewardAutoClaim: true,
+          tenantIds,
+          isActive: true,
+        },
+      });
+      coupon = await this.prisma.discountCoupon.create({
+        data: {
+          code: `HLT${shortSuffix}`,
+          name: `CODEX HEALTH Kupon ${suffix}`,
+          description: 'Canli saglik testi kuponu',
+          type: 'FIXED_AMOUNT',
+          value: 5,
+          currency: 'TRY',
+          minOrderAmount: 10,
+          maxDiscountAmount: 0,
+          maxUsageTotal: 100,
+          maxUsagePerUser: 2,
+          applicableProductIds: [],
+          applicableCategoryIds: [],
+          applicableUserRoles: [],
+          tenantIds,
+          status: 'ACTIVE',
+          validFrom: new Date(Date.now() - 60_000),
+          validUntil: new Date(Date.now() + 86_400_000),
+        },
+      });
+      result.ids.referralRuleId = referralRule.id;
+      result.ids.missionId = mission.id;
+      result.ids.couponCode = coupon.code;
+      return { couponCode: coupon.code, missionId: mission.id };
+    });
+
+    await this.runHealthStep(result, 'Musteri kaydi ve referans kodu alindi', async () => {
+      const email = `codex.health.referrer.${suffix}@example.com`;
+      referrerUser = await registerHealthUser(email, 'CodexRef', undefined, 10);
+      if (!referrerUser?.referralCode) throw new Error('Referans kodu olusmadi');
+      result.ids.referrerUserId = referrerUser.id;
+      result.ids.referralCode = referrerUser.referralCode;
+      return { email, referralCode: referrerUser.referralCode };
+    });
+
+    await this.runHealthStep(result, 'Yayinci basvurusu olusturuldu ve onaylandi', async () => {
+      const application = await this.prisma.publisherApplication.create({
+        data: {
+          tenantId,
+          userId: referrerUser.id,
+          fullName: 'Codex Health Publisher',
+          email: referrerUser.email,
+          phone: '+905550000000',
+          platform: 'YouTube',
+          profileUrl: `https://youtube.com/@codex-health-${suffix}`,
+          followerCount: 12345,
+          message: 'Canli sistem saglik testi yayinci basvurusu',
+        },
+      });
+      const approved = await this.prisma.publisherApplication.update({
+        where: { id: application.id },
+        data: {
+          status: 'APPROVED',
+          adminNote: 'Sistem saglik testi onayi',
+          reviewedAt: new Date(),
+        },
+      });
+      result.ids.publisherApplicationId = approved.id;
+      return { applicationId: approved.id, status: approved.status };
+    });
+
+    await this.runHealthStep(result, '5 referans uye ve otomatik gorev odulu calisti', async () => {
+      for (let i = 1; i <= 5; i += 1) {
+        await registerHealthUser(
+          `codex.health.referred.${suffix}.${i}@example.com`,
+          `CodexRef${i}`,
+          referrerUser.referralCode,
+          20 + i,
+        );
+      }
+      const referralRows = await this.prisma.userReferral.findMany({ where: { referrerId: referrerUser.id } });
+      const progress = await this.prisma.userMissionProgress.findUnique({
+        where: { userId_missionId: { userId: referrerUser.id, missionId: mission.id } },
+      });
+      const wallet = await this.prisma.wallet.findUnique({ where: { userId: referrerUser.id } });
+      if (referralRows.length !== 5) throw new Error(`Beklenen 5 referans, gelen ${referralRows.length}`);
+      if (!progress?.isCompleted || !progress.rewardClaimed) throw new Error('Gorev tamamlandi/odul alindi durumuna gecmedi');
+      if (Number(wallet?.balanceBonus || 0) < 7) throw new Error('Gorev bonus bakiyesi tanimlanmadi');
+      return {
+        referrals: referralRows.length,
+        activeReferrals: referralRows.filter((row) => row.isActive).length,
+        missionValue: Number(progress.currentValue),
+        rewardClaimed: progress.rewardClaimed,
+        bonusBalance: Number(wallet?.balanceBonus || 0),
+      };
+    });
+
+    await this.runHealthStep(result, 'Kupon uygulandi, cuzdanla alisveris ve referans komisyonu olustu', async () => {
+      buyerUser = await this.prisma.user.findFirst({
+        where: { referredById: referrerUser.id },
+        include: { wallet: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!buyerUser) throw new Error('Alisveris yapacak referans uye bulunamadi');
+      await this.prisma.wallet.update({ where: { userId: buyerUser.id }, data: { balanceCurrent: { increment: 100 } } });
+      const cartTotal = 20;
+      const discountAmount = Number(coupon.value || 0);
+      const newTotal = cartTotal - discountAmount;
+      if (newTotal !== 15) throw new Error('Kupon indirimi beklenen tutari vermedi');
+      await this.prisma.discountCoupon.update({ where: { id: coupon.id }, data: { currentUsage: { increment: 1 } } });
+      walletOrder = await this.ordersService.createOrder({
+        userId: buyerUser.id,
+        currency: 'TRY',
+        paymentMethod: 'WALLET',
+        tenantId,
+        tenantHost: String(tenantHost),
+        customerNote: 'Codex health kuponlu cuzdan siparisi',
+        items: [{
+          productId: product.id,
+          quantity: 1,
+          unitPrice: newTotal,
+          unitCost: 10,
+          deliveryType: 'EPIN' as any,
+        }],
+      });
+      const order = await this.prisma.order.findUnique({
+        where: { id: walletOrder.id },
+        include: { subOrders: true },
+      });
+      walletSubOrder = order?.subOrders?.[0];
+      if (!order || order.paymentStatus !== 'PAID') throw new Error('Cuzdan siparisi PAID olmadi');
+      await this.prisma.subOrder.update({
+        where: { id: walletSubOrder.id },
+        data: { status: 'DELIVERED', deliveredCount: 1, deliveryNote: 'Sistem saglik testi manuel teslim' },
+      });
+      await this.prisma.order.update({ where: { id: order.id }, data: { status: 'COMPLETED' } });
+      await this.referralsService.processReferralCommission({
+        orderId: order.id,
+        subOrderId: walletSubOrder.id,
+        buyerUserId: buyerUser.id,
+        salePrice: Number(walletSubOrder.totalPrice),
+        costPrice: Number(walletSubOrder.unitCost),
+        productId: product.id,
+        categoryId: category.id,
+      });
+      const tx = await this.prisma.referralTransaction.findFirst({ where: { orderId: order.id, subOrderId: walletSubOrder.id } });
+      if (!tx || Number(tx.commissionAmount) <= 0) throw new Error('Referans komisyonu olusmadi');
+      result.ids.walletOrderId = order.id;
+      return {
+        couponCode: coupon.code,
+        discountAmount,
+        orderNumber: order.orderNumber,
+        commission: Number(tx.commissionAmount),
+      };
+    });
+
+    await this.runHealthStep(result, 'Musteri referans paneli verileri dogru hesaplandi', async () => {
+      const referrals = await this.prisma.userReferral.findMany({
+        where: { referrerId: referrerUser.id },
+        include: { transactions: true },
+      });
+      const totalEarnings = referrals.reduce((sum, row) => (
+        sum + row.transactions.reduce((inner, tx) => inner + Number(tx.commissionAmount || 0), 0)
+      ), 0);
+      const progress = await this.prisma.userMissionProgress.findUnique({
+        where: { userId_missionId: { userId: referrerUser.id, missionId: mission.id } },
+      });
+      if (referrals.length !== 5) throw new Error(`Panel sayimi 5 olmali, gelen ${referrals.length}`);
+      return {
+        totalReferrals: referrals.length,
+        purchasingReferrals: referrals.filter((row) => row.transactions.length > 0).length,
+        totalEarnings,
+        missionCompleted: Boolean(progress?.isCompleted),
+      };
+    });
+
+    await this.runHealthStep(result, 'Destek talebi acildi, cevaplandi ve musteriye gorundu', async () => {
+      const ticket = await this.prisma.ticket.create({
+        data: {
+          tenantId,
+          userId: buyerUser.id,
+          subject: `CODEX HEALTH destek ${suffix}`,
+          status: 'OPEN',
+          messages: {
+            create: {
+              senderId: buyerUser.id,
+              isStaff: false,
+              content: 'Musteri gozuyle destek talebi test mesaji',
+            },
+          },
+        },
+        include: { messages: true },
+      });
+      await this.prisma.ticketMessage.create({
+        data: {
+          ticketId: ticket.id,
+          senderId: referrerUser.id,
+          isStaff: true,
+          content: 'Sistem saglik testi destek cevabi',
+        },
+      });
+      const replied = await this.prisma.ticket.update({
+        where: { id: ticket.id },
+        data: { status: 'REPLIED' },
+        include: { messages: true },
+      });
+      const seen = await this.prisma.ticket.findFirst({
+        where: { id: ticket.id, userId: buyerUser.id },
+        include: { messages: true },
+      });
+      if (!seen?.messages.some((message) => message.isStaff)) throw new Error('Personel cevabi musteri talebinde gorunmedi');
+      result.ids.ticketId = ticket.id;
+      return { ticketId: ticket.id, status: replied.status, messages: seen.messages.length };
+    });
+
+    await this.runHealthStep(result, 'Normal musteri API hatasinda siradaki tedarikciye gecti', async () => {
+      failingProvider = await this.prisma.botProvider.create({
+        data: {
+          name: `CODEX HEALTH Fail API ${suffix}`,
+          type: 'API',
+          status: 'ACTIVE',
+          apiUrl: 'http://127.0.0.1:9/reject',
+          balance: 9999,
+          balanceCurrency: 'TRY',
+          tenantIds,
+        },
+      });
+      manualProvider = await this.prisma.botProvider.create({
+        data: {
+          name: `CODEX HEALTH Manual Next ${suffix}`,
+          type: 'MANUAL',
+          status: 'ACTIVE',
+          balance: 9999,
+          balanceCurrency: 'TRY',
+          tenantIds,
+        },
+      });
+      await this.prisma.productProvider.createMany({
+        data: [
+          { productId: topupProduct.id, providerId: failingProvider.id, providerProductCode: 'FAIL', costPrice: 1, costCurrency: 'TRY', priority: 1, isActive: true },
+          { productId: topupProduct.id, providerId: manualProvider.id, providerProductCode: 'NEXT', costPrice: 2, costCurrency: 'TRY', priority: 2, isActive: true },
+        ],
+      });
+      await (this.prisma as any).productApiRoutingPolicy.upsert({
+        where: { productId: topupProduct.id },
+        update: { onRejectAction: 'FALLBACK' },
+        create: { productId: topupProduct.id, onRejectAction: 'FALLBACK' },
+      });
+      const order = await this.createHealthTopupOrder(tenantId, buyerUser.id, topupProduct.id, suffix, 'N');
+      const routeResult = await this.routeSubOrderToConfiguredProvider(order.subOrders[0].id);
+      const routed = await this.prisma.subOrder.findUnique({ where: { id: order.subOrders[0].id }, include: { botProvider: true } });
+      if (!routeResult.success || routed?.botProviderId !== manualProvider.id) throw new Error('Sistem siradaki tedarikciye gecmedi');
+      return { provider: routed.botProvider?.name, attempts: routed.fallbackAttempts, status: routed.status };
+    });
+
+    await this.runHealthStep(result, 'Bayi API hatasinda siradakine gecmeden iptal edildi', async () => {
+      const dealerGroup = await this.prisma.dealerGroup.create({
+        data: {
+          name: `CODEX HEALTH Bayi ${suffix}`,
+          defaultDiscountPercent: 0,
+          isActive: true,
+          cancelOnApiFail: true,
+        },
+      });
+      const dealerUser = await registerHealthUser(`codex.health.dealer.${suffix}@example.com`, 'CodexDealer', undefined, 80);
+      const updatedDealer = await this.prisma.user.update({
+        where: { id: dealerUser.id },
+        data: { role: 'RESELLER', dealerGroupId: dealerGroup.id },
+      });
+      const order = await this.createHealthTopupOrder(tenantId, updatedDealer.id, topupProduct.id, suffix, 'D');
+      const routeResult = await this.routeSubOrderToConfiguredProvider(order.subOrders[0].id);
+      const routed = await this.prisma.subOrder.findUnique({ where: { id: order.subOrders[0].id }, include: { botProvider: true } });
+      if (!routeResult.cancelled || routed?.status !== 'CANCELLED' || routed.botProviderId !== failingProvider.id) {
+        throw new Error('Bayi politikasi beklenen iptali yapmadi');
+      }
+      return { provider: routed.botProvider?.name, attempts: routed.fallbackAttempts, status: routed.status, reason: routed.cancelReason };
+    });
+
+    await this.runHealthStep(result, 'Musteri siparis listesi yeni siparisi donduruyor', async () => {
+      const orders = await this.prisma.order.findMany({ where: { userId: buyerUser.id }, orderBy: { createdAt: 'desc' }, take: 20 });
+      if (!orders.some((order) => order.id === walletOrder.id)) throw new Error('Cuzdan siparisi musteri siparislerinde yok');
+      return { orderNumber: orders.find((order) => order.id === walletOrder.id)?.orderNumber };
+    });
+
+    result.finishedAt = new Date().toISOString();
+    result.ok = result.checks.every((check: any) => check.ok);
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: req?.user?.id || null,
+        action: 'ACTIVITY',
+        category: 'SYSTEM',
+        entityType: 'system_health',
+        entityId: result.runId,
+        details: {
+          ok: result.ok,
+          runId: result.runId,
+          checks: result.checks.map((check: any) => ({ name: check.name, ok: check.ok, error: check.error || null })),
+          ids: result.ids,
+        },
+        ipAddress: req?.ip,
+        userAgent: req?.headers?.['user-agent'],
+      },
+    }).catch(() => null);
+
+    return result;
+  }
+
+  private async createHealthTopupOrder(tenantId: string | null | undefined, userId: string, productId: string, suffix: string, marker: string) {
+    return this.prisma.order.create({
+      data: {
+        orderNumber: `OH-${suffix.slice(-10)}-${marker}`,
+        tenantId: tenantId || null,
+        userId,
+        isGuest: false,
+        currency: 'TRY',
+        totalAmount: 10,
+        netAmount: 10,
+        status: 'PROCESSING',
+        paymentStatus: 'PAID',
+        paymentMethod: 'WALLET',
+        customerNote: `Codex health provider route ${marker}`,
+        subOrders: {
+          create: {
+            productId,
+            quantity: 1,
+            unitPrice: 10,
+            unitCost: 1,
+            totalPrice: 10,
+            currency: 'TRY',
+            deliveryType: 'API_TOPUP',
+            status: 'PROCESSING',
+            topupFieldData: { playerId: `P-${suffix}-${marker}` },
+          },
+        },
+      },
+      include: { subOrders: true },
+    });
   }
 
   private slugifyBlogText(value: string) {
