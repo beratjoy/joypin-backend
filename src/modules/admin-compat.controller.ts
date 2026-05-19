@@ -4079,12 +4079,12 @@ export class AdminCompatController {
       ? undefined
       : body.memberTypeId ? String(body.memberTypeId) : null;
     const requestedRole = body.role ? String(body.role) : undefined;
-    const allowedRoles = ['CUSTOMER', 'RESELLER', 'DEALER'];
-    const role = dealerGroupId
+    const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF', 'CUSTOMER', 'RESELLER', 'DEALER'];
+    const elevatedRoles = ['SUPER_ADMIN', 'ADMIN', 'SUPPORT', 'STAFF'];
+    const resolvedRole = requestedRole && allowedRoles.includes(requestedRole) ? requestedRole : existing.role;
+    const role = dealerGroupId && !elevatedRoles.includes(resolvedRole)
       ? 'RESELLER'
-      : requestedRole && allowedRoles.includes(requestedRole)
-        ? requestedRole
-        : undefined;
+      : resolvedRole;
 
     if (dealerGroupId) {
       const group = await this.prisma.dealerGroup.findUnique({ where: { id: dealerGroupId } });
