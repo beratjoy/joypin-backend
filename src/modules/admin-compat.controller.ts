@@ -177,6 +177,128 @@ export class AdminCompatController {
     };
   }
 
+  private clampSeoText(value: any, maxLength: number) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 1)).replace(/\s+\S*$/, '')}`.trim();
+  }
+
+  private seoKeywords(values: Array<any>) {
+    return Array.from(
+      new Set(
+        values
+          .flatMap((value) => String(value || '').split(','))
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, 12).join(', ');
+  }
+
+  private localSeoContent(input: any) {
+    const brand = String(input.brandName || 'Epin365').trim() || 'Epin365';
+    const name = String(input.name || input.title || '').trim();
+    const category = String(input.categoryName || input.category || '').trim();
+    const entityType = String(input.entityType || 'PRODUCT').toUpperCase();
+    const productType = String(input.productType || input.type || '').toUpperCase();
+    const requiredFields = Array.isArray(input.requiredFields) ? input.requiredFields : [];
+    const fieldText = requiredFields
+      .map((field: any) => field?.fieldLabel || field?.label || field?.fieldKey || field?.key)
+      .filter(Boolean)
+      .join(', ');
+    const subject = name || category || 'Dijital ürün';
+    const isTopup = productType === 'TOPUP' || requiredFields.length > 0;
+    const title = entityType === 'CATEGORY'
+      ? `${subject} Ürünleri ve Fiyatları | ${brand}`
+      : `${subject} Satın Al | ${brand}`;
+    const description = entityType === 'CATEGORY'
+      ? `${subject} kategorisindeki dijital ürünleri güvenli ödeme, güncel fiyat ve kolay sipariş takibiyle ${brand} üzerinden inceleyin.`
+      : `${subject} için güvenli ödeme, kolay sipariş takibi ve destek avantajıyla ${brand} üzerinden hızlıca sipariş oluşturun.`;
+    const body = entityType === 'CATEGORY'
+      ? `<p><strong>${subject}</strong> kategorisinde oyun kredileri, dijital kodlar ve top-up ürünlerini tek ekranda inceleyebilirsiniz. ${brand}, sipariş sürecini anlaşılır tutar; fiyat, stok ve teslimat durumlarını panelden takip etmenizi sağlar.</p><p>Satın almadan önce ürün açıklamalarını, bölge bilgisini ve istenen hesap bilgilerini kontrol etmeniz önerilir.</p>`
+      : `<p><strong>${subject}</strong>${category ? `, ${category} kategorisinde` : ''} güvenli sipariş deneyimi için hazırlanmış dijital bir üründür. ${isTopup ? `Sipariş sırasında ${fieldText || 'oyuncu bilgileri'} gibi gerekli bilgileri doğru girmeniz gerekir.` : 'Teslim edilen kod veya ürün bilgileri sipariş detayınızda görüntülenir.'}</p><p>${brand} üzerinden ödeme durumunu, teslimat sürecini ve sipariş geçmişini hesabınızdan takip edebilirsiniz. Ürün bölgesi, platformu ve kullanım koşullarını satın almadan önce kontrol edin.</p>`;
+    const baseKeywords = entityType === 'CATEGORY'
+      ? [subject, `${subject} ürünleri`, `${subject} fiyatları`, brand, 'epin', 'oyun kodu']
+      : [subject, `${subject} satın al`, `${subject} fiyat`, category, brand, isTopup ? 'top up' : 'epin', 'dijital ürün'];
+    return {
+      description: body,
+      shortDescription: this.clampSeoText(description, 220),
+      seoTitle: this.clampSeoText(title, 70),
+      seoDescription: this.clampSeoText(description, 160),
+      seoKeywords: this.seoKeywords([...(input.keywords ? [input.keywords] : []), ...baseKeywords]),
+      faq: [
+        {
+          question: `${subject} siparişi için hangi bilgiler gerekir?`,
+          answer: isTopup
+            ? `Ürün sayfasında istenen ${fieldText || 'oyuncu bilgilerini'} doğru girmeniz gerekir.`
+            : 'E-pin ürünlerinde teslim edilen kodu sipariş detayında görüntüleyebilirsiniz.',
+        },
+        {
+          question: 'Siparişimi nereden takip ederim?',
+          answer: 'Hesabınızdaki siparişler bölümünden ödeme ve teslimat durumunu takip edebilirsiniz.',
+        },
+      ],
+    };
+  }
+
+  private async buildSeoContent(input: any) {
+    const fallback = this.localSeoContent(input);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return { ...fallback, provider: 'local' };
+    try {
+      const prompt = [
+        'Sen Epin365 için çalışan kıdemli bir Türkçe SEO ve e-ticaret içerik uzmanısın.',
+        'Görevin ürün/kategori içeriği üretmek. Sadece verilen verileri kullan; fiyat, stok, teslimat süresi, resmi partnerlik, garanti veya kampanya uydurma.',
+        'Metin özgün, net, satışa yardımcı ve SEO uyumlu olsun. Rakip marka adı kullanma. Abartılı kesin vaatlerden kaçın.',
+        'Top-up ürünlerde istenen oyuncu bilgilerini doğru girme uyarısı ekle. E-pin ürünlerde kod teslimatını anlat.',
+        'seoTitle en fazla 70 karakter, seoDescription en fazla 160 karakter olmalı.',
+        'Cevabı sadece geçerli JSON olarak döndür: description, shortDescription, seoTitle, seoDescription, seoKeywords, faq alanları olsun.',
+      ].join('\n');
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          temperature: 0.45,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: JSON.stringify({ ...input, fallback }, null, 2) },
+          ],
+        }),
+      });
+      if (!response.ok) return { ...fallback, provider: 'local' };
+      const data: any = await response.json();
+      const raw = data?.choices?.[0]?.message?.content || '';
+      const parsed = JSON.parse(raw);
+      return {
+        description: String(parsed.description || fallback.description),
+        shortDescription: this.clampSeoText(parsed.shortDescription || fallback.shortDescription, 220),
+        seoTitle: this.clampSeoText(parsed.seoTitle || fallback.seoTitle, 70),
+        seoDescription: this.clampSeoText(parsed.seoDescription || fallback.seoDescription, 160),
+        seoKeywords: this.seoKeywords([parsed.seoKeywords, fallback.seoKeywords]),
+        faq: Array.isArray(parsed.faq) ? parsed.faq.slice(0, 6) : fallback.faq,
+        provider: 'openai',
+      };
+    } catch {
+      return { ...fallback, provider: 'local' };
+    }
+  }
+
+  @Post('ai/seo-content')
+  async generateSeoContent(@Body() body: any) {
+    const name = String(body?.name || body?.title || body?.categoryName || '').trim();
+    if (!name) throw new BadRequestException('İçerik üretmek için ürün veya kategori adı zorunludur');
+    const content = await this.buildSeoContent({
+      ...body,
+      languageCode: body.languageCode || 'tr',
+      brandName: body.brandName || 'Epin365',
+    });
+    return { success: true, ...content };
+  }
+
   @Get('blogs')
   async listBlogs(@Query('tenantId') tenantId?: string) {
     const posts = await this.prisma.blogPost.findMany({
@@ -4101,6 +4223,32 @@ export class AdminCompatController {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     const categoryName = body.categoryName || providerProduct.CategoryName || 'Tedarikçi Ürünleri';
     const categorySlug = this.slugifyProviderText(body.categorySlug || categoryName);
+    const inferredType = this.isProviderTopupProduct(providerProduct, body.type) ? 'TOPUP' : 'EPIN';
+    const productType = String(body.type || inferredType).toUpperCase() === 'TOPUP' ? 'TOPUP' : 'EPIN';
+    const topupFields = this.ensureTopupFields(providerProduct, productType);
+    const providerIsActive = this.normalizeProviderProductActive(providerProduct);
+    const shouldGenerateSeo = this.parseProviderBoolean(body.generateSeo ?? body.aiSeo, false);
+    const generatedSeo = shouldGenerateSeo ? await this.buildSeoContent({
+      entityType: 'PRODUCT',
+      source: 'provider-import',
+      name: body.name || providerProduct.ProductName,
+      categoryName,
+      productType,
+      providerName: provider.name,
+      price: providerProduct.SalePrice || providerProduct.ProductPrice || null,
+      currency: body.currency || 'TRY',
+      requiredFields: topupFields,
+      keywords: body.seoKeywords || '',
+      brandName: body.brandName || 'Epin365',
+    }) : null;
+    const generatedCategorySeo = shouldGenerateSeo ? await this.buildSeoContent({
+      entityType: 'CATEGORY',
+      source: 'provider-import',
+      name: categoryName,
+      categoryName,
+      providerName: provider.name,
+      brandName: body.brandName || 'Epin365',
+    }) : null;
     const category = body.categoryId
       ? await this.prisma.productCategory.findUnique({ where: { id: body.categoryId } })
       : await this.prisma.productCategory.upsert({
@@ -4110,11 +4258,16 @@ export class AdminCompatController {
             tenantIds: scopedTenantIds,
             imageUrl: providerProduct.Image || undefined,
             logoUrl: providerProduct.Image || undefined,
+            description: generatedCategorySeo?.description || undefined,
+            seoTitle: generatedCategorySeo?.seoTitle || undefined,
+            seoDescription: generatedCategorySeo?.seoDescription || undefined,
           },
           create: {
             name: categoryName,
             slug: categorySlug,
-            description: `${provider.name} üzerinden içe aktarılan kategori`,
+            description: generatedCategorySeo?.description || `${provider.name} üzerinden içe aktarılan kategori`,
+            seoTitle: generatedCategorySeo?.seoTitle || null,
+            seoDescription: generatedCategorySeo?.seoDescription || null,
             imageUrl: providerProduct.Image || null,
             logoUrl: providerProduct.Image || null,
             layout: 'jollymax',
@@ -4124,10 +4277,6 @@ export class AdminCompatController {
         });
     if (!category) throw new NotFoundException('Kategori bulunamadı');
 
-    const inferredType = this.isProviderTopupProduct(providerProduct, body.type) ? 'TOPUP' : 'EPIN';
-    const productType = String(body.type || inferredType).toUpperCase() === 'TOPUP' ? 'TOPUP' : 'EPIN';
-    const topupFields = this.ensureTopupFields(providerProduct, productType);
-    const providerIsActive = this.normalizeProviderProductActive(providerProduct);
     const productSlugBase = this.slugifyProviderText(body.name || providerProduct.ProductName);
     let productSlug = productSlugBase;
     const existingBySlug = await this.prisma.product.findUnique({ where: { slug: productSlug } }).catch(() => null);
@@ -4137,7 +4286,10 @@ export class AdminCompatController {
         name: body.name || providerProduct.ProductName,
         shortName: body.shortName || providerProduct.ProductName,
         slug: productSlug,
-        description: body.description || `${provider.name} tedarikçi ürünü`,
+        description: body.description || generatedSeo?.description || `${provider.name} tedarikçi ürünü`,
+        seoTitle: body.seoTitle || generatedSeo?.seoTitle || null,
+        seoDescription: body.seoDescription || generatedSeo?.seoDescription || null,
+        seoKeywords: body.seoKeywords || generatedSeo?.seoKeywords || null,
         categoryId: category.id,
         type: productType as any,
         stockType: productType === 'TOPUP' ? 'API_TOPUP' : 'EPIN',
