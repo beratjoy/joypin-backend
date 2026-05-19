@@ -141,6 +141,33 @@ export class StorefrontCompatController {
     return value || this.toCdnUrl(localGameImages[knownSlug] || this.fallbackImage);
   }
 
+  private localizeBlogPost(post: any, locale?: string | null) {
+    const normalizedLocale = String(locale || '').trim().toLowerCase();
+    const translation = Array.isArray(post.translations)
+      ? post.translations.find((item: any) => String(item.languageCode || '').toLowerCase() === normalizedLocale)
+      : null;
+    const source = translation || post;
+
+    return {
+      id: post.id,
+      title: source.title,
+      slug: post.slug,
+      content: source.content,
+      excerpt: source.excerpt,
+      coverImage: this.normalizeImageUrl(post.coverImage || post.imageUrl, post.category?.slug),
+      imageUrl: this.normalizeImageUrl(post.imageUrl || post.coverImage, post.category?.slug),
+      publishedAt: post.publishedAt,
+      seoTitle: source.seoTitle || post.seoTitle,
+      seoDescription: source.seoDescription || post.seoDescription,
+      categoryName: post.category?.name || null,
+      authorName: post.source === 'SORO' ? 'AI Editör' : 'JoyPin Editör',
+      source: post.source || 'MANUAL',
+      languages: Array.isArray(post.translations) && post.translations.length > 0
+        ? post.translations.map((item: any) => item.languageCode)
+        : ['tr'],
+    };
+  }
+
   @Public()
   @Get('debug')
   async debugStorefront() {
@@ -394,27 +421,75 @@ export class StorefrontCompatController {
 
   @Public()
   @Get('blog-posts')
-  async getBlogPosts(@Query('host') host?: string) {
+  async getBlogPosts(@Query('host') host?: string, @Query('locale') locale?: string) {
     const tenant = await this.resolveTenant(host);
     const posts = await this.prisma.blogPost.findMany({
       where: { isPublished: true },
-      include: { category: true },
+      include: { category: true, translations: true },
       orderBy: { publishedAt: 'desc' },
       take: 12,
     });
 
-    return posts.filter((post: any) => this.visibleForTenant(post, tenant?.id)).slice(0, 3).map((post: any) => ({
-      id: post.id,
-      title: post.title,
-      slug: post.slug,
-      excerpt: post.excerpt,
-      coverImage: this.normalizeImageUrl(post.coverImage || post.imageUrl, post.category?.slug),
-      publishedAt: post.publishedAt,
-      categoryName: post.category?.name || null,
-    }));
+    return posts
+      .filter((post: any) => this.visibleForTenant(post, tenant?.id))
+      .slice(0, 3)
+      .map((post: any) => {
+        const localized = this.localizeBlogPost(post, locale);
+        return {
+          id: localized.id,
+          title: localized.title,
+          slug: localized.slug,
+          excerpt: localized.excerpt,
+          coverImage: localized.coverImage,
+          publishedAt: localized.publishedAt,
+          categoryName: localized.categoryName,
+        };
+      });
   }
 
   @Public()
+  @Get('blog')
+  async getBlog(@Query('host') host?: string, @Query('locale') locale?: string) {
+    const tenant = await this.resolveTenant(host);
+    const posts = await this.prisma.blogPost.findMany({
+      where: { isPublished: true },
+      include: { category: true, translations: true },
+      orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 60,
+    });
+
+    return posts
+      .filter((post: any) => this.visibleForTenant(post, tenant?.id))
+      .map((post: any) => {
+        const localized = this.localizeBlogPost(post, locale);
+        return {
+          id: localized.id,
+          title: localized.title,
+          slug: localized.slug,
+          excerpt: localized.excerpt,
+          coverImage: localized.coverImage,
+          publishedAt: localized.publishedAt,
+          categoryName: localized.categoryName,
+        };
+      });
+  }
+
+  @Public()
+  @Get('blog/:slug')
+  async getBlogArticle(@Param('slug') slug: string, @Query('host') host?: string, @Query('locale') locale?: string) {
+    const tenant = await this.resolveTenant(host);
+    const post = await this.prisma.blogPost.findFirst({
+      where: { slug, isPublished: true },
+      include: { category: true, translations: true },
+    });
+
+    if (!post || !this.visibleForTenant(post, tenant?.id)) {
+      throw new NotFoundException('Blog post not found');
+    }
+
+    return this.localizeBlogPost(post, locale);
+  }
+
   @Public()
   @Get('tenant')
   async getTenant(@Query('host') host?: string) {

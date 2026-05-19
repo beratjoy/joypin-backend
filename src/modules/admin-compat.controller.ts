@@ -122,6 +122,199 @@ export class AdminCompatController {
     if (!this.reviewVisibleForTenant(review, tenantId)) throw new NotFoundException('Kayıt bulunamadı');
   }
 
+  private slugifyBlogText(value: string) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/ğ/g, 'g')
+      .replace(/ü/g, 'u')
+      .replace(/ş/g, 's')
+      .replace(/ı/g, 'i')
+      .replace(/ö/g, 'o')
+      .replace(/ç/g, 'c')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 350);
+  }
+
+  private blogExcerpt(content?: string | null, explicit?: string | null) {
+    const value = String(explicit || '').trim();
+    if (value) return value.slice(0, 500);
+    return String(content || '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+  }
+
+  private mapBlogPost(post: any) {
+    const languages = Array.isArray(post.translations) && post.translations.length > 0
+      ? post.translations.map((translation: any) => translation.languageCode)
+      : ['tr'];
+    return {
+      id: post.id,
+      title: post.title,
+      slug: post.slug,
+      content: post.content,
+      excerpt: post.excerpt,
+      coverImage: post.coverImage,
+      imageUrl: post.imageUrl || post.coverImage || '',
+      isPublished: post.isPublished,
+      status: post.status,
+      source: post.source || 'MANUAL',
+      languages,
+      date: (post.publishedAt || post.createdAt)?.toISOString?.().slice(0, 10) || '',
+      publishedAt: post.publishedAt,
+      createdAt: post.createdAt,
+      updatedAt: post.updatedAt,
+      views: 0,
+      categoryName: post.category?.name || null,
+      categoryId: post.categoryId || null,
+      seoTitle: post.seoTitle,
+      seoDescription: post.seoDescription,
+      tenantIds: post.tenantIds || [],
+      translations: post.translations || [],
+    };
+  }
+
+  @Get('blogs')
+  async listBlogs(@Query('tenantId') tenantId?: string) {
+    const posts = await this.prisma.blogPost.findMany({
+      include: { category: true, translations: true },
+      orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 200,
+    });
+    return { blogs: posts.filter((post: any) => this.visibleForTenant(post, tenantId)).map((post) => this.mapBlogPost(post)) };
+  }
+
+  @Post('blogs')
+  async createBlog(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const title = String(body.title || '').trim();
+    const content = String(body.content || '').trim();
+    const slug = this.slugifyBlogText(body.slug || title);
+    if (!title || !content || !slug) throw new BadRequestException('Başlık, slug ve içerik zorunludur');
+
+    const category = String(body.categoryName || body.categorySlug || '').trim()
+      ? await this.prisma.blogCategory.upsert({
+          where: { slug: this.slugifyBlogText(body.categorySlug || body.categoryName) },
+          update: { name: String(body.categoryName || body.categorySlug).trim() },
+          create: {
+            name: String(body.categoryName || body.categorySlug).trim(),
+            slug: this.slugifyBlogText(body.categorySlug || body.categoryName),
+          },
+        })
+      : null;
+    const isPublished = body.isPublished !== false;
+    const languageCode = String(body.languageCode || 'tr').trim().toLowerCase();
+    const post = await this.prisma.blogPost.create({
+      data: {
+        title,
+        slug,
+        content,
+        excerpt: this.blogExcerpt(content, body.excerpt),
+        coverImage: body.coverImage || body.imageUrl || null,
+        imageUrl: body.imageUrl || body.coverImage || null,
+        categoryId: category?.id,
+        seoTitle: body.seoTitle || title,
+        seoDescription: body.seoDescription || this.blogExcerpt(content, body.excerpt),
+        source: body.source || 'MANUAL',
+        status: isPublished ? 'PUBLISHED' : 'DRAFT',
+        isPublished,
+        publishedAt: isPublished ? new Date() : null,
+        tenantIds: this.scopedTenantIds(body.tenantIds, tenantId) || [],
+        translations: {
+          create: {
+            languageCode,
+            title,
+            content,
+            excerpt: this.blogExcerpt(content, body.excerpt),
+            seoTitle: body.seoTitle || title,
+            seoDescription: body.seoDescription || this.blogExcerpt(content, body.excerpt),
+          },
+        },
+      },
+      include: { category: true, translations: true },
+    });
+    return this.mapBlogPost(post);
+  }
+
+  @Patch('blogs/:id')
+  async updateBlog(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.blogPost.findUnique({ where: { id }, include: { translations: true } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Makale bulunamadı');
+
+    let categoryId: string | null | undefined = undefined;
+    if (body.categoryName !== undefined || body.categorySlug !== undefined) {
+      const categoryValue = String(body.categoryName || body.categorySlug || '').trim();
+      if (!categoryValue) {
+        categoryId = null;
+      } else {
+        const category = await this.prisma.blogCategory.upsert({
+          where: { slug: this.slugifyBlogText(body.categorySlug || categoryValue) },
+          update: { name: categoryValue },
+          create: { name: categoryValue, slug: this.slugifyBlogText(body.categorySlug || categoryValue) },
+        });
+        categoryId = category.id;
+      }
+    }
+
+    const nextIsPublished = body.isPublished !== undefined ? Boolean(body.isPublished) : existing.isPublished;
+    const content = body.content !== undefined ? String(body.content || '') : existing.content;
+    const title = body.title !== undefined ? String(body.title || '').trim() : existing.title;
+    if (!title || !content.trim()) throw new BadRequestException('Başlık ve içerik zorunludur');
+    const languageCode = String(body.languageCode || 'tr').trim().toLowerCase();
+
+    const post = await this.prisma.blogPost.update({
+      where: { id },
+      data: {
+        title,
+        slug: body.slug !== undefined ? this.slugifyBlogText(body.slug || title) : undefined,
+        content,
+        excerpt: body.excerpt !== undefined || body.content !== undefined ? this.blogExcerpt(content, body.excerpt) : undefined,
+        coverImage: body.coverImage !== undefined || body.imageUrl !== undefined ? (body.coverImage || body.imageUrl || null) : undefined,
+        imageUrl: body.imageUrl !== undefined || body.coverImage !== undefined ? (body.imageUrl || body.coverImage || null) : undefined,
+        categoryId,
+        seoTitle: body.seoTitle !== undefined ? (body.seoTitle || title) : undefined,
+        seoDescription: body.seoDescription !== undefined || body.content !== undefined ? (body.seoDescription || this.blogExcerpt(content, body.excerpt)) : undefined,
+        source: body.source !== undefined ? body.source : undefined,
+        isPublished: nextIsPublished,
+        status: nextIsPublished ? 'PUBLISHED' : 'DRAFT',
+        publishedAt: nextIsPublished && !existing.publishedAt ? new Date() : (!nextIsPublished ? null : undefined),
+        tenantIds: body.tenantIds !== undefined ? this.scopedTenantIds(body.tenantIds, tenantId) : undefined,
+        translations: {
+          upsert: {
+            where: { blogPostId_languageCode: { blogPostId: id, languageCode } },
+            update: {
+              title,
+              content,
+              excerpt: this.blogExcerpt(content, body.excerpt),
+              seoTitle: body.seoTitle || title,
+              seoDescription: body.seoDescription || this.blogExcerpt(content, body.excerpt),
+            },
+            create: {
+              languageCode,
+              title,
+              content,
+              excerpt: this.blogExcerpt(content, body.excerpt),
+              seoTitle: body.seoTitle || title,
+              seoDescription: body.seoDescription || this.blogExcerpt(content, body.excerpt),
+            },
+          },
+        },
+      },
+      include: { category: true, translations: true },
+    });
+    return this.mapBlogPost(post);
+  }
+
+  @Delete('blogs/:id')
+  async deleteBlog(@Param('id') id: string, @Query('tenantId') tenantId?: string) {
+    const existing = await this.prisma.blogPost.findUnique({ where: { id } });
+    if (!existing || !this.visibleForTenant(existing as any, tenantId)) throw new NotFoundException('Makale bulunamadı');
+    await this.prisma.blogPost.delete({ where: { id } });
+    return { success: true };
+  }
+
   @Get('tenants')
   async listTenants(@Req() req?: any) {
     await this.ensureDefaultTenant();
