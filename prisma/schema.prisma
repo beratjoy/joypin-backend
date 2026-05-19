@@ -328,6 +328,7 @@ model User {
   epinCodesUsed       EpinCode[] @relation("EpinCodeUser")
   staffProfile        StaffProfile?
   dealerApiKeys       DealerApiKey[]
+  dealerBillingProfile DealerBillingProfile?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -357,6 +358,30 @@ model DealerApiKey {
 
   @@index([userId, isActive])
   @@map("dealer_api_keys")
+}
+
+model DealerBillingProfile {
+  id             String       @id @default(uuid())
+  userId         String       @unique
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerType   CustomerType @default(INDIVIDUAL)
+  invoiceType    InvoiceType  @default(DEFAULT)
+  companyName    String?      @db.VarChar(200)
+  taxId          String?      @db.VarChar(50)
+  taxOffice      String?      @db.VarChar(120)
+  identityNumber String?      @db.VarChar(20)
+  address        String?
+  city           String?      @db.VarChar(100)
+  state          String?      @db.VarChar(100)
+  country        String       @default("TR") @db.VarChar(50)
+  postalCode     String?      @db.VarChar(20)
+  email          String?      @db.VarChar(255)
+  phone          String?      @db.VarChar(30)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("dealer_billing_profiles")
 }
 
 model Permission {
@@ -401,6 +426,7 @@ model DealerGroup {
   minOrderAmount        Decimal @default(0) @db.Decimal(12, 2)
   creditLimit           Decimal @default(0) @db.Decimal(12, 2)
   isActive              Boolean @default(true)
+  allowCryptoDeposit    Boolean @default(false)
 
   // API iptal politikası: API iptal olduğunda müşteriye de iptal et
   cancelOnApiFail       Boolean @default(false)

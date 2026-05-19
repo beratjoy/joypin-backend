@@ -3751,7 +3751,7 @@ export class AdminCompatController {
     const take = Math.min(Number(limit || 100), 200);
     const depositsRaw = await this.prisma.paymentTransaction.findMany({
       where: {
-        gateway: 'BANK_TRANSFER' as any,
+        gateway: { in: ['BANK_TRANSFER', 'CRYPTOMUS', 'BINANCE_PAY'] as any },
         ...(this.isTenantScoped(tenantId) ? { tenantId } : {}),
         ...(status ? { status: status.toUpperCase() as any } : {}),
       },
@@ -4844,6 +4844,7 @@ export class AdminCompatController {
       defaultDiscountPercent: Number(group.defaultDiscountPercent || 0),
       minOrderAmount: Number(group.minOrderAmount || 0),
       creditLimit: Number(group.creditLimit || 0),
+      allowCryptoDeposit: Boolean(group.allowCryptoDeposit),
       cancelOnApiFail: group.cancelOnApiFail,
       isActive: group.isActive,
       userCount: group._count?.users || 0,
@@ -4861,6 +4862,7 @@ export class AdminCompatController {
         defaultDiscountPercent: Number(body.defaultDiscountPercent || 0),
         minOrderAmount: Number(body.minOrderAmount || 0),
         creditLimit: Number(body.creditLimit || 0),
+        allowCryptoDeposit: Boolean(body.allowCryptoDeposit),
         cancelOnApiFail: Boolean(body.cancelOnApiFail),
         isActive: body.isActive ?? true,
       } as any,
@@ -4876,6 +4878,7 @@ export class AdminCompatController {
         defaultDiscountPercent: body.defaultDiscountPercent !== undefined ? Number(body.defaultDiscountPercent) : undefined,
         minOrderAmount: body.minOrderAmount !== undefined ? Number(body.minOrderAmount) : undefined,
         creditLimit: body.creditLimit !== undefined ? Number(body.creditLimit) : undefined,
+        allowCryptoDeposit: body.allowCryptoDeposit,
         cancelOnApiFail: body.cancelOnApiFail,
         isActive: body.isActive,
       } as any,

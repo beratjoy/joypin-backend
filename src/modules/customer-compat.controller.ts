@@ -56,6 +56,29 @@ export class CustomerCompatController {
     return `${key.prefix}••••••••${key.keyLast4}`;
   }
 
+  private isDealerUser(user: any) {
+    return user?.role === 'RESELLER' || user?.role === 'DEALER' || Boolean(user?.dealerGroupId);
+  }
+
+  private mapBillingProfile(user: any) {
+    const profile = user?.dealerBillingProfile || {};
+    return {
+      customerType: profile.customerType || user?.customerType || 'INDIVIDUAL',
+      invoiceType: profile.invoiceType || user?.invoiceType || 'DEFAULT',
+      companyName: profile.companyName || '',
+      taxId: profile.taxId || '',
+      taxOffice: profile.taxOffice || '',
+      identityNumber: profile.identityNumber || user?.identityNumber || '',
+      address: profile.address || '',
+      city: profile.city || '',
+      state: profile.state || '',
+      country: profile.country || user?.countryCode || 'TR',
+      postalCode: profile.postalCode || '',
+      email: profile.email || user?.email || '',
+      phone: profile.phone || '',
+    };
+  }
+
   private tenantOrderWhere(userId: string, tenantId?: string | null) {
     return {
       userId,
@@ -309,6 +332,7 @@ export class CustomerCompatController {
       include: {
         memberType: true,
         dealerGroup: true,
+        dealerBillingProfile: true,
         dealerApiKeys: {
           where: { isActive: true },
           orderBy: { createdAt: 'desc' },
@@ -421,6 +445,8 @@ export class CustomerCompatController {
       memberTypeColor: user.memberType?.colorCode || null,
       dealerGroupId: user.dealerGroupId || null,
       dealerGroupName: user.dealerGroup?.name || null,
+      dealerGroupAllowCryptoDeposit: Boolean(user.dealerGroup?.allowCryptoDeposit),
+      billingProfile: this.mapBillingProfile(user),
       balance: walletSummary.balanceCurrent,
       usableBalance,
       wallet: walletSummary,
@@ -539,11 +565,217 @@ export class CustomerCompatController {
             defaultDiscountPercent: Number(user.dealerGroup.defaultDiscountPercent || 0),
             minOrderAmount: Number(user.dealerGroup.minOrderAmount || 0),
             creditLimit: Number(user.dealerGroup.creditLimit || 0),
+            allowCryptoDeposit: Boolean(user.dealerGroup.allowCryptoDeposit),
           }
         : null,
       categories: Array.from(categoryMap.values()),
       products: mappedProducts,
     };
+  }
+
+  @Get('dealer-finance')
+  async getDealerFinance(@Req() req: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { dealerGroup: true, dealerBillingProfile: true, wallet: true },
+    }) as any;
+    if (!this.isDealerUser(user)) return { success: false, message: 'Bayi hesabi bulunamadi' };
+
+    const wallet = await this.prisma.wallet.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, currency: user.preferredCurrency || 'TRY' },
+    }) as any;
+
+    const transactions = await this.prisma.walletTransaction.findMany({
+      where: { walletId: wallet.id, ...(tenant?.id ? { OR: [{ tenantId: tenant.id }, { order: { tenantId: tenant.id } }] } : {}) },
+      include: { order: { select: { orderNumber: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    const deposits = await this.prisma.paymentTransaction.findMany({
+      where: {
+        userId: user.id,
+        orderId: null,
+        ...(tenant?.id ? { tenantId: tenant.id } : {}),
+        gateway: { in: ['BANK_TRANSFER', 'CRYPTOMUS', 'BINANCE_PAY'] as any },
+      },
+      orderBy: { initiatedAt: 'desc' },
+      take: 50,
+    });
+    const invoices = await this.prisma.invoice.findMany({
+      where: { userId: user.id },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return {
+      success: true,
+      wallet: {
+        currency: wallet.currency || user.preferredCurrency || 'TRY',
+        balanceCurrent: Number(wallet.balanceCurrent || 0),
+        balanceBonus: Number(wallet.balanceBonus || 0),
+        balanceCashback: Number(wallet.balanceCashback || 0),
+        balanceCommission: Number(wallet.balanceCommission || 0),
+      },
+      depositMethods: {
+        bankTransfer: true,
+        crypto: Boolean(user.dealerGroup?.allowCryptoDeposit),
+      },
+      billingProfile: this.mapBillingProfile(user),
+      deposits: deposits.map((deposit: any) => ({
+        id: deposit.id,
+        amount: Number(deposit.amount || 0),
+        currency: deposit.currency,
+        method: deposit.gateway,
+        reference: deposit.gatewayTransactionId || deposit.id,
+        note: deposit.gatewayResponse?.note || deposit.failureReason || null,
+        status: deposit.status,
+        createdAt: deposit.initiatedAt,
+      })),
+      transactions: transactions.map((transaction: any) => ({
+        id: transaction.id,
+        type: transaction.type,
+        amount: Number(transaction.amount || 0),
+        balanceAfter: Number(transaction.balanceAfter || 0),
+        balanceField: transaction.balanceField,
+        description: transaction.description || null,
+        orderNumber: transaction.order?.orderNumber || null,
+        createdAt: transaction.createdAt,
+      })),
+      invoices: invoices.map((invoice: any) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        status: invoice.status,
+        type: invoice.type,
+        totalAmount: Number(invoice.totalAmount || 0),
+        currency: invoice.currency,
+        pdfUrl: invoice.pdfUrl || `/api/me/invoices/${invoice.id}/pdf`,
+        issuedAt: invoice.issuedAt,
+        createdAt: invoice.createdAt,
+        itemCount: invoice.items?.length || 0,
+      })),
+    };
+  }
+
+  @Post('dealer-deposits')
+  async createDealerDeposit(@Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { dealerGroup: true, wallet: true },
+    }) as any;
+    if (!this.isDealerUser(user)) return { success: false, message: 'Bayi hesabi bulunamadi' };
+    const amount = Number(body.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) return { success: false, message: 'Tutar gecersiz' };
+    const method = String(body.method || 'BANK_TRANSFER').toUpperCase();
+    const isCrypto = method.startsWith('CRYPTO') || method === 'CRYPTOMUS' || method === 'BINANCE_PAY';
+    if (isCrypto && !user.dealerGroup?.allowCryptoDeposit) {
+      return { success: false, message: 'Kripto bakiye yukleme bu bayi grubu icin kapali' };
+    }
+    const gateway = isCrypto ? 'CRYPTOMUS' : 'BANK_TRANSFER';
+    const currency = body.currency || user.wallet?.currency || user.preferredCurrency || 'TRY';
+    const deposit = await this.prisma.paymentTransaction.create({
+      data: {
+        tenantId: tenant?.id || null,
+        userId: user.id,
+        orderId: null,
+        gateway: gateway as any,
+        amount,
+        currency: currency as any,
+        feeAmount: 0,
+        netAmount: amount,
+        gatewayTransactionId: String(body.reference || '').trim() || null,
+        gatewayResponse: {
+          note: String(body.note || '').trim(),
+          requestedMethod: method,
+          source: 'dealer-panel',
+        },
+        status: 'PENDING',
+      } as any,
+    });
+    return { success: true, message: 'Bakiye yukleme bildirimi alindi. Admin onayindan sonra bakiyene yansir.', depositId: deposit.id };
+  }
+
+  @Patch('dealer-billing')
+  async updateDealerBilling(@Req() req: any, @Body() body: any) {
+    const user = await this.prisma.user.findUnique({ where: { id: req.user.id }, include: { dealerGroup: true } }) as any;
+    if (!this.isDealerUser(user)) return { success: false, message: 'Bayi hesabi bulunamadi' };
+    const data = {
+      customerType: body.customerType === 'CORPORATE' ? 'CORPORATE' : 'INDIVIDUAL',
+      invoiceType: ['DEFAULT', 'E_INVOICE', 'PDF_INTERNATIONAL'].includes(body.invoiceType) ? body.invoiceType : 'DEFAULT',
+      companyName: String(body.companyName || '').trim() || null,
+      taxId: String(body.taxId || '').trim() || null,
+      taxOffice: String(body.taxOffice || '').trim() || null,
+      identityNumber: String(body.identityNumber || '').trim() || null,
+      address: String(body.address || '').trim() || null,
+      city: String(body.city || '').trim() || null,
+      state: String(body.state || '').trim() || null,
+      country: String(body.country || 'TR').trim().toUpperCase(),
+      postalCode: String(body.postalCode || '').trim() || null,
+      email: String(body.email || user.email || '').trim() || null,
+      phone: String(body.phone || user.phone || '').trim() || null,
+    } as any;
+    const profile = await (this.prisma as any).dealerBillingProfile.upsert({
+      where: { userId: user.id },
+      update: data,
+      create: { userId: user.id, ...data },
+    });
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        customerType: data.customerType,
+        invoiceType: data.invoiceType,
+        identityNumber: data.identityNumber,
+        phone: data.phone,
+      } as any,
+    });
+    return { success: true, billingProfile: profile };
+  }
+
+  @Get('invoices/:id/pdf')
+  async getOwnInvoicePdf(@Param('id') id: string, @Req() req: any) {
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id, userId: req.user.id },
+      include: { items: true },
+    }) as any;
+    if (!invoice) return '<h1>Fatura bulunamadi</h1>';
+    const safe = (value: any) => String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char] || char));
+    const rows = (invoice.items || []).map((item: any) => `
+      <tr>
+        <td>${safe(item.productName)}</td>
+        <td>${safe(item.quantity)}</td>
+        <td>${Number(item.unitPrice || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${safe(invoice.currency)}</td>
+        <td>${Number(item.totalPrice || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${safe(invoice.currency)}</td>
+      </tr>
+    `).join('');
+    return `<!doctype html>
+      <html lang="tr">
+        <head>
+          <meta charset="utf-8" />
+          <title>${safe(invoice.invoiceNumber)}</title>
+          <style>
+            body{font-family:Inter,Arial,sans-serif;background:#0f172a;color:#e5e7eb;margin:0;padding:40px}
+            .box{max-width:900px;margin:0 auto;background:#111827;border:1px solid #334155;border-radius:18px;padding:32px}
+            h1{margin:0 0 8px;font-size:28px} .muted{color:#94a3b8}
+            table{width:100%;border-collapse:collapse;margin-top:28px}
+            th,td{border-bottom:1px solid #273449;padding:12px;text-align:left}
+            th{color:#93c5fd;font-size:12px;text-transform:uppercase}
+            .total{margin-top:28px;text-align:right;font-size:24px;font-weight:900}
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            <h1>Fatura ${safe(invoice.invoiceNumber)}</h1>
+            <div class="muted">${safe(invoice.customerName)} - ${safe(invoice.customerEmail)}</div>
+            <div class="muted">Durum: ${safe(invoice.status)} | Tarih: ${new Date(invoice.createdAt).toLocaleString('tr-TR')}</div>
+            <table><thead><tr><th>Urun</th><th>Adet</th><th>Birim</th><th>Toplam</th></tr></thead><tbody>${rows}</tbody></table>
+            <div class="total">${Number(invoice.totalAmount || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${safe(invoice.currency)}</div>
+          </div>
+        </body>
+      </html>`;
   }
 
   @Get('orders')
