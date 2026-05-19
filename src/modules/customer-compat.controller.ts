@@ -440,18 +440,25 @@ export class CustomerCompatController {
     }) as any;
 
     if (!user || !(user.role === 'RESELLER' || user.role === 'DEALER' || user.dealerGroupId)) {
-      return { products: [], dealerGroup: null };
+      return { products: [], categories: [], dealerGroup: null };
     }
 
     const dealerGroupId = user.dealerGroupId;
+    if (!dealerGroupId) {
+      return { products: [], categories: [], dealerGroup: null };
+    }
+
     const products = await this.prisma.product.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        dealerGroupPricings: { some: { dealerGroupId, isActive: true } },
+      },
       include: {
         category: true,
-        dealerGroupPricings: dealerGroupId ? { where: { dealerGroupId } } : false,
-        stockRestrictions: dealerGroupId ? { where: { dealerGroupId } } : false,
+        dealerGroupPricings: { where: { dealerGroupId, isActive: true } },
+        stockRestrictions: { where: { dealerGroupId } },
       },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ category: { sortOrder: 'asc' } }, { sortOrder: 'asc' }, { createdAt: 'desc' }],
       take: 300,
     });
 
@@ -461,6 +468,48 @@ export class CustomerCompatController {
       .filter((product: any) => this.visibleForCountry(product.category || {}, country))
       .filter((product: any) => this.visibleForCountry(product, country))
       .filter((product: any) => !product.stockRestrictions?.some((restriction: any) => restriction.isBlocked));
+
+    const mappedProducts = visibleProducts.map((product: any) => {
+      const pricing = product.dealerGroupPricings?.[0] || null;
+      const basePrice = Number(product.fixedPrice || product.baseCost || 0);
+      const dealerPrice = this.calculateDealerUnitPrice(product, user.dealerGroup, pricing);
+      return {
+        id: product.id,
+        name: product.name,
+        shortName: product.shortName || product.name,
+        slug: product.slug,
+        categoryId: product.category?.id || null,
+        categorySlug: product.category?.slug || null,
+        categoryName: product.category?.name || '',
+        categoryImageUrl: product.category?.imageUrl || null,
+        categoryLogoUrl: product.category?.logoUrl || null,
+        type: product.type,
+        currency: product.baseCurrency || 'TRY',
+        basePrice,
+        dealerPrice,
+        discountPercent: basePrice > 0 ? Math.max(0, Math.round((1 - dealerPrice / basePrice) * 10000) / 100) : 0,
+        stockCount: product.hasInfiniteStock ? null : product.stockCount,
+        stockLabel: product.hasInfiniteStock ? 'Sinirsiz' : String(product.stockCount || 0),
+        inStock: product.hasInfiniteStock || product.stockCount > 0,
+        imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
+      };
+    });
+
+    const categoryMap = new Map<string, any>();
+    for (const product of mappedProducts) {
+      const key = product.categoryId || 'uncategorized';
+      if (!categoryMap.has(key)) {
+        categoryMap.set(key, {
+          id: product.categoryId,
+          name: product.categoryName || 'Kategorisiz',
+          slug: product.categorySlug,
+          imageUrl: product.categoryImageUrl,
+          logoUrl: product.categoryLogoUrl,
+          productCount: 0,
+        });
+      }
+      categoryMap.get(key).productCount += 1;
+    }
 
     return {
       dealerGroup: user.dealerGroup
@@ -472,28 +521,8 @@ export class CustomerCompatController {
             creditLimit: Number(user.dealerGroup.creditLimit || 0),
           }
         : null,
-      products: visibleProducts.map((product: any) => {
-        const pricing = product.dealerGroupPricings?.[0] || null;
-        const basePrice = Number(product.fixedPrice || product.baseCost || 0);
-        const dealerPrice = this.calculateDealerUnitPrice(product, user.dealerGroup, pricing);
-        return {
-          id: product.id,
-          name: product.name,
-          shortName: product.shortName || product.name,
-          slug: product.slug,
-          categorySlug: product.category?.slug || null,
-          categoryName: product.category?.name || '',
-          type: product.type,
-          currency: product.baseCurrency || 'TRY',
-          basePrice,
-          dealerPrice,
-          discountPercent: basePrice > 0 ? Math.max(0, Math.round((1 - dealerPrice / basePrice) * 10000) / 100) : 0,
-          stockCount: product.hasInfiniteStock ? null : product.stockCount,
-          stockLabel: product.hasInfiniteStock ? 'Sinirsiz' : String(product.stockCount || 0),
-          inStock: product.hasInfiniteStock || product.stockCount > 0,
-          imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.imageUrl || null,
-        };
-      }),
+      categories: Array.from(categoryMap.values()),
+      products: mappedProducts,
     };
   }
 
