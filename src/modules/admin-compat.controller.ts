@@ -2026,6 +2026,12 @@ export class AdminCompatController {
         where: { ...(tenantId && tenantId !== 'all' ? { tenantId } : {}), status: { in: ['OPEN', 'AWAITING_REPLY'] as any } },
       }),
     ]);
+    const pendingApplications = await this.prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
+      `SELECT COUNT(*)::bigint AS count FROM "publisher_applications" WHERE status = 'PENDING' ${
+        tenantId && tenantId !== 'all' ? 'AND "tenantId" = $1' : ''
+      }`,
+      ...(tenantId && tenantId !== 'all' ? [tenantId] : []),
+    ).then((rows) => Number(rows[0]?.count || 0)).catch(() => 0);
     const pendingReviews = Array.isArray(pendingReviewsRaw)
       ? pendingReviewsRaw.filter((review: any) => this.reviewVisibleForTenant(review, tenantId)).length
       : pendingReviewsRaw;
@@ -2036,7 +2042,7 @@ export class AdminCompatController {
       pendingBalances: pendingBalanceDeposits + pendingWithdrawals,
       pendingReviews,
       pendingTickets,
-      pendingApplications: 0,
+      pendingApplications,
     };
   }
   @Get('logs/audit')

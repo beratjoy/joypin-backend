@@ -32,6 +32,9 @@ import { HealthController } from './health.controller';
 import { StorefrontCompatController } from './modules/storefront-compat.controller';
 import { CustomerCompatController } from './modules/customer-compat.controller';
 import { I18nCompatController } from './modules/i18n-compat.controller';
+import { CouponCompatController } from './modules/coupon-compat.controller';
+import { CartCouponCompatController } from './modules/cart-coupon-compat.controller';
+import { PublisherApplicationCompatController } from './modules/publisher-application-compat.controller';
 
 @Module({
   imports: [
@@ -80,7 +83,16 @@ import { I18nCompatController } from './modules/i18n-compat.controller';
     SecurityModule,
     MissionsModule,
   ],
-  controllers: [AdminCompatController, HealthController, StorefrontCompatController, CustomerCompatController, I18nCompatController],
+  controllers: [
+    AdminCompatController,
+    HealthController,
+    StorefrontCompatController,
+    CustomerCompatController,
+    I18nCompatController,
+    CouponCompatController,
+    CartCouponCompatController,
+    PublisherApplicationCompatController,
+  ],
   providers: [
     // ─── Global Guards (sıralama önemli) ─────────────────
     // 1. Rate Limiting — en dış katman

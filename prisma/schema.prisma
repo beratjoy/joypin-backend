@@ -2491,6 +2491,30 @@ model AffiliateTransaction {
 // 📧 EMAIL MARKETING & ANALYTICS ENGINE
 // ═══════════════════════════════════════════════════════════════
 
+model PublisherApplication {
+  id            String   @id @default(uuid())
+  tenantId      String?
+  userId        String?
+  fullName      String   @db.VarChar(180)
+  email         String   @db.VarChar(255)
+  phone         String?  @db.VarChar(40)
+  platform      String?  @db.VarChar(80)
+  profileUrl    String   @db.VarChar(500)
+  followerCount Int      @default(0)
+  message       String?
+  status        String   @default("PENDING") @db.VarChar(30)
+  adminNote     String?
+  reviewedById  String?
+  reviewedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([email])
+  @@index([createdAt])
+  @@map("publisher_applications")
+}
+
 enum EmailType {
   WELCOME                // Hoş geldin
   EMAIL_VERIFICATION     // E-posta doğrulama/OTP
