@@ -165,9 +165,10 @@ export class CustomerCompatController {
         createdAt: transaction.createdAt,
       })),
     );
-    const visibleReferralCount = referrals.filter((referral: any) => referral.transactions.length > 0).length;
+    const registeredReferralCount = referrals.length;
+    const purchasingReferralCount = referrals.filter((referral: any) => referral.transactions.length > 0).length;
     const totalEarnings = transactions.reduce((sum: number, item: any) => sum + Number(item.commission || 0), 0);
-    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, visibleReferralCount, totalEarnings, tenant?.id);
+    const missions = await this.getReferralMissions(req.user.id, user.memberType?.name || null, registeredReferralCount, totalEarnings, tenant?.id);
     const withdrawals = await this.prisma.withdrawalRequest.findMany({ where: { userId: req.user.id, ...(tenant?.id ? { tenantId: tenant.id } : {}) }, orderBy: { createdAt: 'desc' }, take: 10 });
 
     return {
@@ -175,8 +176,9 @@ export class CustomerCompatController {
       referralLink: `${baseUrl}/register?ref=${user.referralCode}`,
       tierName: user.memberType?.name || currentRule?.name || 'Normal Üye',
       commissionRate: Number(currentRule?.commissionPercent || 0),
-      totalReferrals: visibleReferralCount,
-      activeReferrals: referrals.filter((item: any) => item.isActive && item.transactions.length > 0).length,
+      totalReferrals: registeredReferralCount,
+      activeReferrals: referrals.filter((item: any) => item.isActive).length,
+      purchasingReferrals: purchasingReferralCount,
       totalEarnings,
       availableBalance: Number(user.wallet?.balanceWithdrawable || 0) + Number(user.wallet?.balanceCommission || 0),
       rules: rules.map((rule: any) => ({
@@ -197,7 +199,7 @@ export class CustomerCompatController {
         totalEarnings: referral.transactions.reduce((sum: number, item: any) => sum + Number(item.commissionAmount || 0), 0),
         totalTransactions: referral.transactions.length,
         createdAt: referral.createdAt,
-      })).filter((referral: any) => referral.totalTransactions > 0),
+      })),
       transactions,
       missions,
       withdrawals,
