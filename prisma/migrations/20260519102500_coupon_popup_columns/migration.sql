@@ -1,0 +1,14 @@
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "tenantIds" JSONB;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "targetAudience" VARCHAR(50) NOT NULL DEFAULT 'ALL';
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "showAsBanner" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "showAsPopup" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "bannerTitle" VARCHAR(200);
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "bannerDescription" TEXT;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupTitle" VARCHAR(200);
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupDescription" TEXT;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupCta" VARCHAR(120);
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupRedirectUrl" VARCHAR(500);
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupDelaySeconds" INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupFrequency" VARCHAR(30) NOT NULL DEFAULT 'SESSION';
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupPageScope" VARCHAR(30) NOT NULL DEFAULT 'ALL';
+ALTER TABLE "discount_coupons" ADD COLUMN IF NOT EXISTS "popupCategoryIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
