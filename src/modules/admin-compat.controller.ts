@@ -4029,6 +4029,7 @@ export class AdminCompatController {
       identityNumber: user.identityNumber,
       birthDate: user.birthDate,
       taxExempt: user.taxExempt,
+      invoiceType: user.invoiceType,
       countryCode: user.countryCode,
       preferredCurrency: user.preferredCurrency,
       avatarUrl: user.avatarUrl,
@@ -4036,6 +4037,9 @@ export class AdminCompatController {
       smsVerified: user.smsVerified,
       loginOtpEnabled: user.loginOtpEnabled,
       orderOtpEnabled: user.orderOtpEnabled,
+      smsNotification: user.smsNotification,
+      emailNotification: user.emailNotification,
+      callNotification: user.callNotification,
       createdAt: user.createdAt,
       memberType: user.memberType,
       dealerGroup: user.dealerGroup,
@@ -4055,6 +4059,98 @@ export class AdminCompatController {
         adminNotes: 0,
       },
     };
+  }
+  @Patch('customers/:id')
+  async updateCustomerDetail(@Param('id') id: string, @Body() body: any, @Req() req: any, @Query('tenantId') tenantId?: string) {
+    if (!(await this.userVisibleForTenant(id, tenantId))) {
+      return { success: false, message: 'Kullanıcı bu site kapsamında bulunamadı' };
+    }
+
+    const existing = await this.prisma.user.findUnique({
+      where: { id },
+      include: { memberType: true, dealerGroup: true },
+    });
+    if (!existing) throw new NotFoundException('Kullanıcı bulunamadı');
+
+    const dealerGroupId = body.dealerGroupId === undefined
+      ? undefined
+      : body.dealerGroupId ? String(body.dealerGroupId) : null;
+    const memberTypeId = body.memberTypeId === undefined
+      ? undefined
+      : body.memberTypeId ? String(body.memberTypeId) : null;
+    const requestedRole = body.role ? String(body.role) : undefined;
+    const allowedRoles = ['CUSTOMER', 'RESELLER', 'DEALER'];
+    const role = dealerGroupId
+      ? 'RESELLER'
+      : requestedRole && allowedRoles.includes(requestedRole)
+        ? requestedRole
+        : undefined;
+
+    if (dealerGroupId) {
+      const group = await this.prisma.dealerGroup.findUnique({ where: { id: dealerGroupId } });
+      if (!group) throw new BadRequestException('Bayi grubu bulunamadı');
+    }
+    if (memberTypeId) {
+      const memberType = await this.prisma.memberType.findUnique({ where: { id: memberTypeId } });
+      if (!memberType) throw new BadRequestException('Üye tipi bulunamadı');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: {
+        firstName: body.firstName !== undefined ? String(body.firstName).trim() : undefined,
+        lastName: body.lastName !== undefined ? String(body.lastName).trim() : undefined,
+        email: body.email !== undefined ? String(body.email).trim().toLowerCase() : undefined,
+        phone: body.phone === undefined ? undefined : body.phone || null,
+        role,
+        status: body.status,
+        customerType: body.customerType,
+        identityNumber: body.identityNumber === undefined ? undefined : body.identityNumber || null,
+        birthDate: body.birthDate === undefined ? undefined : body.birthDate ? new Date(body.birthDate) : null,
+        taxExempt: body.taxExempt,
+        invoiceType: body.invoiceType,
+        countryCode: body.countryCode !== undefined ? String(body.countryCode || 'TR').toUpperCase() : undefined,
+        preferredCurrency: body.preferredCurrency,
+        emailVerified: body.emailVerified,
+        smsVerified: body.smsVerified,
+        loginOtpEnabled: body.loginOtpEnabled,
+        orderOtpEnabled: body.orderOtpEnabled,
+        smsNotification: body.smsNotification,
+        emailNotification: body.emailNotification,
+        callNotification: body.callNotification,
+        memberTypeId,
+        dealerGroupId,
+      } as any,
+      include: { memberType: true, dealerGroup: true },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: this.isTenantScoped(tenantId) ? tenantId : undefined,
+        userId: req?.user?.id || undefined,
+        action: 'UPDATE',
+        category: 'USER',
+        entityType: 'User',
+        entityId: id,
+        previousValue: {
+          role: existing.role,
+          status: existing.status,
+          memberTypeId: existing.memberTypeId,
+          dealerGroupId: existing.dealerGroupId,
+        },
+        newValue: {
+          role: updated.role,
+          status: updated.status,
+          memberTypeId: updated.memberTypeId,
+          dealerGroupId: updated.dealerGroupId,
+        },
+        details: { event: 'CUSTOMER_PROFILE_UPDATED' },
+        ipAddress: req?.ip || req?.headers?.['x-forwarded-for'] || '',
+        userAgent: req?.headers?.['user-agent'] || '',
+      },
+    }).catch(() => null);
+
+    return { success: true, customer: updated };
   }
   @Get('invoices')
   async getInvoices(@Query('status') status?: string, @Query('tenantId') tenantId?: string) {
