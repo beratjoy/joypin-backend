@@ -390,6 +390,7 @@ model DealerGroup {
   allowedPaymentMethods DealerGroupPaymentMethod[]
   stockRestrictions     DealerStockRestriction[]
   apiPriorities         DealerApiPriority[]
+  apiRoutingPolicies    DealerApiRoutingPolicy[]
   productDiscounts      ProductDiscount[]
 
   createdAt DateTime @default(now())
@@ -568,6 +569,9 @@ model Product {
   stockRestrictions    DealerStockRestriction[]
   apiPriorities        DealerApiPriority[]
   memberApiPriorities  MemberApiPriority[]
+  apiRoutingPolicies   ProductApiRoutingPolicy[]
+  dealerApiRoutingPolicies DealerApiRoutingPolicy[]
+  memberApiRoutingPolicies MemberApiRoutingPolicy[]
   discounts            ProductDiscount[]
   prices               ProductPrice[]
   topupFields          TopupField[]
@@ -603,6 +607,7 @@ model MemberType {
   prices             ProductPrice[]
   subscriptionPlans  SubscriptionPlan[]
   apiPriorities      MemberApiPriority[]
+  apiRoutingPolicies MemberApiRoutingPolicy[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -629,6 +634,56 @@ model MemberApiPriority {
   @@unique([memberTypeId, productId, botProviderId])
   @@index([productId, priority])
   @@map("member_api_priorities")
+}
+
+/// Urun bazli varsayilan API rota politikasi.
+model ProductApiRoutingPolicy {
+  id             String @id @default(uuid())
+  productId      String @unique
+  onRejectAction String @default("FALLBACK") @db.VarChar(30)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("product_api_routing_policies")
+}
+
+/// Bayi grubu + urun bazli API rota politikasi.
+model DealerApiRoutingPolicy {
+  id             String @id @default(uuid())
+  dealerGroupId  String
+  productId      String
+  onRejectAction String @default("FALLBACK") @db.VarChar(30)
+
+  dealerGroup DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dealerGroupId, productId])
+  @@index([productId])
+  @@map("dealer_api_routing_policies")
+}
+
+/// Uye tipi + urun bazli API rota politikasi.
+model MemberApiRoutingPolicy {
+  id             String @id @default(uuid())
+  memberTypeId   String
+  productId      String
+  onRejectAction String @default("FALLBACK") @db.VarChar(30)
+
+  memberType MemberType @relation(fields: [memberTypeId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([memberTypeId, productId])
+  @@index([productId])
+  @@map("member_api_routing_policies")
 }
 
 model ProductPrice {

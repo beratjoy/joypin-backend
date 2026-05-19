@@ -723,6 +723,41 @@ export class AdminCompatController {
     return ['delivered', 'completed', 'success', 'successful'].includes(status) || data?.delivered === true;
   }
 
+  private normalizeProviderRejectAction(value: any) {
+    const action = String(value || '').trim().toUpperCase();
+    return ['FALLBACK', 'CANCEL', 'MANUAL'].includes(action) ? action : 'FALLBACK';
+  }
+
+  private async finishProviderRouteFailure(subOrder: any, context: any, lastError: string, attempts: number) {
+    const action = this.normalizeProviderRejectAction(context?.onRejectAction);
+    if (action === 'CANCEL') {
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: 'CANCELLED' as any,
+          cancelReason: lastError || 'Tedarikci reddetti',
+          lastError: lastError || 'Tedarikci reddetti',
+          deliveryNote: `Rota politikasi iptal: ${context?.policySource || 'varsayilan'}`,
+        },
+      });
+      await this.recalculateOrderStatus(subOrder.parentOrderId);
+      return { success: false, cancelled: true, subOrderId: subOrder.id, error: lastError || 'Tedarikci reddetti', attempts };
+    }
+
+    await this.prisma.subOrder.update({
+      where: { id: subOrder.id },
+      data: {
+        status: 'MANUAL_INTERVENTION_REQUIRED' as any,
+        lastError: lastError || 'Uygun tedarikci bulunamadi',
+        deliveryNote: action === 'MANUAL'
+          ? `Rota politikasi manuel: ${context?.policySource || 'varsayilan'}`
+          : undefined,
+      },
+    });
+    await this.recalculateOrderStatus(subOrder.parentOrderId);
+    return { success: false, manual: true, subOrderId: subOrder.id, error: lastError || 'Uygun tedarikci bulunamadi', attempts };
+  }
+
   private async dispatchProviderOrder(provider: any, link: any, subOrder: any) {
     if (provider.name?.toLowerCase().includes('1epin')) {
       const result = await this.oneEpinRequest('addOrder', {
@@ -859,6 +894,35 @@ export class AdminCompatController {
 
     for (const link of links) pushLink(link.providerId, 'varsayilan', link.priority);
 
+    const defaultPolicy = await (this.prisma as any).productApiRoutingPolicy.findUnique({
+      where: { productId: subOrder.productId },
+    }).catch(() => null);
+    let onRejectAction = this.normalizeProviderRejectAction(defaultPolicy?.onRejectAction);
+    let policySource = defaultPolicy ? 'urun-varsayilan' : 'sistem-varsayilan';
+
+    if (memberTypeId) {
+      const memberPolicy = await (this.prisma as any).memberApiRoutingPolicy.findUnique({
+        where: { memberTypeId_productId: { memberTypeId, productId: subOrder.productId } },
+      }).catch(() => null);
+      if (memberPolicy) {
+        onRejectAction = this.normalizeProviderRejectAction(memberPolicy.onRejectAction);
+        policySource = `uye:${order?.user?.memberType?.name || 'tip'}`;
+      }
+    }
+
+    if (dealerGroupId) {
+      const dealerPolicy = await (this.prisma as any).dealerApiRoutingPolicy.findUnique({
+        where: { dealerGroupId_productId: { dealerGroupId, productId: subOrder.productId } },
+      }).catch(() => null);
+      if (dealerPolicy) {
+        onRejectAction = this.normalizeProviderRejectAction(dealerPolicy.onRejectAction);
+        policySource = `bayi:${order?.user?.dealerGroup?.name || 'grup'}`;
+      } else if (order?.user?.dealerGroup?.cancelOnApiFail) {
+        onRejectAction = 'CANCEL';
+        policySource = `bayi:${order?.user?.dealerGroup?.name || 'grup'}:global`;
+      }
+    }
+
     return {
       links: route,
       context: {
@@ -866,7 +930,8 @@ export class AdminCompatController {
         dealerGroupName: order?.user?.dealerGroup?.name || null,
         memberTypeId,
         memberTypeName: order?.user?.memberType?.name || null,
-        cancelOnApiFail: Boolean(order?.user?.dealerGroup?.cancelOnApiFail),
+        onRejectAction,
+        policySource,
       },
     };
   }
@@ -906,6 +971,9 @@ export class AdminCompatController {
           where: { id: subOrder.id },
           data: { fallbackAttempts: { increment: 1 }, lastError },
         });
+        if (this.normalizeProviderRejectAction(context.onRejectAction) !== 'FALLBACK') {
+          return this.finishProviderRouteFailure(subOrder, context, lastError, attempts);
+        }
         continue;
       }
 
@@ -928,6 +996,9 @@ export class AdminCompatController {
             where: { id: subOrder.id },
             data: { fallbackAttempts: { increment: 1 }, lastError },
           });
+          if (this.normalizeProviderRejectAction(context.onRejectAction) !== 'FALLBACK') {
+            return this.finishProviderRouteFailure(subOrder, context, lastError, attempts);
+          }
           continue;
         }
 
@@ -966,21 +1037,13 @@ export class AdminCompatController {
           where: { id: subOrder.id },
           data: { fallbackAttempts: { increment: 1 }, lastError },
         });
+        if (this.normalizeProviderRejectAction(context.onRejectAction) !== 'FALLBACK') {
+          return this.finishProviderRouteFailure(subOrder, context, lastError, attempts);
+        }
       }
     }
 
-    await this.prisma.subOrder.update({
-      where: { id: subOrder.id },
-      data: {
-        status: 'MANUAL_INTERVENTION_REQUIRED' as any,
-        lastError: lastError || 'Uygun tedarikci bulunamadi',
-        deliveryNote: context.cancelOnApiFail
-          ? 'Tum tedarikci sirasi reddetti; bayi grubu iptal politikasi aktif. Manuel onay bekliyor.'
-          : undefined,
-      },
-    });
-    await this.recalculateOrderStatus(subOrder.parentOrderId);
-    return { success: false, subOrderId, error: lastError || 'Uygun tedarikci bulunamadi', attempts };
+    return this.finishProviderRouteFailure(subOrder, { ...context, onRejectAction: 'MANUAL' }, lastError || 'Uygun tedarikci bulunamadi', attempts);
   }
 
   private async routeSubOrderToCheapestProvider(subOrderId: string) {
@@ -4041,6 +4104,41 @@ export class AdminCompatController {
   async removeProductProvider(@Param('id') id: string) {
     return this.prisma.productProvider.delete({ where: { id } });
   }
+  @Get('provider-routing/products')
+  async getProviderRoutingProducts() {
+    const links = await this.prisma.productProvider.findMany({
+      where: { isActive: true, provider: { status: 'ACTIVE' as any } },
+      include: { provider: true, product: { include: { category: true } } },
+      orderBy: [{ product: { name: 'asc' } }, { priority: 'asc' }, { costPrice: 'asc' }],
+      take: 10000,
+    } as any);
+
+    const grouped = new Map<string, any>();
+    for (const link of links as any[]) {
+      if (!link.product) continue;
+      const current = grouped.get(link.productId) || {
+        id: link.productId,
+        name: link.product.name,
+        slug: link.product.slug,
+        categoryName: link.product.category?.name || null,
+        providerCount: 0,
+        providers: [],
+      };
+      current.providerCount += 1;
+      current.providers.push({
+        providerId: link.providerId,
+        providerName: link.provider?.name || 'Tedarikci',
+        costPrice: Number(link.costPrice || 0),
+        costCurrency: link.costCurrency,
+        priority: link.priority,
+      });
+      grouped.set(link.productId, current);
+    }
+
+    return Array.from(grouped.values())
+      .filter((product: any) => product.providerCount > 1)
+      .sort((a: any, b: any) => a.name.localeCompare(b.name, 'tr'));
+  }
   @Get('provider-routing')
   async getProviderRouting(
     @Query('productId') productId?: string,
@@ -4067,6 +4165,18 @@ export class AdminCompatController {
           })
         : [];
 
+    const policy = dealerGroupId
+      ? await (this.prisma as any).dealerApiRoutingPolicy.findUnique({
+          where: { dealerGroupId_productId: { dealerGroupId, productId } },
+        }).catch(() => null)
+      : memberTypeId
+        ? await (this.prisma as any).memberApiRoutingPolicy.findUnique({
+            where: { memberTypeId_productId: { memberTypeId, productId } },
+          }).catch(() => null)
+        : await (this.prisma as any).productApiRoutingPolicy.findUnique({
+            where: { productId },
+          }).catch(() => null);
+
     const byProviderId = new Map(links.map((link: any) => [link.providerId, link]));
     const ordered: any[] = [];
     const seen = new Set<string>();
@@ -4086,6 +4196,7 @@ export class AdminCompatController {
       productId,
       dealerGroupId: dealerGroupId || null,
       memberTypeId: memberTypeId || null,
+      onRejectAction: this.normalizeProviderRejectAction(policy?.onRejectAction),
       routes: ordered.map((link: any, index: number) => ({
         id: link.id,
         providerId: link.providerId,
@@ -4107,6 +4218,7 @@ export class AdminCompatController {
     const memberTypeId = body?.memberTypeId ? String(body.memberTypeId) : null;
     if (!productId) throw new BadRequestException('productId zorunludur');
     if (dealerGroupId && memberTypeId) throw new BadRequestException('Tek seferde bayi grubu veya uye grubu secilebilir');
+    const onRejectAction = this.normalizeProviderRejectAction(body?.onRejectAction);
 
     const requestedProviderIds = Array.isArray(body?.providerIds)
       ? body.providerIds.map((id: any) => String(id)).filter(Boolean)
@@ -4122,6 +4234,11 @@ export class AdminCompatController {
     if (dealerGroupId) {
       await this.prisma.$transaction(async (tx: any) => {
         await tx.dealerApiPriority.deleteMany({ where: { productId, dealerGroupId } });
+        await tx.dealerApiRoutingPolicy.upsert({
+          where: { dealerGroupId_productId: { productId, dealerGroupId } },
+          update: { onRejectAction },
+          create: { productId, dealerGroupId, onRejectAction },
+        });
         if (providerIds.length) {
           await tx.dealerApiPriority.createMany({
             data: providerIds.map((providerId, index) => ({
@@ -4139,6 +4256,11 @@ export class AdminCompatController {
     if (memberTypeId) {
       await this.prisma.$transaction(async (tx: any) => {
         await tx.memberApiPriority.deleteMany({ where: { productId, memberTypeId } });
+        await tx.memberApiRoutingPolicy.upsert({
+          where: { memberTypeId_productId: { productId, memberTypeId } },
+          update: { onRejectAction },
+          create: { productId, memberTypeId, onRejectAction },
+        });
         if (providerIds.length) {
           await tx.memberApiPriority.createMany({
             data: providerIds.map((providerId, index) => ({
@@ -4154,12 +4276,19 @@ export class AdminCompatController {
       return this.getProviderRouting(productId, undefined, memberTypeId);
     }
 
-    await this.prisma.$transaction(providerIds.map((providerId, index) => (
-      this.prisma.productProvider.update({
-        where: { productId_providerId: { productId, providerId } },
-        data: { priority: index + 1 },
-      })
-    )));
+    await this.prisma.$transaction([
+      (this.prisma as any).productApiRoutingPolicy.upsert({
+        where: { productId },
+        update: { onRejectAction },
+        create: { productId, onRejectAction },
+      }),
+      ...providerIds.map((providerId, index) => (
+        this.prisma.productProvider.update({
+          where: { productId_providerId: { productId, providerId } },
+          data: { priority: index + 1 },
+        })
+      )),
+    ]);
     return this.getProviderRouting(productId, undefined, undefined);
   }
   @Post('products')
