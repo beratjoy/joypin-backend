@@ -287,6 +287,163 @@ export class AdminCompatController {
     }
   }
 
+  private async adminSettingsMap(group: string, tenantId?: string) {
+    const rows = await this.getSettings(group, tenantId) as any[];
+    return Object.fromEntries(rows.map((row) => [row.key, row.value || '']));
+  }
+
+  private parseJsonSetting<T>(value: any, fallback: T): T {
+    try {
+      if (!value) return fallback;
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+      return parsed ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private stripSourceHtml(value: string) {
+    return String(value || '')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private extractMetaContent(html: string, name: string) {
+    const pattern = new RegExp(`<meta[^>]+(?:name|property)=["']${name}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i');
+    return this.stripSourceHtml(html.match(pattern)?.[1] || '');
+  }
+
+  private isAllowedBlogSourceUrl(rawUrl: string) {
+    try {
+      const url = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) return false;
+      const host = url.hostname.toLowerCase();
+      if (host === 'localhost' || host.endsWith('.local')) return false;
+      if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(host)) return false;
+      if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
+      if (host === '::1' || host.startsWith('fc') || host.startsWith('fd')) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async fetchBlogSourceSnapshot(source: any) {
+    const url = String(source?.url || '').trim();
+    if (!this.isAllowedBlogSourceUrl(url) || source?.active === false) return null;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Epin365ContentResearch/1.0 (+https://epin365.com)',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+        signal: AbortSignal.timeout(4500),
+      });
+      if (!response.ok) return { url, status: response.status, title: source.title || url, description: '', headings: [], notes: source.notes || '' };
+      const html = (await response.text()).slice(0, 180000);
+      const title = this.stripSourceHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || source.title || url);
+      const description = this.extractMetaContent(html, 'description') || this.extractMetaContent(html, 'og:description');
+      const headings = Array.from(html.matchAll(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/gi))
+        .map((match) => this.stripSourceHtml(match[1]))
+        .filter(Boolean)
+        .slice(0, 10);
+      return { url, status: response.status, title, description, headings, notes: source.notes || '' };
+    } catch {
+      return { url, status: 'unreachable', title: source.title || url, description: '', headings: [], notes: source.notes || '' };
+    }
+  }
+
+  private blogKeywordInsights(input: { topic?: string; productFocus?: string; keywords?: any; sourceSnapshots?: any[] }) {
+    const seedText = [
+      input.topic,
+      input.productFocus,
+      Array.isArray(input.keywords) ? input.keywords.join(', ') : input.keywords,
+      ...(input.sourceSnapshots || []).flatMap((source) => [source?.title, source?.description, ...(source?.headings || [])]),
+    ].filter(Boolean).join(' ');
+    const explicit = String(input.keywords || '')
+      .split(/[,;\n]/)
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+    const words = seedText
+      .toLocaleLowerCase('tr-TR')
+      .replace(/[^a-z0-9ğüşöçıİ\s]/gi, ' ')
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .filter((word) => word.length > 2 && !['için', 'olan', 'ile', 'bir', 'çok', 'daha', 'gibi', 'veya', 'site', 'resmi'].includes(word));
+    const phrases = new Map<string, number>();
+    const add = (keyword: string, base = 1) => {
+      const clean = keyword.replace(/\s+/g, ' ').trim();
+      if (!clean || clean.length < 3) return;
+      const buyerBoost = /(satın al|yükle|ucuz|fiyat|kod|kupon|indirim|vp|uc|elmas|robux|epin|e-pin|top.?up)/i.test(clean) ? 4 : 0;
+      phrases.set(clean, (phrases.get(clean) || 0) + base + buyerBoost);
+    };
+    explicit.forEach((keyword) => add(keyword, 8));
+    for (let i = 0; i < words.length; i += 1) {
+      add(words[i], 1);
+      if (words[i + 1]) add(`${words[i]} ${words[i + 1]}`, 2);
+      if (words[i + 2]) add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`, 2);
+    }
+    return Array.from(phrases.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 18)
+      .map(([keyword, score]) => ({
+        keyword,
+        score,
+        intent: /(satın al|yükle|ucuz|fiyat|kod|kupon|indirim)/i.test(keyword) ? 'satın alma' : 'bilgi',
+        reason: score >= 8 ? 'Yüksek tıklama ve dönüşüm potansiyeli' : 'İçerik içinde destekleyici SEO kelimesi',
+      }));
+  }
+
+  private localBlogDraft(input: any) {
+    const topic = String(input.topic || input.title || input.productFocus || 'Oyun gündemi').trim();
+    const brand = String(input.brandName || 'Epin365').trim();
+    const keywordInsights = this.blogKeywordInsights(input);
+    const mainKeyword = keywordInsights[0]?.keyword || topic;
+    const title = this.clampSeoText(`${topic}: Güncel Rehber ve Güvenli Satın Alma İpuçları`, 80);
+    const intro = `${topic} hakkında güncel bilgileri, oyuncuların en çok aradığı noktaları ve güvenli alışveriş için dikkat edilmesi gerekenleri bu rehberde topladık.`;
+    const sourceList = (input.sourceSnapshots || []).filter(Boolean);
+    const sourceHtml = sourceList.length
+      ? `<h2>Gündemde öne çıkan başlıklar</h2><ul>${sourceList.slice(0, 5).map((source: any) => `<li><strong>${this.stripSourceHtml(source.title || source.url)}</strong>${source.description ? `: ${this.stripSourceHtml(source.description)}` : ''}</li>`).join('')}</ul>`
+      : '';
+    const contentHtml = [
+      `<p>${intro}</p>`,
+      sourceHtml,
+      `<h2>${topic} neden oyuncuların gündeminde?</h2>`,
+      `<p>${mainKeyword} araması yapan kullanıcılar genellikle fiyat, güvenli ödeme, doğru bölge seçimi ve teslimat takibi gibi konularda net bilgi arar. ${brand} tarafında içerik dili bu beklentilere göre sade ve kontrol edilebilir tutulmalıdır.</p>`,
+      `<h2>Satın almadan önce kontrol edilmesi gerekenler</h2>`,
+      '<ul><li>Ürün bölgesi ve platform bilgisini kontrol edin.</li><li>Top-up ürünlerde oyuncu ID veya sunucu bilgilerini doğru girin.</li><li>Ödeme sonrası sipariş durumunu hesabınızdan takip edin.</li></ul>',
+      `<h2>SEO açısından öne çıkan kelimeler</h2>`,
+      `<p>${keywordInsights.slice(0, 8).map((item) => item.keyword).join(', ')}</p>`,
+      '<h2>Sık sorulan sorular</h2>',
+      `<h3>${topic} güvenli şekilde nasıl alınır?</h3><p>Ürün sayfasındaki açıklamaları kontrol edip açık ödeme yöntemlerinden biriyle sipariş oluşturabilirsiniz.</p>`,
+      `<h3>Siparişimi nereden takip ederim?</h3><p>Üyelik panelinizdeki siparişler alanından ödeme ve teslimat durumunu görebilirsiniz.</p>`,
+    ].filter(Boolean).join('\n');
+    return {
+      title,
+      slug: this.slugifyBlogText(title),
+      excerpt: this.clampSeoText(intro, 220),
+      contentHtml,
+      seoTitle: this.clampSeoText(`${mainKeyword} | ${topic} Rehberi`, 70),
+      seoDescription: this.clampSeoText(`${topic} için güncel rehber, güvenli satın alma ipuçları ve öne çıkan SEO aramaları.`, 160),
+      keywords: keywordInsights.slice(0, 12).map((item) => item.keyword),
+      keywordInsights,
+      socialPosts: {
+        x: `${topic} hakkında güncel rehber yayında. Güvenli alışveriş, doğru bölge seçimi ve sipariş takibi için kısa notları inceleyin.`,
+        instagram: `${topic} rehberi yayında. Oyuncular için güvenli satın alma ipuçları, dikkat edilmesi gerekenler ve güncel öneriler tek yazıda.`,
+        facebook: `${topic} hakkında hazırladığımız rehberde güncel başlıkları, güvenli ödeme adımlarını ve oyuncular için pratik ipuçlarını topladık.`,
+        telegram: `${topic} rehberi yayında: güvenli satın alma, doğru bilgi girişi ve sipariş takibi için önemli notlar.`,
+      },
+      provider: 'local',
+    };
+  }
+
   @Post('ai/seo-content')
   async generateSeoContent(@Body() body: any) {
     const name = String(body?.name || body?.title || body?.categoryName || '').trim();
@@ -297,6 +454,89 @@ export class AdminCompatController {
       brandName: body.brandName || 'Epin365',
     });
     return { success: true, ...content };
+  }
+
+  @Post('blogs/ai-draft')
+  async generateBlogAiDraft(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const topic = String(body?.topic || body?.title || body?.productFocus || '').trim();
+    if (!topic) throw new BadRequestException('AI blog taslağı için konu zorunludur');
+
+    const settings = await this.adminSettingsMap('blog_ai', tenantId);
+    const sourceSettings = this.parseJsonSetting<any[]>(settings.blog_ai_sources, []);
+    const activeSources = (Array.isArray(body.sources) ? body.sources : sourceSettings)
+      .filter((source: any) => source?.active !== false && source?.url)
+      .slice(0, 8);
+    const sourceSnapshots = (await Promise.all(activeSources.map((source: any) => this.fetchBlogSourceSnapshot(source))))
+      .filter(Boolean);
+    const keywords = [
+      settings.blog_ai_focus_keywords,
+      body.keywords,
+    ].filter(Boolean).join(', ');
+    const baseInput = {
+      ...body,
+      topic,
+      brandName: body.brandName || settings.blog_ai_brand_name || 'Epin365',
+      audience: body.audience || settings.blog_ai_audience || 'Oyuncular ve dijital ürün müşterileri',
+      tone: body.tone || settings.blog_ai_tone || 'Net, güven veren, SEO uyumlu ve satışa yardımcı',
+      keywords,
+      negativeKeywords: settings.blog_ai_negative_keywords || '',
+      editorialPrompt: settings.blog_ai_editorial_prompt || '',
+      sourceSnapshots,
+    };
+    const fallback = this.localBlogDraft(baseInput);
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return { success: true, ...fallback };
+
+    try {
+      const systemPrompt = [
+        'Sen Epin365 için çalışan kıdemli Türkçe SEO editörü, oyun gündemi analisti ve sosyal medya içerik stratejistisin.',
+        'Kaynaklardan gelen bilgileri sadece bağlam olarak kullan; cümleleri kopyalama, haber metnini yeniden yayımlama, telifli uzun alıntı yapma.',
+        'Kesin olmayan bilgileri kesinmiş gibi yazma. Fiyat, stok, resmi partnerlik, garanti, teslimat süresi veya kampanya uydurma.',
+        'Önce arama niyetini analiz et: bilgi arayan, satın alma niyeti olan ve kampanya arayan kelimeleri ayır.',
+        'Başlıkta ve H2lerde yüksek tıklama potansiyeli olan ama clickbait olmayan kelimeleri kullan.',
+        'İçerik Türkçe, özgün, güven veren, kullanıcıya faydalı ve e-ticaret dönüşümüne yardımcı olsun.',
+        'Top-up ürünlerde doğru oyuncu bilgisi uyarısı; e-pin ürünlerde sipariş/kod takibi uyarısı doğal şekilde yer alsın.',
+        'seoTitle 70 karakteri, seoDescription 160 karakteri geçmesin.',
+        'Sosyal medya metinleri platforma uygun kısa taslak olsun; otomatik paylaşım yapılmayacak, sadece taslak üretilecek.',
+        'Cevabı sadece geçerli JSON olarak döndür. Alanlar: title, slug, excerpt, contentHtml, seoTitle, seoDescription, keywords, keywordInsights, socialPosts.',
+        settings.blog_ai_editorial_prompt || '',
+      ].filter(Boolean).join('\n');
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          temperature: 0.35,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify({ input: baseInput, fallback }, null, 2) },
+          ],
+        }),
+      });
+      if (!response.ok) return { success: true, ...fallback };
+      const data: any = await response.json();
+      const parsed = JSON.parse(data?.choices?.[0]?.message?.content || '{}');
+      return {
+        success: true,
+        title: this.clampSeoText(parsed.title || fallback.title, 90),
+        slug: this.slugifyBlogText(parsed.slug || parsed.title || fallback.slug),
+        excerpt: this.clampSeoText(parsed.excerpt || fallback.excerpt, 240),
+        contentHtml: String(parsed.contentHtml || fallback.contentHtml),
+        seoTitle: this.clampSeoText(parsed.seoTitle || fallback.seoTitle, 70),
+        seoDescription: this.clampSeoText(parsed.seoDescription || fallback.seoDescription, 160),
+        keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 16) : fallback.keywords,
+        keywordInsights: Array.isArray(parsed.keywordInsights) ? parsed.keywordInsights.slice(0, 18) : fallback.keywordInsights,
+        socialPosts: parsed.socialPosts || fallback.socialPosts,
+        sourceSnapshots,
+        provider: 'openai',
+      };
+    } catch {
+      return { success: true, ...fallback };
+    }
   }
 
   @Get('blogs')
