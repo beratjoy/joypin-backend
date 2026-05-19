@@ -936,6 +936,7 @@ model Order {
 
 model SubOrder {
   id            String @id @default(uuid())
+  subOrderNumber String? @unique @db.VarChar(40)
   parentOrderId String
   parentOrder   Order  @relation(fields: [parentOrderId], references: [id], onDelete: Cascade)
 

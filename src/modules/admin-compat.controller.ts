@@ -6006,7 +6006,14 @@ export class AdminCompatController {
       throw new NotFoundException('Sipariş bulunamadı');
     }
 
-    const deliverable = order.subOrders.filter((subOrder: any) => !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status));
+    const targetSubOrderId = String(body?.subOrderId || '').trim();
+    const deliverable = order.subOrders.filter((subOrder: any) => {
+      if (targetSubOrderId && subOrder.id !== targetSubOrderId) return false;
+      return !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status);
+    });
+    if (targetSubOrderId && deliverable.length === 0) {
+      throw new BadRequestException('Seçilen alt sipariş teslim edilemez durumda');
+    }
     const requestedQuantity = Number(body?.deliveredQuantity || body?.quantity || 0);
     const refundRemainder = Boolean(body?.refundRemainder);
     const updatedSubOrders: any[] = [];
@@ -6104,7 +6111,14 @@ export class AdminCompatController {
       throw new NotFoundException('Sipariş bulunamadı');
     }
 
-    const cancellable = order.subOrders.filter((subOrder: any) => !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status));
+    const targetSubOrderId = String(body?.subOrderId || '').trim();
+    const cancellable = order.subOrders.filter((subOrder: any) => {
+      if (targetSubOrderId && subOrder.id !== targetSubOrderId) return false;
+      return !['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status);
+    });
+    if (targetSubOrderId && cancellable.length === 0) {
+      throw new BadRequestException('Seçilen alt sipariş iptal edilemez durumda');
+    }
     await this.prisma.subOrder.updateMany({
       where: { id: { in: cancellable.map((subOrder: any) => subOrder.id) } },
       data: {

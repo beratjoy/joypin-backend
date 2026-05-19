@@ -211,7 +211,8 @@ export class OrdersService {
           ipAddress: params.ipAddress,
           customerNote: params.customerNote,
           subOrders: {
-            create: normalizedItems.map((item) => ({
+            create: normalizedItems.map((item, index) => ({
+              subOrderNumber: `${orderNumber}-${String(index + 1).padStart(2, '0')}`,
               productId: item.productId,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
