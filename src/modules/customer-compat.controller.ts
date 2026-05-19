@@ -91,6 +91,27 @@ export class CustomerCompatController {
     };
   }
 
+  private calculateDealerUnitPrice(product: any, dealerGroup: any, pricing: any) {
+    const pricingModel = pricing?.overridePricingModel || product.pricingModel;
+    const baseCost = Number(product.baseCost || 0);
+    const fixedPrice = Number(pricing?.customFixedPrice ?? product.fixedPrice ?? 0);
+    const marginPercent = Number(pricing?.customMarginPercent ?? product.marginPercent ?? 0);
+    const discountPercent = Number(pricing?.customDiscountPercent ?? product.discountPercent ?? 0);
+
+    let price = fixedPrice || baseCost;
+    if (pricingModel === 'COST_PLUS_MARGIN') {
+      price = baseCost * (1 + marginPercent / 100);
+    } else if (pricingModel === 'FIXED_MINUS_DISCOUNT') {
+      price = fixedPrice * (1 - discountPercent / 100);
+    }
+
+    if (!pricing?.isActive && Number(dealerGroup?.defaultDiscountPercent || 0) > 0) {
+      price = price * (1 - Number(dealerGroup.defaultDiscountPercent) / 100);
+    }
+
+    return Math.max(0, Math.round(price * 100) / 100);
+  }
+
   @Get('coupons')
   async getCoupons(@Req() req: any) {
     const tenant = await this.resolveTenantFromRequest(req);
@@ -272,6 +293,7 @@ export class CustomerCompatController {
       where: { id: userId },
       include: {
         memberType: true,
+        dealerGroup: true,
         wallet: true,
         _count: { select: { orders: true } },
       },
@@ -377,6 +399,8 @@ export class CustomerCompatController {
       preferredCurrency: user.preferredCurrency,
       memberTypeName: user.memberType?.name || null,
       memberTypeColor: user.memberType?.colorCode || null,
+      dealerGroupId: user.dealerGroupId || null,
+      dealerGroupName: user.dealerGroup?.name || null,
       balance: walletSummary.balanceCurrent,
       usableBalance,
       wallet: walletSummary,
@@ -404,6 +428,72 @@ export class CustomerCompatController {
       apiKey: null,
       isDealer: user.role === 'RESELLER' || Boolean(user.dealerGroupId),
       createdAt: user.createdAt,
+    };
+  }
+
+  @Get('dealer-products')
+  async getDealerProducts(@Req() req: any, @Query('country') country?: string) {
+    const tenant = await this.resolveTenantFromRequest(req);
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { dealerGroup: true },
+    }) as any;
+
+    if (!user || !(user.role === 'RESELLER' || user.role === 'DEALER' || user.dealerGroupId)) {
+      return { products: [], dealerGroup: null };
+    }
+
+    const dealerGroupId = user.dealerGroupId;
+    const products = await this.prisma.product.findMany({
+      where: { isActive: true },
+      include: {
+        category: true,
+        dealerGroupPricings: dealerGroupId ? { where: { dealerGroupId } } : false,
+        stockRestrictions: dealerGroupId ? { where: { dealerGroupId } } : false,
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      take: 300,
+    });
+
+    const visibleProducts = products
+      .filter((product: any) => this.visibleForTenant(product.category || {}, tenant?.id))
+      .filter((product: any) => this.visibleForTenant(product, tenant?.id))
+      .filter((product: any) => this.visibleForCountry(product.category || {}, country))
+      .filter((product: any) => this.visibleForCountry(product, country))
+      .filter((product: any) => !product.stockRestrictions?.some((restriction: any) => restriction.isBlocked));
+
+    return {
+      dealerGroup: user.dealerGroup
+        ? {
+            id: user.dealerGroup.id,
+            name: user.dealerGroup.name,
+            defaultDiscountPercent: Number(user.dealerGroup.defaultDiscountPercent || 0),
+            minOrderAmount: Number(user.dealerGroup.minOrderAmount || 0),
+            creditLimit: Number(user.dealerGroup.creditLimit || 0),
+          }
+        : null,
+      products: visibleProducts.map((product: any) => {
+        const pricing = product.dealerGroupPricings?.[0] || null;
+        const basePrice = Number(product.fixedPrice || product.baseCost || 0);
+        const dealerPrice = this.calculateDealerUnitPrice(product, user.dealerGroup, pricing);
+        return {
+          id: product.id,
+          name: product.name,
+          shortName: product.shortName || product.name,
+          slug: product.slug,
+          categorySlug: product.category?.slug || null,
+          categoryName: product.category?.name || '',
+          type: product.type,
+          currency: product.baseCurrency || 'TRY',
+          basePrice,
+          dealerPrice,
+          discountPercent: basePrice > 0 ? Math.max(0, Math.round((1 - dealerPrice / basePrice) * 10000) / 100) : 0,
+          stockCount: product.hasInfiniteStock ? null : product.stockCount,
+          stockLabel: product.hasInfiniteStock ? 'Sinirsiz' : String(product.stockCount || 0),
+          inStock: product.hasInfiniteStock || product.stockCount > 0,
+          imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.imageUrl || null,
+        };
+      }),
     };
   }
 
