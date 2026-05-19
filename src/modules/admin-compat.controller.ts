@@ -9,7 +9,9 @@ import { AuthService } from './auth/auth.service';
 import { OrdersService } from './orders/orders.service';
 import { Roles } from './auth/decorators/roles.decorator';
 import { createHash, randomUUID } from 'crypto';
+import { SkipThrottle } from '@nestjs/throttler';
 
+@SkipThrottle({ short: true, medium: true, long: true })
 @Controller('admin')
 @Roles('SUPER_ADMIN', 'ADMIN', 'STAFF', 'SUPPORT')
 export class AdminCompatController {
