@@ -8,6 +8,20 @@ export class StorefrontCompatController {
 
   private readonly fallbackImage = '/uploads/e33a4974-bf03-4cfd-9753-cc70ca381215.webp';
 
+  private midasbuyPromoKey(categoryId: string) {
+    return `category_midasbuy_promo_${categoryId}`;
+  }
+
+  private parseMidasbuyPromo(value?: string | null) {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
   private normalizeCountry(country?: string | null) {
     return (country || '').trim().toUpperCase();
   }
@@ -255,6 +269,9 @@ export class StorefrontCompatController {
     if (!category || !this.visibleForCountry(category, country) || !this.visibleForTenant(category, tenant?.id)) {
       throw new NotFoundException('Category not found');
     }
+    const promoSetting = await this.prisma.siteSettings.findUnique({
+      where: { key: this.midasbuyPromoKey(category.id) },
+    }).catch(() => null);
 
     const products = await this.prisma.$queryRawUnsafe<any[]>(
       'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl", "allowedCountries", "tenantIds" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
@@ -273,6 +290,7 @@ export class StorefrontCompatController {
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
       allowedCountries: category.allowedCountries || [],
+      midasbuyPromo: this.parseMidasbuyPromo(promoSetting?.value),
       requiresUserId: category.requiresUserId ?? visibleProducts.some((product: any) => product.type === 'TOPUP'),
       userIdLabel: category.userIdLabel || 'Oyuncu ID',
       userIdPlaceholder: category.userIdPlaceholder || 'Oyuncu ID giriniz',

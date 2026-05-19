@@ -128,6 +128,51 @@ export class AdminCompatController {
     if (!this.reviewVisibleForTenant(review, tenantId)) throw new NotFoundException('Kayıt bulunamadı');
   }
 
+  private midasbuyPromoKey(categoryId: string) {
+    return `category_midasbuy_promo_${categoryId}`;
+  }
+
+  private parseMidasbuyPromo(value?: string | null) {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private normalizeMidasbuyPromo(input: any) {
+    const promo = input && typeof input === 'object' ? input : {};
+    return {
+      enabled: promo.enabled !== false,
+      title: String(promo.title || '').trim().slice(0, 160),
+      iconText: String(promo.iconText || '').trim().slice(0, 8),
+      linkUrl: String(promo.linkUrl || '').trim().slice(0, 500),
+      linkLabel: String(promo.linkLabel || '').trim().slice(0, 80),
+      variant: ['amber', 'blue', 'purple', 'emerald'].includes(promo.variant) ? promo.variant : 'amber',
+    };
+  }
+
+  private async saveMidasbuyPromo(categoryId: string, input: any) {
+    if (input === undefined) return;
+    const promo = this.normalizeMidasbuyPromo(input);
+    await this.prisma.siteSettings.upsert({
+      where: { key: this.midasbuyPromoKey(categoryId) },
+      update: {
+        value: JSON.stringify(promo),
+        group: 'categories',
+        description: 'Midasbuy kategori promosyon bandi',
+      },
+      create: {
+        key: this.midasbuyPromoKey(categoryId),
+        value: JSON.stringify(promo),
+        group: 'categories',
+        description: 'Midasbuy kategori promosyon bandi',
+      },
+    });
+  }
+
   private healthStep(result: any, name: string, ok: boolean, data: Record<string, any> = {}) {
     result.checks.push({ name, ok, ...data });
   }
@@ -4123,6 +4168,10 @@ export class AdminCompatController {
       include: { products: { select: { id: true } } },
       orderBy: { sortOrder: 'asc' },
     });
+    const promoSettings = await this.prisma.siteSettings.findMany({
+      where: { key: { in: categories.map((category) => this.midasbuyPromoKey(category.id)) } },
+    });
+    const promoByKey = new Map(promoSettings.map((setting) => [setting.key, this.parseMidasbuyPromo(setting.value)]));
 
     return categories.filter((category: any) => this.visibleForTenant(category, tenantId)).map((category: any) => ({
       id: category.id,
@@ -4141,6 +4190,7 @@ export class AdminCompatController {
       userIdLabel: category.userIdLabel || '',
       userIdPlaceholder: category.userIdPlaceholder || '',
       zoneIdLabel: category.zoneIdLabel || null,
+      midasbuyPromo: promoByKey.get(this.midasbuyPromoKey(category.id)) || {},
       productCount: category.products?.length || 0,
       isActive: category.isActive,
       createdAt: category.createdAt,
@@ -4149,7 +4199,7 @@ export class AdminCompatController {
   @Post('categories')
   async createCategory(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
-    return this.prisma.productCategory.create({
+    const category = await this.prisma.productCategory.create({
       data: {
         name: body.name,
         slug: body.slug,
@@ -4168,11 +4218,13 @@ export class AdminCompatController {
         isActive: body.isActive ?? true,
       },
     });
+    await this.saveMidasbuyPromo(category.id, body.midasbuyPromo);
+    return category;
   }
   @Patch('categories/:id')
   async updateCategory(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
-    return this.prisma.productCategory.update({
+    const category = await this.prisma.productCategory.update({
       where: { id },
       data: {
         name: body.name,
@@ -4192,6 +4244,8 @@ export class AdminCompatController {
         isActive: body.isActive,
       },
     });
+    await this.saveMidasbuyPromo(id, body.midasbuyPromo);
+    return category;
   }
   @Delete('categories/:id')
   async deleteCategory(@Param('id') id: string) {
