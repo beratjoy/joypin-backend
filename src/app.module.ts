@@ -36,6 +36,7 @@ import { CouponCompatController } from './modules/coupon-compat.controller';
 import { CartCouponCompatController } from './modules/cart-coupon-compat.controller';
 import { PublisherApplicationCompatController } from './modules/publisher-application-compat.controller';
 import { BlogsCompatController } from './modules/blogs-compat.controller';
+import { DealerApiController } from './modules/dealer-api.controller';
 
 @Module({
   imports: [
@@ -94,6 +95,7 @@ import { BlogsCompatController } from './modules/blogs-compat.controller';
     CartCouponCompatController,
     PublisherApplicationCompatController,
     BlogsCompatController,
+    DealerApiController,
   ],
   providers: [
     // ─── Global Guards (sıralama önemli) ─────────────────

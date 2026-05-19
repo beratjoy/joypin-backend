@@ -327,6 +327,7 @@ model User {
   missionProgress     UserMissionProgress[]
   epinCodesUsed       EpinCode[] @relation("EpinCodeUser")
   staffProfile        StaffProfile?
+  dealerApiKeys       DealerApiKey[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -337,6 +338,25 @@ model User {
   @@index([role, status])
   @@index([passwordResetTokenHash])
   @@map("users")
+}
+
+model DealerApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String    @default("Varsayilan API Anahtari") @db.VarChar(120)
+  prefix     String    @db.VarChar(24)
+  keyHash    String    @unique @db.VarChar(64)
+  keyLast4   String    @db.VarChar(4)
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isActive])
+  @@map("dealer_api_keys")
 }
 
 model Permission {

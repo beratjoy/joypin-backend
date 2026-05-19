@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('me')
@@ -39,6 +40,20 @@ export class CustomerCompatController {
       ? item.tenantIds.map((id) => String(id).trim()).filter(Boolean)
       : String(item.tenantIds || '').split(',').map((id) => id.trim()).filter(Boolean);
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
+  }
+
+  private visibleForCountry(item: { allowedCountries?: unknown }, country?: string | null) {
+    const normalized = String(country || '').trim().toUpperCase();
+    if (!normalized) return true;
+    const countries = Array.isArray(item.allowedCountries)
+      ? item.allowedCountries.map((code) => String(code).trim().toUpperCase()).filter(Boolean)
+      : String(item.allowedCountries || '').split(',').map((code) => code.trim().toUpperCase()).filter(Boolean);
+    return countries.length === 0 || countries.includes(normalized);
+  }
+
+  private maskApiKey(key: any) {
+    if (!key) return null;
+    return `${key.prefix}••••••••${key.keyLast4}`;
   }
 
   private tenantOrderWhere(userId: string, tenantId?: string | null) {
@@ -294,6 +309,11 @@ export class CustomerCompatController {
       include: {
         memberType: true,
         dealerGroup: true,
+        dealerApiKeys: {
+          where: { isActive: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
         wallet: true,
         _count: { select: { orders: true } },
       },
@@ -425,7 +445,7 @@ export class CustomerCompatController {
         referenceId: transaction.referenceId || null,
         createdAt: transaction.createdAt,
       })),
-      apiKey: null,
+      apiKey: this.maskApiKey((user as any).dealerApiKeys?.[0]),
       isDealer: user.role === 'RESELLER' || Boolean(user.dealerGroupId),
       createdAt: user.createdAt,
     };
@@ -670,8 +690,41 @@ export class CustomerCompatController {
   }
 
   @Post('api-key')
-  async generateApiKey() {
-    return { apiKey: null };
+  async generateApiKey(@Req() req: any) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, role: true, dealerGroupId: true },
+    });
+    if (!user || !(user.role === 'RESELLER' || user.role === 'DEALER' || user.dealerGroupId)) {
+      return { success: false, message: 'API anahtari sadece bayi hesaplari icin olusturulur.', apiKey: '' };
+    }
+
+    const prefix = 'epin_live_';
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const apiKey = `${prefix}${secret}`;
+    const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+
+    await this.prisma.$transaction([
+      (this.prisma as any).dealerApiKey.updateMany({
+        where: { userId: user.id, isActive: true },
+        data: { isActive: false },
+      }),
+      (this.prisma as any).dealerApiKey.create({
+        data: {
+          userId: user.id,
+          name: 'Varsayilan API Anahtari',
+          prefix,
+          keyHash,
+          keyLast4: apiKey.slice(-4),
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      apiKey,
+      message: 'API anahtari olusturuldu. Bu anahtar sadece bir kez tam gosterilir.',
+    };
   }
 }
 
