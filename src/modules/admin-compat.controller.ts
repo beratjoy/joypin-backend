@@ -4061,7 +4061,27 @@ export class AdminCompatController {
   ) {
     const where: any = {};
     if (tenantId && tenantId !== 'all') where.tenantId = tenantId;
-    if (status && status !== 'all') where.status = status as any;
+    if (status && status !== 'all') {
+      const normalizedStatus = String(status).toUpperCase();
+      const parentStatuses = new Set(['PENDING', 'PROCESSING', 'PARTIALLY_DELIVERED', 'COMPLETED', 'CANCELLED', 'REFUNDED']);
+      const subOrderOnlyAliases: Record<string, any> = {
+        DELIVERED: {
+          OR: [
+            { status: 'COMPLETED' },
+            { subOrders: { some: { status: 'DELIVERED' } } },
+          ],
+        },
+        PENDING_STOCK: { subOrders: { some: { status: 'PENDING_STOCK' } } },
+        PENDING_TOPUP: { subOrders: { some: { status: 'PENDING_TOPUP' } } },
+        MANUAL_INTERVENTION_REQUIRED: { subOrders: { some: { status: 'MANUAL_INTERVENTION_REQUIRED' } } },
+      };
+
+      if (parentStatuses.has(normalizedStatus)) {
+        where.status = normalizedStatus as any;
+      } else if (subOrderOnlyAliases[normalizedStatus]) {
+        Object.assign(where, subOrderOnlyAliases[normalizedStatus]);
+      }
+    }
     if (completed === 'true' && (!status || status === 'all')) {
       where.status = { in: ['COMPLETED', 'CANCELLED', 'REFUNDED'] as any };
     }
