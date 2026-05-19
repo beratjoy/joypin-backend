@@ -429,6 +429,7 @@ model DealerApiPriority {
   createdAt DateTime @default(now())
 
   @@unique([dealerGroupId, productId, botProviderId])
+  @@index([productId, priority])
   @@map("dealer_api_priorities")
 }
 
@@ -566,6 +567,7 @@ model Product {
   botProviderProducts  BotProviderProduct[]
   stockRestrictions    DealerStockRestriction[]
   apiPriorities        DealerApiPriority[]
+  memberApiPriorities  MemberApiPriority[]
   discounts            ProductDiscount[]
   prices               ProductPrice[]
   topupFields          TopupField[]
@@ -600,11 +602,33 @@ model MemberType {
   users              User[]
   prices             ProductPrice[]
   subscriptionPlans  SubscriptionPlan[]
+  apiPriorities      MemberApiPriority[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("member_types")
+}
+
+/// Uye tipine ozel API onceligi: hangi BotProvider hangi sirayla denenir.
+model MemberApiPriority {
+  id            String @id @default(uuid())
+  memberTypeId  String
+  productId     String
+  botProviderId String
+  priority      Int    @default(0)
+  isActive      Boolean @default(true)
+
+  memberType  MemberType  @relation(fields: [memberTypeId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  botProvider BotProvider @relation(fields: [botProviderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([memberTypeId, productId, botProviderId])
+  @@index([productId, priority])
+  @@map("member_api_priorities")
 }
 
 model ProductPrice {
@@ -1155,6 +1179,7 @@ model BotProvider {
   productProviders  ProductProvider[]
   subOrders         SubOrder[]
   dealerPriorities  DealerApiPriority[]
+  memberPriorities  MemberApiPriority[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

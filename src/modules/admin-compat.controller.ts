@@ -700,8 +700,10 @@ export class AdminCompatController {
     return { refunded: true, amount: refundAmount };
   }
 
-  private providerRouteNote(providerName: string, externalRef?: string | null, status?: string | null) {
+  private providerRouteNote(providerName: string, externalRef?: string | null, status?: string | null, routeSource?: string | null, routePosition?: number, routeTotal?: number) {
     const parts = [`Tedarikci: ${providerName}`, 'Islem tedarikcide'];
+    if (routeSource) parts.push(`Kural: ${routeSource}`);
+    if (routePosition) parts.push(`Sira: ${routePosition}${routeTotal ? `/${routeTotal}` : ''}`);
     if (externalRef) parts.push(`Ref: ${externalRef}`);
     if (status) parts.push(`Durum: ${status}`);
     return parts.join(' | ');
@@ -800,7 +802,76 @@ export class AdminCompatController {
     };
   }
 
-  private async routeSubOrderToCheapestProvider(subOrderId: string) {
+  private async buildProviderRoute(subOrder: any) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: subOrder.parentOrderId },
+      select: {
+        user: {
+          select: {
+            dealerGroupId: true,
+            memberTypeId: true,
+            dealerGroup: { select: { id: true, name: true, cancelOnApiFail: true } },
+            memberType: { select: { id: true, name: true } },
+          },
+        },
+      },
+    } as any);
+
+    const links = await this.prisma.productProvider.findMany({
+      where: {
+        productId: subOrder.productId,
+        isActive: true,
+        provider: { status: 'ACTIVE' as any },
+      },
+      include: { provider: true },
+      orderBy: [{ priority: 'asc' }, { costPrice: 'asc' }],
+    });
+
+    const byProviderId = new Map<string, any>();
+    for (const link of links) byProviderId.set(link.providerId, link);
+
+    const route: any[] = [];
+    const seen = new Set<string>();
+    const pushLink = (providerId: string, routeSource: string, rulePriority: number) => {
+      const link = byProviderId.get(providerId);
+      if (!link || seen.has(providerId)) return;
+      seen.add(providerId);
+      route.push({ ...link, routeSource, routePriority: rulePriority });
+    };
+
+    const dealerGroupId = order?.user?.dealerGroupId || null;
+    if (dealerGroupId) {
+      const dealerRules = await this.prisma.dealerApiPriority.findMany({
+        where: { dealerGroupId, productId: subOrder.productId },
+        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+      });
+      for (const rule of dealerRules) pushLink(rule.botProviderId, `bayi:${order?.user?.dealerGroup?.name || 'grup'}`, rule.priority);
+    }
+
+    const memberTypeId = order?.user?.memberTypeId || null;
+    if (memberTypeId) {
+      const memberRules = await (this.prisma as any).memberApiPriority.findMany({
+        where: { memberTypeId, productId: subOrder.productId, isActive: true },
+        orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+      });
+      for (const rule of memberRules) pushLink(rule.botProviderId, `uye:${order?.user?.memberType?.name || 'tip'}`, rule.priority);
+    }
+
+    for (const link of links) pushLink(link.providerId, 'varsayilan', link.priority);
+
+    return {
+      links: route,
+      context: {
+        dealerGroupId,
+        dealerGroupName: order?.user?.dealerGroup?.name || null,
+        memberTypeId,
+        memberTypeName: order?.user?.memberType?.name || null,
+        cancelOnApiFail: Boolean(order?.user?.dealerGroup?.cancelOnApiFail),
+      },
+    };
+  }
+
+  private async routeSubOrderToConfiguredProvider(subOrderId: string) {
     const subOrder = await this.prisma.subOrder.findUnique({
       where: { id: subOrderId },
       include: { product: true, botProvider: true },
@@ -810,15 +881,7 @@ export class AdminCompatController {
       return { success: true, skipped: true, subOrderId, status: subOrder.status };
     }
 
-    const links = await this.prisma.productProvider.findMany({
-      where: {
-        productId: subOrder.productId,
-        isActive: true,
-        provider: { status: 'ACTIVE' as any },
-      },
-      include: { provider: true },
-      orderBy: [{ costPrice: 'asc' }, { priority: 'asc' }],
-    });
+    const { links, context } = await this.buildProviderRoute(subOrder);
 
     if (!links.length) {
       await this.prisma.subOrder.update({
@@ -838,7 +901,7 @@ export class AdminCompatController {
       const provider = link.provider;
       const totalCost = Number(link.costPrice || 0) * Number(subOrder.quantity || 1);
       if (Number(provider.balance || 0) < totalCost) {
-        lastError = `${provider.name}: bakiye yetersiz`;
+        lastError = `${provider.name}: bakiye yetersiz (${link.routeSource})`;
         await this.prisma.subOrder.update({
           where: { id: subOrder.id },
           data: { fallbackAttempts: { increment: 1 }, lastError },
@@ -852,7 +915,7 @@ export class AdminCompatController {
         data: {
           status: 'PROCESSING' as any,
           botProviderId: provider.id,
-          deliveryNote: this.providerRouteNote(provider.name),
+          deliveryNote: this.providerRouteNote(provider.name, null, null, link.routeSource, attempts, links.length),
           lastError: null,
         },
       });
@@ -860,7 +923,7 @@ export class AdminCompatController {
       try {
         const result = await this.dispatchProviderOrder(provider, link, subOrder);
         if (!result.accepted) {
-          lastError = `${provider.name}: ${result.status || 'reddedildi'}`;
+          lastError = `${provider.name}: ${result.status || 'reddedildi'} (${link.routeSource})`;
           await this.prisma.subOrder.update({
             where: { id: subOrder.id },
             data: { fallbackAttempts: { increment: 1 }, lastError },
@@ -876,7 +939,7 @@ export class AdminCompatController {
               status: nextStatus as any,
               botProviderId: provider.id,
               deliveredCount: result.delivered ? subOrder.quantity : subOrder.deliveredCount,
-              deliveryNote: this.providerRouteNote(provider.name, result.externalRef, result.status),
+              deliveryNote: this.providerRouteNote(provider.name, result.externalRef, result.status, link.routeSource, attempts, links.length),
             },
           }),
         ];
@@ -898,7 +961,7 @@ export class AdminCompatController {
           attempts,
         };
       } catch (error: any) {
-        lastError = `${provider.name}: ${error?.message || 'API hatasi'}`;
+        lastError = `${provider.name}: ${error?.message || 'API hatasi'} (${link.routeSource})`;
         await this.prisma.subOrder.update({
           where: { id: subOrder.id },
           data: { fallbackAttempts: { increment: 1 }, lastError },
@@ -911,10 +974,17 @@ export class AdminCompatController {
       data: {
         status: 'MANUAL_INTERVENTION_REQUIRED' as any,
         lastError: lastError || 'Uygun tedarikci bulunamadi',
+        deliveryNote: context.cancelOnApiFail
+          ? 'Tum tedarikci sirasi reddetti; bayi grubu iptal politikasi aktif. Manuel onay bekliyor.'
+          : undefined,
       },
     });
     await this.recalculateOrderStatus(subOrder.parentOrderId);
     return { success: false, subOrderId, error: lastError || 'Uygun tedarikci bulunamadi', attempts };
+  }
+
+  private async routeSubOrderToCheapestProvider(subOrderId: string) {
+    return this.routeSubOrderToConfiguredProvider(subOrderId);
   }
 
   private async findOrderForAction(id: string) {
@@ -3970,6 +4040,127 @@ export class AdminCompatController {
   @Delete('product-providers/:id')
   async removeProductProvider(@Param('id') id: string) {
     return this.prisma.productProvider.delete({ where: { id } });
+  }
+  @Get('provider-routing')
+  async getProviderRouting(
+    @Query('productId') productId?: string,
+    @Query('dealerGroupId') dealerGroupId?: string,
+    @Query('memberTypeId') memberTypeId?: string,
+  ) {
+    if (!productId) throw new BadRequestException('productId zorunludur');
+
+    const links = await this.prisma.productProvider.findMany({
+      where: { productId, isActive: true, provider: { status: 'ACTIVE' as any } },
+      include: { provider: true },
+      orderBy: [{ priority: 'asc' }, { costPrice: 'asc' }],
+    });
+
+    const rules = dealerGroupId
+      ? await this.prisma.dealerApiPriority.findMany({
+          where: { productId, dealerGroupId },
+          orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+        })
+      : memberTypeId
+        ? await (this.prisma as any).memberApiPriority.findMany({
+            where: { productId, memberTypeId, isActive: true },
+            orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
+          })
+        : [];
+
+    const byProviderId = new Map(links.map((link: any) => [link.providerId, link]));
+    const ordered: any[] = [];
+    const seen = new Set<string>();
+    for (const rule of rules as any[]) {
+      const link = byProviderId.get(rule.botProviderId);
+      if (!link || seen.has(rule.botProviderId)) continue;
+      seen.add(rule.botProviderId);
+      ordered.push({ ...link, routingPriority: rule.priority, routeSource: dealerGroupId ? 'dealer' : 'member' });
+    }
+    for (const link of links as any[]) {
+      if (seen.has(link.providerId)) continue;
+      seen.add(link.providerId);
+      ordered.push({ ...link, routingPriority: link.priority, routeSource: 'default' });
+    }
+
+    return {
+      productId,
+      dealerGroupId: dealerGroupId || null,
+      memberTypeId: memberTypeId || null,
+      routes: ordered.map((link: any, index: number) => ({
+        id: link.id,
+        providerId: link.providerId,
+        providerName: link.provider?.name || 'Tedarikci',
+        providerType: link.provider?.type || 'API',
+        providerProductCode: link.providerProductCode,
+        costPrice: Number(link.costPrice || 0),
+        costCurrency: link.costCurrency,
+        providerBalance: Number(link.provider?.balance || 0),
+        routeSource: link.routeSource,
+        priority: index + 1,
+      })),
+    };
+  }
+  @Put('provider-routing')
+  async saveProviderRouting(@Body() body: any) {
+    const productId = String(body?.productId || '').trim();
+    const dealerGroupId = body?.dealerGroupId ? String(body.dealerGroupId) : null;
+    const memberTypeId = body?.memberTypeId ? String(body.memberTypeId) : null;
+    if (!productId) throw new BadRequestException('productId zorunludur');
+    if (dealerGroupId && memberTypeId) throw new BadRequestException('Tek seferde bayi grubu veya uye grubu secilebilir');
+
+    const requestedProviderIds = Array.isArray(body?.providerIds)
+      ? body.providerIds.map((id: any) => String(id)).filter(Boolean)
+      : [];
+    const uniqueProviderIds = Array.from(new Set(requestedProviderIds));
+    const links = await this.prisma.productProvider.findMany({
+      where: { productId, providerId: { in: uniqueProviderIds }, isActive: true },
+      select: { providerId: true },
+    });
+    const linkedProviderIds = new Set(links.map((link: any) => link.providerId));
+    const providerIds = uniqueProviderIds.filter((providerId) => linkedProviderIds.has(providerId));
+
+    if (dealerGroupId) {
+      await this.prisma.$transaction(async (tx: any) => {
+        await tx.dealerApiPriority.deleteMany({ where: { productId, dealerGroupId } });
+        if (providerIds.length) {
+          await tx.dealerApiPriority.createMany({
+            data: providerIds.map((providerId, index) => ({
+              productId,
+              dealerGroupId,
+              botProviderId: providerId,
+              priority: index + 1,
+            })),
+          });
+        }
+      });
+      return this.getProviderRouting(productId, dealerGroupId, undefined);
+    }
+
+    if (memberTypeId) {
+      await this.prisma.$transaction(async (tx: any) => {
+        await tx.memberApiPriority.deleteMany({ where: { productId, memberTypeId } });
+        if (providerIds.length) {
+          await tx.memberApiPriority.createMany({
+            data: providerIds.map((providerId, index) => ({
+              productId,
+              memberTypeId,
+              botProviderId: providerId,
+              priority: index + 1,
+              isActive: true,
+            })),
+          });
+        }
+      });
+      return this.getProviderRouting(productId, undefined, memberTypeId);
+    }
+
+    await this.prisma.$transaction(providerIds.map((providerId, index) => (
+      this.prisma.productProvider.update({
+        where: { productId_providerId: { productId, providerId } },
+        data: { priority: index + 1 },
+      })
+    )));
+    return this.getProviderRouting(productId, undefined, undefined);
   }
   @Post('products')
   async createProduct(@Body() body: any, @Query('tenantId') tenantId?: string) {
