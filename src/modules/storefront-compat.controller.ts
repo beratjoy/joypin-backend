@@ -76,6 +76,18 @@ export class StorefrontCompatController {
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
   }
 
+  private productSiteContent(product: any, tenantId?: string | null) {
+    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+      ? product.metadata
+      : {};
+    const siteContent = metadata?.siteContent && typeof metadata.siteContent === 'object'
+      ? metadata.siteContent
+      : {};
+    return tenantId && siteContent[tenantId] && typeof siteContent[tenantId] === 'object'
+      ? siteContent[tenantId]
+      : {};
+  }
+
   private toCdnUrl(pathname: string) {
     const cdnBase = (process.env.CDN_PUBLIC_URL || '').replace(/\/$/, '');
     return cdnBase && pathname.startsWith('/') ? `${cdnBase}${pathname}` : pathname;
@@ -367,6 +379,7 @@ export class StorefrontCompatController {
 
     const basePrice = Number(product.fixedPrice || product.baseCost || 0);
     const discount = Number(product.discountPercent || 0);
+    const siteContent = this.productSiteContent(product, tenant?.id);
     const relatedProducts = await this.prisma.product.findMany({
       where: {
         categoryId: product.categoryId,
@@ -383,10 +396,10 @@ export class StorefrontCompatController {
 
     return {
       id: product.id,
-      name: product.name,
+      name: siteContent.name || product.name,
       shortName: product.shortName || null,
       slug: product.slug,
-      description: product.description,
+      description: siteContent.description || product.description,
       type: product.type,
       basePrice,
       memberPrice: discount > 0 ? Number((basePrice * (1 - discount / 100)).toFixed(2)) : null,
@@ -412,9 +425,9 @@ export class StorefrontCompatController {
         isRequired: field.isRequired,
         options: field.options,
       })),
-      seoTitle: product.seoTitle,
-      seoDescription: product.seoDescription,
-      seoKeywords: product.seoKeywords,
+      seoTitle: siteContent.seoTitle || product.seoTitle,
+      seoDescription: siteContent.seoDescription || product.seoDescription,
+      seoKeywords: siteContent.seoKeywords || product.seoKeywords,
       relatedProducts: visibleRelatedProducts.map((item: any) => {
         const itemBasePrice = Number(item.fixedPrice || item.baseCost || 0);
         const itemDiscount = Number(item.discountPercent || 0);

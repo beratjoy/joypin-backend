@@ -4391,6 +4391,7 @@ export class AdminCompatController {
       marketingImage: product.merchantImageUrl,
       sliderImage: product.sliderImageUrl,
       isExportable: true,
+      siteContent: (product.metadata as any)?.siteContent || {},
       seoTitle: product.seoTitle,
       seoDescription: product.seoDescription,
       seoKeywords: product.seoKeywords,
@@ -5531,6 +5532,9 @@ export class AdminCompatController {
   @Post('products')
   async createProduct(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const metadata = body.siteContent && typeof body.siteContent === 'object'
+      ? { siteContent: body.siteContent }
+      : undefined;
     return this.prisma.product.create({
       data: {
         name: body.name,
@@ -5551,6 +5555,7 @@ export class AdminCompatController {
         iconUrl: body.imageUrl || null,
         merchantImageUrl: body.marketingImage || null,
         sliderImageUrl: body.sliderImage || null,
+        metadata: metadata as any,
         seoTitle: body.seoTitle || null,
         seoDescription: body.seoDescription || null,
         seoKeywords: body.seoKeywords || null,
@@ -5564,6 +5569,12 @@ export class AdminCompatController {
   async updateProduct(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.$transaction(async (tx) => {
+      const existing = body.siteContent !== undefined
+        ? await tx.product.findUnique({ where: { id }, select: { metadata: true } })
+        : null;
+      const existingMetadata = existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+        ? existing.metadata as Record<string, any>
+        : {};
       const product = await tx.product.update({
         where: { id },
         data: {
@@ -5585,6 +5596,7 @@ export class AdminCompatController {
           iconUrl: body.imageUrl,
           merchantImageUrl: body.marketingImage,
           sliderImageUrl: body.sliderImage,
+          metadata: body.siteContent !== undefined ? ({ ...existingMetadata, siteContent: body.siteContent || {} } as any) : undefined,
           seoTitle: body.seoTitle,
           seoDescription: body.seoDescription,
           seoKeywords: body.seoKeywords,
