@@ -1835,6 +1835,20 @@ export class AdminCompatController {
 
   private async finishProviderRouteFailure(subOrder: any, context: any, lastError: string, attempts: number) {
     const action = this.normalizeProviderRejectAction(context?.onRejectAction);
+    const deliveredCount = Number(subOrder.deliveredCount || 0);
+    if (deliveredCount > 0) {
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: {
+          status: 'PARTIALLY_DELIVERED' as any,
+          lastError: lastError || 'Kalan adet icin uygun tedarikci bulunamadi',
+          deliveryNote: `Kalan ${Math.max(0, Number(subOrder.quantity || 0) - deliveredCount)} adet icin tedarikci yonlendirmesi basarisiz: ${context?.policySource || 'varsayilan'}`,
+        },
+      });
+      await this.recalculateOrderStatus(subOrder.parentOrderId);
+      return { success: false, partial: true, subOrderId: subOrder.id, error: lastError || 'Kalan adet bekliyor', attempts };
+    }
+
     if (action === 'CANCEL') {
       await this.prisma.subOrder.update({
         where: { id: subOrder.id },
@@ -1864,11 +1878,13 @@ export class AdminCompatController {
   }
 
   private async dispatchProviderOrder(provider: any, link: any, subOrder: any) {
+    const dispatchQuantity = Math.max(1, Number(subOrder.quantity || 1) - Number(subOrder.deliveredCount || 0));
+
     if (provider.name?.toLowerCase().includes('1epin')) {
       const result = await this.oneEpinRequest('addOrder', {
         product: Number(link.providerProductCode),
         user: this.pickTopupUserValue(subOrder.topupFieldData),
-        quantity: Number(subOrder.quantity || 1),
+        quantity: dispatchQuantity,
         orderNumber: subOrder.id,
       }, provider);
 
@@ -1903,7 +1919,7 @@ export class AdminCompatController {
 
     const payload = {
       product_code: link.providerProductCode,
-      quantity: subOrder.quantity,
+      quantity: dispatchQuantity,
       player_data: subOrder.topupFieldData || {},
       reference: subOrder.id,
       order_id: subOrder.parentOrderId,
@@ -2051,6 +2067,18 @@ export class AdminCompatController {
       return { success: true, skipped: true, subOrderId, status: subOrder.status };
     }
 
+    const totalQuantity = Number(subOrder.quantity || 1);
+    const deliveredCount = Number(subOrder.deliveredCount || 0);
+    const remainingQuantity = Math.max(0, totalQuantity - deliveredCount);
+    if (remainingQuantity <= 0) {
+      await this.prisma.subOrder.update({
+        where: { id: subOrder.id },
+        data: { status: 'DELIVERED' as any, deliveredCount: totalQuantity, lastError: null },
+      });
+      await this.recalculateOrderStatus(subOrder.parentOrderId);
+      return { success: true, skipped: true, subOrderId, status: 'DELIVERED' };
+    }
+
     const { links, context } = await this.buildProviderRoute(subOrder);
 
     if (!links.length) {
@@ -2069,7 +2097,7 @@ export class AdminCompatController {
 
     for (const link of links) {
       const provider = link.provider;
-      const totalCost = Number(link.costPrice || 0) * Number(subOrder.quantity || 1);
+      const totalCost = Number(link.costPrice || 0) * remainingQuantity;
       if (Number(provider.balance || 0) < totalCost) {
         lastError = `${provider.name}: bakiye yetersiz (${link.routeSource})`;
         await this.prisma.subOrder.update({
@@ -2107,14 +2135,17 @@ export class AdminCompatController {
           continue;
         }
 
-        const nextStatus = result.delivered ? 'DELIVERED' : 'PROCESSING';
+        const nextDeliveredCount = result.delivered ? Math.min(totalQuantity, deliveredCount + remainingQuantity) : deliveredCount;
+        const nextStatus = result.delivered
+          ? (nextDeliveredCount >= totalQuantity ? 'DELIVERED' : 'PARTIALLY_DELIVERED')
+          : 'PROCESSING';
         const transactionOps: any[] = [
           this.prisma.subOrder.update({
             where: { id: subOrder.id },
             data: {
               status: nextStatus as any,
               botProviderId: provider.id,
-              deliveredCount: result.delivered ? subOrder.quantity : subOrder.deliveredCount,
+              deliveredCount: nextDeliveredCount,
               deliveryNote: this.providerRouteNote(provider.name, result.externalRef, result.status, link.routeSource, attempts, links.length),
             },
           }),
@@ -2273,6 +2304,29 @@ export class AdminCompatController {
       });
       updatedSubOrders.push(updated);
       deliveredCodes.push(...result.codes.map((item) => item.code));
+
+      if (!fullyDelivered) {
+        const hasActiveProvider = await this.prisma.productProvider.count({
+          where: {
+            productId: subOrder.productId,
+            isActive: true,
+            provider: { status: 'ACTIVE' as any },
+          },
+        });
+        if (hasActiveProvider > 0) {
+          const routeResult = await this.routeSubOrderToConfiguredProvider(subOrder.id).catch((error) => {
+            errors.push(error?.message || 'Kalan miktar tedarikciye yonlendirilemedi');
+            return null;
+          });
+          if (routeResult?.success) {
+            const refreshed = await this.prisma.subOrder.findUnique({
+              where: { id: subOrder.id },
+              include: { parentOrder: true, product: true },
+            });
+            if (refreshed) updatedSubOrders.push(refreshed);
+          }
+        }
+      }
     }
 
     await this.recalculateOrderStatus(order.id);

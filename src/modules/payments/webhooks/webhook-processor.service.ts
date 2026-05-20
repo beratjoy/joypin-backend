@@ -5,6 +5,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
 import { StockDeliveryService } from '../../stocks/stock-delivery.service';
 import { ReferralsService } from '../../referrals/referrals.service';
+import { OrdersService } from '../../orders/orders.service';
 
 /**
  * Webhook Processor Service
@@ -31,6 +32,7 @@ export class WebhookProcessorService {
     private readonly mail: MailService,
     private readonly stockDelivery: StockDeliveryService,
     private readonly referrals: ReferralsService,
+    private readonly orders: OrdersService,
   ) {}
 
   // ═══════════════════════════════════════════════════════
@@ -335,49 +337,13 @@ export class WebhookProcessorService {
    * - MANUAL → staff pool'a düşür
    */
   private async triggerOrderAutomation(order: any): Promise<void> {
+    if ((order.subOrders || []).some((subOrder: any) => subOrder.deliveryType === 'EPIN')) {
+      await this.orders.autoFulfillPaidEpinOrder(order.id);
+    }
+
     for (const subOrder of order.subOrders) {
       if (subOrder.deliveryType === 'EPIN') {
-        const result = await this.stockDelivery.allocateCodes({
-          productId: subOrder.productId,
-          quantity: subOrder.quantity,
-          userId: order.userId || undefined,
-          orderId: order.id,
-          subOrderId: subOrder.id,
-        });
-
-        if (!result.success) {
-          await this.prisma.subOrder.update({
-            where: { id: subOrder.id },
-            data: {
-              status: 'PENDING_STOCK',
-              lastError: result.error || 'Stoktan otomatik teslimat yapilamadi',
-              deliveryNote: result.error || 'Stok bekleniyor',
-            },
-          });
-          continue;
-        }
-
-        const now = new Date();
-        await this.prisma.$transaction([
-          this.prisma.subOrderItem.createMany({
-            data: result.codes.map((item) => ({
-              subOrderId: subOrder.id,
-              externalRef: item.code,
-              isDelivered: true,
-              deliveredAt: now,
-            })),
-          }),
-          this.prisma.subOrder.update({
-            where: { id: subOrder.id },
-            data: {
-              status: 'DELIVERED',
-              deliveredCount: subOrder.quantity,
-              unitCost: result.codes.length > 0 ? result.totalCost / result.codes.length : subOrder.unitCost,
-              deliveryNote: `${result.codes.length} adet e-pin stoktan otomatik teslim edildi`,
-              lastError: null,
-            },
-          }),
-        ]);
+        continue;
       } else if (subOrder.deliveryType === 'API_TOPUP') {
         // Bot fallback zincirini tetikle
         await this.prisma.subOrder.update({

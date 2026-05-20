@@ -6,6 +6,7 @@ import { WalletsModule } from '../wallets/wallets.module';
 import { BotsModule } from '../bots/bots.module';
 import { StocksModule } from '../stocks/stocks.module';
 import { ReferralsModule } from '../referrals/referrals.module';
+import { SmartRouterService } from './smart-router.service';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { ReferralsModule } from '../referrals/referrals.module';
     ReferralsModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService],
-  exports: [OrdersService],
+  providers: [OrdersService, SmartRouterService],
+  exports: [OrdersService, SmartRouterService],
 })
 export class OrdersModule {}

@@ -17,6 +17,7 @@ import * as crypto from 'crypto';
 import { MailService } from '../mail/mail.service';
 import { StockDeliveryService } from '../stocks/stock-delivery.service';
 import { ReferralsService } from '../referrals/referrals.service';
+import { SmartRouterService } from './smart-router.service';
 
 // ─── Shared Types ────────────────────────────────────────────
 interface OrderItemInput {
@@ -37,6 +38,7 @@ export class OrdersService {
     private readonly mail: MailService,
     private readonly stockDelivery: StockDeliveryService,
     private readonly referrals: ReferralsService,
+    private readonly smartRouter: SmartRouterService,
   ) {}
 
   private normalizeTenantHost(host?: string | null) {
@@ -284,7 +286,7 @@ export class OrdersService {
     return order;
   }
 
-  private async autoFulfillPaidEpinOrder(orderId: string) {
+  async autoFulfillPaidEpinOrder(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -305,7 +307,8 @@ export class OrdersService {
       if (subOrder.deliveryType !== 'EPIN') continue;
       if (['DELIVERED', 'CANCELLED', 'REFUNDED'].includes(subOrder.status)) continue;
 
-      const alreadyDelivered = subOrder.items.filter((item) => item.isDelivered).length;
+      const deliveredItems = subOrder.items.filter((item) => item.isDelivered).length;
+      const alreadyDelivered = Math.max(Number(subOrder.deliveredCount || 0), deliveredItems);
       if (alreadyDelivered >= subOrder.quantity) {
         await this.prisma.subOrder.update({
           where: { id: subOrder.id },
@@ -320,9 +323,15 @@ export class OrdersService {
         userId: order.userId || undefined,
         orderId: order.id,
         subOrderId: subOrder.id,
+        allowPartial: true,
       });
 
-      if (!result.success) {
+      if (!result.success || result.codes.length === 0) {
+        const hasProvider = await this.hasActiveProvider(subOrder.productId);
+        if (hasProvider) {
+          await this.routeRemainingToProvider(order, subOrder, subOrder.quantity - alreadyDelivered);
+          continue;
+        }
         await this.prisma.subOrder.update({
           where: { id: subOrder.id },
           data: {
@@ -353,11 +362,16 @@ export class OrdersService {
           deliveredCount: nextDeliveredCount,
           unitCost: result.codes.length > 0 ? result.totalCost / result.codes.length : subOrder.unitCost,
           deliveryNote: `${result.codes.length} adet e-pin stoktan otomatik teslim edildi`,
-          lastError: null,
+          lastError: fullyDelivered ? null : `${subOrder.quantity - nextDeliveredCount} adet API/tedarikci teslimati bekliyor`,
         },
       });
 
       deliveredCodes.push(...result.codes.map((item) => item.code));
+
+      const remainingAfterStock = subOrder.quantity - nextDeliveredCount;
+      if (remainingAfterStock > 0 && (await this.hasActiveProvider(subOrder.productId))) {
+        await this.routeRemainingToProvider(order, subOrder, remainingAfterStock);
+      }
     }
 
     await this.recalculateParentStatus(order.id);
@@ -374,6 +388,36 @@ export class OrdersService {
       }).catch((error) => {
         this.logger.warn(`[Mail] Auto delivery email skipped for ${order.id}: ${error instanceof Error ? error.message : error}`);
       });
+    }
+  }
+
+  private async hasActiveProvider(productId: string): Promise<boolean> {
+    const count = await this.prisma.productProvider.count({
+      where: {
+        productId,
+        isActive: true,
+        provider: { status: 'ACTIVE' as any },
+      },
+    });
+    return count > 0;
+  }
+
+  private async routeRemainingToProvider(order: any, subOrder: any, quantity: number) {
+    const remaining = Math.max(0, Number(quantity || 0));
+    if (remaining <= 0) return;
+
+    const result = await this.smartRouter.fulfillOrder({
+      subOrderId: subOrder.id,
+      productId: subOrder.productId,
+      quantity: remaining,
+      topupFieldData: (subOrder.topupFieldData || {}) as Record<string, string>,
+      orderId: order.id,
+    });
+
+    if (!result.success) {
+      this.logger.warn(
+        `[AutoDelivery] Remaining provider route failed for ${subOrder.id}: ${result.error || 'unknown error'}`,
+      );
     }
   }
 
