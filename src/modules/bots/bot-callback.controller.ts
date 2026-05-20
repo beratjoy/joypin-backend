@@ -11,6 +11,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiSecurity, ApiBody } from '@nestj
 import { Throttle } from '@nestjs/throttler';
 import { BotCallbackGuard } from './bot-callback.guard';
 import { BotCallbackService, BotCallbackDto } from './bot-callback.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 /**
  * ═══════════════════════════════════════════════════════════════
@@ -45,6 +46,7 @@ export class BotCallbackController {
    */
   @Post('callback')
   @HttpCode(HttpStatus.OK)
+  @Public()
   @UseGuards(BotCallbackGuard)
   @Throttle({ medium: { limit: 30, ttl: 10_000 } })
   @ApiSecurity('BotCallbackKey')
@@ -112,6 +114,7 @@ export class BotCallbackController {
    */
   @Post('status')
   @HttpCode(HttpStatus.OK)
+  @Public()
   @UseGuards(BotCallbackGuard)
   @ApiSecurity('BotCallbackKey')
   @ApiOperation({
