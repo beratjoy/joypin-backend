@@ -112,9 +112,45 @@ export class DealerApiController {
     return Math.max(0, Math.round(price * 100) / 100);
   }
 
-  private mapProduct(product: any, user: DealerApiUser) {
+  private normalizeDealerWalletCurrency(value?: string | null) {
+    const currency = String(value || '').trim().toUpperCase();
+    return currency === 'USD' ? 'USD' : 'TRY';
+  }
+
+  private async getExchangeRate(fromCurrency: string, toCurrency: string) {
+    const supported = new Set(['TRY', 'USD', 'EUR', 'GBP', 'AED', 'SAR']);
+    const requestedFrom = String(fromCurrency || '').trim().toUpperCase();
+    const requestedTo = String(toCurrency || '').trim().toUpperCase();
+    const from = (supported.has(requestedFrom) ? requestedFrom : 'TRY') as any;
+    const to = (supported.has(requestedTo) ? requestedTo : 'TRY') as any;
+    if (from === to) return 1;
+
+    const direct = await this.prisma.exchangeRate.findUnique({
+      where: { fromCurrency_toCurrency: { fromCurrency: from, toCurrency: to } },
+    });
+    if (direct) return Number(direct.rate || 1);
+
+    const reverse = await this.prisma.exchangeRate.findUnique({
+      where: { fromCurrency_toCurrency: { fromCurrency: to, toCurrency: from } },
+    });
+    if (reverse && Number(reverse.rate || 0) > 0) return 1 / Number(reverse.rate);
+
+    if (from === 'TRY' && to === 'USD') return 1 / 32.45;
+    if (from === 'USD' && to === 'TRY') return 32.45;
+    return 1;
+  }
+
+  private roundMoney(value: number) {
+    return Math.round(Number(value || 0) * 10000) / 10000;
+  }
+
+  private async mapProduct(product: any, user: DealerApiUser) {
     const pricing = product.dealerGroupPricings?.[0] || null;
-    const dealerPrice = this.calculateDealerUnitPrice(product, user.dealerGroup, pricing);
+    const targetCurrency = this.normalizeDealerWalletCurrency(user.wallet?.currency || 'TRY');
+    const productCurrency = String(product.baseCurrency || 'TRY').toUpperCase();
+    const rate = await this.getExchangeRate(productCurrency, targetCurrency);
+    const dealerPrice = this.roundMoney(this.calculateDealerUnitPrice(product, user.dealerGroup, pricing) * rate);
+    const unitCost = this.roundMoney(Number(product.baseCost || 0) * rate);
     const fields = [
       ...(Array.isArray(product.customInputFields) ? product.customInputFields : []),
       ...(product.topupFields || []).map((field: any) => ({
@@ -137,8 +173,9 @@ export class DealerApiController {
         slug: product.category.slug,
       } : null,
       type: product.type,
-      currency: product.baseCurrency || 'TRY',
+      currency: targetCurrency,
       price: dealerPrice,
+      unitCost,
       stock: product.hasInfiniteStock ? null : product.stockCount,
       inStock: product.hasInfiniteStock || Number(product.stockCount || 0) > 0,
       imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
@@ -248,7 +285,7 @@ export class DealerApiController {
       page: currentPage,
       limit: take,
       count: products.length,
-      products,
+      products: await Promise.all(products),
     };
   }
 
@@ -262,7 +299,7 @@ export class DealerApiController {
     const product = await this.getDealerProduct(user, productId, body.tenantId, body.country);
     if (!product) throw new NotFoundException('Urun bulunamadi veya bayi hesabina kapali');
 
-    const mappedProduct = this.mapProduct(product, user);
+    const mappedProduct = await this.mapProduct(product, user);
     const fields = body.fields && typeof body.fields === 'object' ? body.fields : {};
     const missing = mappedProduct.requiredFields
       .filter((field: any) => field.required)
@@ -287,7 +324,7 @@ export class DealerApiController {
         productId: product.id,
         quantity,
         unitPrice: mappedProduct.price,
-        unitCost: Number(product.baseCost || 0),
+        unitCost: Number((mappedProduct as any).unitCost || 0),
         deliveryType: product.type === 'TOPUP' ? DeliveryType.API_TOPUP : DeliveryType.EPIN,
         topupFieldData: product.type === 'TOPUP' ? fields : undefined,
       }],

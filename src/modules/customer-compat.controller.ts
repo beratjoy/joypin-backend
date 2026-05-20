@@ -60,6 +60,55 @@ export class CustomerCompatController {
     return user?.role === 'RESELLER' || user?.role === 'DEALER' || Boolean(user?.dealerGroupId);
   }
 
+  private normalizeDealerWalletCurrency(value?: string | null) {
+    const currency = String(value || '').trim().toUpperCase();
+    return currency === 'USD' ? 'USD' : 'TRY';
+  }
+
+  private dealerWalletCurrencies() {
+    return ['TRY', 'USD'];
+  }
+
+  private async getExchangeRate(fromCurrency: string, toCurrency: string) {
+    const supported = new Set(['TRY', 'USD', 'EUR', 'GBP', 'AED', 'SAR']);
+    const requestedFrom = String(fromCurrency || '').trim().toUpperCase();
+    const requestedTo = String(toCurrency || '').trim().toUpperCase();
+    const from = (supported.has(requestedFrom) ? requestedFrom : 'TRY') as any;
+    const to = (supported.has(requestedTo) ? requestedTo : 'TRY') as any;
+    if (from === to) return 1;
+
+    const direct = await this.prisma.exchangeRate.findUnique({
+      where: { fromCurrency_toCurrency: { fromCurrency: from, toCurrency: to } },
+    });
+    if (direct) return Number(direct.rate || 1);
+
+    const reverse = await this.prisma.exchangeRate.findUnique({
+      where: { fromCurrency_toCurrency: { fromCurrency: to, toCurrency: from } },
+    });
+    if (reverse && Number(reverse.rate || 0) > 0) return 1 / Number(reverse.rate);
+
+    if (from === 'TRY' && to === 'USD') return 1 / 32.45;
+    if (from === 'USD' && to === 'TRY') return 32.45;
+    return 1;
+  }
+
+  private roundWalletAmount(value: number) {
+    return Math.round(Number(value || 0) * 10000) / 10000;
+  }
+
+  private walletBalanceFields() {
+    return [
+      ['balanceCurrent', 'CURRENT'],
+      ['balanceBonus', 'BONUS'],
+      ['balanceWithdrawable', 'WITHDRAWABLE'],
+      ['balanceCredit', 'CREDIT'],
+      ['balanceFrozen', 'FROZEN'],
+      ['balanceLottery', 'LOTTERY'],
+      ['balanceCashback', 'CASHBACK'],
+      ['balanceCommission', 'COMMISSION'],
+    ] as const;
+  }
+
   private mapTopupFields(product: any) {
     const fields = [
       ...(Array.isArray(product?.customInputFields) ? product.customInputFields : []),
@@ -523,7 +572,7 @@ export class CustomerCompatController {
     const tenant = await this.resolveTenantFromRequest(req);
     const user = await this.prisma.user.findUnique({
       where: { id: req.user.id },
-      include: { dealerGroup: true },
+      include: { dealerGroup: true, wallet: true },
     }) as any;
 
     if (!user || !(user.role === 'RESELLER' || user.role === 'DEALER' || user.dealerGroupId)) {
@@ -557,10 +606,13 @@ export class CustomerCompatController {
       .filter((product: any) => this.visibleForCountry(product, country))
       .filter((product: any) => !product.stockRestrictions?.some((restriction: any) => restriction.isBlocked));
 
-    const mappedProducts = visibleProducts.map((product: any) => {
+    const targetCurrency = this.normalizeDealerWalletCurrency(user.wallet?.currency || user.preferredCurrency || 'TRY');
+    const mappedProducts = await Promise.all(visibleProducts.map(async (product: any) => {
       const pricing = product.dealerGroupPricings?.[0] || null;
-      const basePrice = Number(product.fixedPrice || product.baseCost || 0);
-      const dealerPrice = this.calculateDealerUnitPrice(product, user.dealerGroup, pricing);
+      const productCurrency = String(product.baseCurrency || 'TRY').toUpperCase();
+      const rate = await this.getExchangeRate(productCurrency, targetCurrency);
+      const basePrice = this.roundWalletAmount(Number(product.fixedPrice || product.baseCost || 0) * rate);
+      const dealerPrice = this.roundWalletAmount(this.calculateDealerUnitPrice(product, user.dealerGroup, pricing) * rate);
       return {
         id: product.id,
         name: product.name,
@@ -572,7 +624,7 @@ export class CustomerCompatController {
         categoryImageUrl: product.category?.imageUrl || null,
         categoryLogoUrl: product.category?.logoUrl || null,
         type: product.type,
-        currency: product.baseCurrency || 'TRY',
+        currency: targetCurrency,
         basePrice,
         dealerPrice,
         discountPercent: basePrice > 0 ? Math.max(0, Math.round((1 - dealerPrice / basePrice) * 10000) / 100) : 0,
@@ -582,7 +634,7 @@ export class CustomerCompatController {
         imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
         requiredFields: this.mapTopupFields(product),
       };
-    });
+    }));
 
     const categoryMap = new Map<string, any>();
     for (const product of mappedProducts) {
@@ -658,6 +710,7 @@ export class CustomerCompatController {
       success: true,
       wallet: {
         currency: wallet.currency || user.preferredCurrency || 'TRY',
+        supportedCurrencies: this.dealerWalletCurrencies(),
         balanceCurrent: Number(wallet.balanceCurrent || 0),
         balanceBonus: Number(wallet.balanceBonus || 0),
         balanceCashback: Number(wallet.balanceCashback || 0),
@@ -703,6 +756,85 @@ export class CustomerCompatController {
     };
   }
 
+  @Patch('dealer-wallet-currency')
+  async updateDealerWalletCurrency(@Req() req: any, @Body() body: any) {
+    const tenant = await this.resolveTenantFromRequest(req);
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { dealerGroup: true, wallet: true },
+    }) as any;
+    if (!this.isDealerUser(user)) return { success: false, message: 'Bayi hesabi bulunamadi' };
+
+    const targetCurrency = this.normalizeDealerWalletCurrency(body.currency);
+    if (!this.dealerWalletCurrencies().includes(targetCurrency)) {
+      return { success: false, message: 'Sadece TRY veya USD cüzdan seçilebilir.' };
+    }
+
+    const wallet = await this.prisma.wallet.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, currency: targetCurrency as any },
+    }) as any;
+    const currentCurrency = this.normalizeDealerWalletCurrency(wallet.currency || user.preferredCurrency || 'TRY');
+
+    if (currentCurrency === targetCurrency) {
+      await this.prisma.user.update({ where: { id: user.id }, data: { preferredCurrency: targetCurrency as any } });
+      return {
+        success: true,
+        message: `Cüzdan para birimi zaten ${targetCurrency}.`,
+        wallet: { currency: targetCurrency },
+      };
+    }
+
+    const rate = await this.getExchangeRate(currentCurrency, targetCurrency);
+    const convertedData: Record<string, number> = {};
+    for (const [column] of this.walletBalanceFields()) {
+      convertedData[column] = this.roundWalletAmount(Number(wallet[column] || 0) * rate);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { preferredCurrency: targetCurrency as any },
+      });
+      await tx.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          currency: targetCurrency as any,
+          ...convertedData,
+        } as any,
+      });
+
+      for (const [column, balanceField] of this.walletBalanceFields()) {
+        const before = Number(wallet[column] || 0);
+        const after = Number(convertedData[column] || 0);
+        if (before === 0 && after === 0) continue;
+        await tx.walletTransaction.create({
+          data: {
+            tenantId: tenant?.id || null,
+            walletId: wallet.id,
+            type: 'TRANSFER',
+            balanceField: balanceField as any,
+            amount: after,
+            balanceAfter: after,
+            description: `Cüzdan para birimi ${currentCurrency} -> ${targetCurrency} olarak değiştirildi. Eski tutar: ${before.toFixed(4)} ${currentCurrency}`,
+            referenceType: 'wallet_currency',
+            referenceId: `${currentCurrency}-${targetCurrency}`,
+          } as any,
+        });
+      }
+    });
+
+    return {
+      success: true,
+      message: `Cüzdan para birimi ${targetCurrency} olarak güncellendi.`,
+      wallet: {
+        currency: targetCurrency,
+        ...convertedData,
+      },
+    };
+  }
+
   @Post('dealer-deposits')
   async createDealerDeposit(@Req() req: any, @Body() body: any) {
     const tenant = await this.resolveTenantFromRequest(req);
@@ -719,7 +851,7 @@ export class CustomerCompatController {
       return { success: false, message: 'Kripto bakiye yukleme bu bayi grubu icin kapali' };
     }
     const gateway = isCrypto ? 'CRYPTOMUS' : 'BANK_TRANSFER';
-    const currency = body.currency || user.wallet?.currency || user.preferredCurrency || 'TRY';
+    const currency = this.normalizeDealerWalletCurrency(body.currency || user.wallet?.currency || user.preferredCurrency || 'TRY');
     const deposit = await this.prisma.paymentTransaction.create({
       data: {
         tenantId: tenant?.id || null,
