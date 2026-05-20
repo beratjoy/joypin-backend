@@ -145,6 +145,11 @@ export class DealerApiController {
   }
 
   private async mapProduct(product: any, user: DealerApiUser) {
+    const metadata = product.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+      ? product.metadata as Record<string, any>
+      : {};
+    const regionLabel = String(metadata.regionLabel || '').trim() || null;
+    const regionCode = String(metadata.regionCode || '').trim().toUpperCase() || null;
     const pricing = product.dealerGroupPricings?.[0] || null;
     const targetCurrency = this.normalizeDealerWalletCurrency(user.wallet?.currency || 'TRY');
     const productCurrency = String(product.baseCurrency || 'TRY').toUpperCase();
@@ -179,6 +184,9 @@ export class DealerApiController {
       stock: product.hasInfiniteStock ? null : product.stockCount,
       inStock: product.hasInfiniteStock || Number(product.stockCount || 0) > 0,
       imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
+      regionLabel,
+      regionCode,
+      region: regionLabel || regionCode ? { label: regionLabel, code: regionCode } : null,
       requiredFields: fields.map((field: any) => ({
         key: field.key || field.fieldKey,
         label: field.label || field.fieldLabel || field.key || field.fieldKey,

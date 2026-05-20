@@ -608,6 +608,9 @@ export class CustomerCompatController {
 
     const targetCurrency = this.normalizeDealerWalletCurrency(user.wallet?.currency || user.preferredCurrency || 'TRY');
     const mappedProducts = await Promise.all(visibleProducts.map(async (product: any) => {
+      const metadata = product.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+        ? product.metadata as Record<string, any>
+        : {};
       const pricing = product.dealerGroupPricings?.[0] || null;
       const productCurrency = String(product.baseCurrency || 'TRY').toUpperCase();
       const rate = await this.getExchangeRate(productCurrency, targetCurrency);
@@ -632,6 +635,8 @@ export class CustomerCompatController {
         stockLabel: product.hasInfiniteStock ? 'Sinirsiz' : String(product.stockCount || 0),
         inStock: product.hasInfiniteStock || product.stockCount > 0,
         imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
+        regionLabel: String(metadata.regionLabel || '').trim() || null,
+        regionCode: String(metadata.regionCode || '').trim().toUpperCase() || null,
         requiredFields: this.mapTopupFields(product),
       };
     }));

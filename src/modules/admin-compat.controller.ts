@@ -102,6 +102,29 @@ export class AdminCompatController {
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
   }
 
+  private productRegionLabel(product: any) {
+    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+      ? product.metadata as Record<string, any>
+      : {};
+    return {
+      regionLabel: String(metadata.regionLabel || '').trim(),
+      regionCode: String(metadata.regionCode || '').trim().toUpperCase(),
+    };
+  }
+
+  private shouldUpdateProductRegionLabel(body: any) {
+    return body.regionLabel !== undefined || body.regionCode !== undefined;
+  }
+
+  private productRegionLabelMetadataFromBody(body: any) {
+    const regionLabel = String(body.regionLabel || '').trim();
+    const regionCode = String(body.regionCode || '').trim().toUpperCase();
+    return {
+      regionLabel: regionLabel || null,
+      regionCode: regionCode || null,
+    };
+  }
+
   private isTenantScoped(tenantId?: string) {
     return Boolean(tenantId && tenantId !== 'all');
   }
@@ -4458,6 +4481,7 @@ export class AdminCompatController {
       sliderImage: product.sliderImageUrl,
       isExportable: true,
       siteContent: (product.metadata as any)?.siteContent || {},
+      ...this.productRegionLabel(product),
       seoTitle: product.seoTitle,
       seoDescription: product.seoDescription,
       seoKeywords: product.seoKeywords,
@@ -5234,6 +5258,10 @@ export class AdminCompatController {
     let productSlug = productSlugBase;
     const existingBySlug = await this.prisma.product.findUnique({ where: { slug: productSlug } }).catch(() => null);
     if (existingBySlug) productSlug = `${productSlugBase}-${providerProduct.ProductId}`;
+    const providerRegions = Array.isArray(providerProduct.RegionList)
+      ? providerProduct.RegionList.map((item: any) => String(item || '').trim()).filter(Boolean)
+      : [];
+    const providerRegionLabel = providerRegions.join(', ');
     const product = await this.prisma.product.create({
       data: {
         name: body.name || providerProduct.ProductName,
@@ -5276,6 +5304,8 @@ export class AdminCompatController {
           providerSlug: providerProduct.Slug || null,
           regionList: providerProduct.RegionList || null,
           platformList: providerProduct.PlatformList || null,
+          regionLabel: providerRegionLabel || null,
+          regionCode: providerRegions.length === 1 ? providerRegions[0].toUpperCase() : null,
         },
       },
     });
@@ -5598,9 +5628,10 @@ export class AdminCompatController {
   @Post('products')
   async createProduct(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
-    const metadata = body.siteContent && typeof body.siteContent === 'object'
-      ? { siteContent: body.siteContent }
-      : undefined;
+    const metadata = {
+      ...(body.siteContent && typeof body.siteContent === 'object' ? { siteContent: body.siteContent } : {}),
+      ...this.productRegionLabelMetadataFromBody(body),
+    };
     return this.prisma.product.create({
       data: {
         name: body.name,
@@ -5635,12 +5666,20 @@ export class AdminCompatController {
   async updateProduct(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
     return this.prisma.$transaction(async (tx) => {
-      const existing = body.siteContent !== undefined
+      const shouldUpdateMetadata = body.siteContent !== undefined || this.shouldUpdateProductRegionLabel(body);
+      const existing = shouldUpdateMetadata
         ? await tx.product.findUnique({ where: { id }, select: { metadata: true } })
         : null;
       const existingMetadata = existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
         ? existing.metadata as Record<string, any>
         : {};
+      const nextMetadata = shouldUpdateMetadata
+        ? ({
+            ...existingMetadata,
+            ...(body.siteContent !== undefined ? { siteContent: body.siteContent || {} } : {}),
+            ...(this.shouldUpdateProductRegionLabel(body) ? this.productRegionLabelMetadataFromBody(body) : {}),
+          } as any)
+        : undefined;
       const product = await tx.product.update({
         where: { id },
         data: {
@@ -5662,7 +5701,7 @@ export class AdminCompatController {
           iconUrl: body.imageUrl,
           merchantImageUrl: body.marketingImage,
           sliderImageUrl: body.sliderImage,
-          metadata: body.siteContent !== undefined ? ({ ...existingMetadata, siteContent: body.siteContent || {} } as any) : undefined,
+          metadata: nextMetadata,
           seoTitle: body.seoTitle,
           seoDescription: body.seoDescription,
           seoKeywords: body.seoKeywords,
