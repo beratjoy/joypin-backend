@@ -733,7 +733,9 @@ export class AdminCompatController {
   }
 
   private localSeoContent(input: any) {
-    const brand = String(input.brandName || 'Epin365').trim() || 'Epin365';
+    const brand = String(input.brandName || '').trim();
+    const brandSuffix = brand ? ` | ${brand}` : '';
+    const brandPhrase = brand ? `${brand} üzerinden` : 'hesabınızdan';
     const name = String(input.name || input.title || '').trim();
     const category = String(input.categoryName || input.category || '').trim();
     const entityType = String(input.entityType || 'PRODUCT').toUpperCase();
@@ -746,14 +748,14 @@ export class AdminCompatController {
     const subject = name || category || 'Dijital ürün';
     const isTopup = productType === 'TOPUP' || requiredFields.length > 0;
     const title = entityType === 'CATEGORY'
-      ? `${subject} Ürünleri ve Fiyatları | ${brand}`
-      : `${subject} Satın Al | ${brand}`;
+      ? `${subject} Ürünleri ve Fiyatları${brandSuffix}`
+      : `${subject} Satın Al${brandSuffix}`;
     const description = entityType === 'CATEGORY'
-      ? `${subject} kategorisindeki dijital ürünleri güvenli ödeme, güncel fiyat ve kolay sipariş takibiyle ${brand} üzerinden inceleyin.`
-      : `${subject} için güvenli ödeme, kolay sipariş takibi ve destek avantajıyla ${brand} üzerinden hızlıca sipariş oluşturun.`;
+      ? `${subject} kategorisindeki dijital ürünleri güvenli ödeme, güncel fiyat ve kolay sipariş takibiyle inceleyin.`
+      : `${subject} için güvenli ödeme, kolay sipariş takibi ve destek seçenekleriyle hızlıca sipariş oluşturun.`;
     const body = entityType === 'CATEGORY'
-      ? `<p><strong>${subject}</strong> kategorisinde oyun kredileri, dijital kodlar ve top-up ürünlerini tek ekranda inceleyebilirsiniz. ${brand}, sipariş sürecini anlaşılır tutar; fiyat, stok ve teslimat durumlarını panelden takip etmenizi sağlar.</p><p>Satın almadan önce ürün açıklamalarını, bölge bilgisini ve istenen hesap bilgilerini kontrol etmeniz önerilir.</p>`
-      : `<p><strong>${subject}</strong>${category ? `, ${category} kategorisinde` : ''} güvenli sipariş deneyimi için hazırlanmış dijital bir üründür. ${isTopup ? `Sipariş sırasında ${fieldText || 'oyuncu bilgileri'} gibi gerekli bilgileri doğru girmeniz gerekir.` : 'Teslim edilen kod veya ürün bilgileri sipariş detayınızda görüntülenir.'}</p><p>${brand} üzerinden ödeme durumunu, teslimat sürecini ve sipariş geçmişini hesabınızdan takip edebilirsiniz. Ürün bölgesi, platformu ve kullanım koşullarını satın almadan önce kontrol edin.</p>`;
+      ? `<p><strong>${subject}</strong> kategorisinde oyun kredileri, dijital kodlar ve top-up ürünlerini tek ekranda inceleyebilirsiniz. Sipariş süreci anlaşılır tutulur; fiyat, stok ve teslimat durumlarını panelden takip edebilirsiniz.</p><p>Satın almadan önce ürün açıklamalarını, bölge bilgisini ve istenen hesap bilgilerini kontrol etmeniz önerilir.</p>`
+      : `<p><strong>${subject}</strong>${category ? `, ${category} kategorisinde` : ''} güvenli sipariş deneyimi için hazırlanmış dijital bir üründür. ${isTopup ? `Sipariş sırasında ${fieldText || 'oyuncu bilgileri'} gibi gerekli bilgileri doğru girmeniz gerekir.` : 'Teslim edilen kod veya ürün bilgileri sipariş detayınızda görüntülenir.'}</p><p>Ödeme durumunu, teslimat sürecini ve sipariş geçmişini ${brandPhrase} takip edebilirsiniz. Ürün bölgesi, platformu ve kullanım koşullarını satın almadan önce kontrol edin.</p>`;
     const baseKeywords = entityType === 'CATEGORY'
       ? [subject, `${subject} ürünleri`, `${subject} fiyatları`, brand, 'epin', 'oyun kodu']
       : [subject, `${subject} satın al`, `${subject} fiyat`, category, brand, isTopup ? 'top up' : 'epin', 'dijital ürün'];
@@ -784,12 +786,18 @@ export class AdminCompatController {
     if (!apiKey) return { ...fallback, provider: 'local' };
     try {
       const prompt = [
-        'Sen Epin365 için çalışan kıdemli bir Türkçe SEO ve e-ticaret içerik uzmanısın.',
-        'Görevin ürün/kategori içeriği üretmek. Sadece verilen verileri kullan; fiyat, stok, teslimat süresi, resmi partnerlik, garanti veya kampanya uydurma.',
-        'Metin özgün, net, satışa yardımcı ve SEO uyumlu olsun. Rakip marka adı kullanma. Abartılı kesin vaatlerden kaçın.',
-        'Top-up ürünlerde istenen oyuncu bilgilerini doğru girme uyarısı ekle. E-pin ürünlerde kod teslimatını anlat.',
-        'seoTitle en fazla 70 karakter, seoDescription en fazla 160 karakter olmalı.',
-        'Cevabı sadece geçerli JSON olarak döndür: description, shortDescription, seoTitle, seoDescription, seoKeywords, faq alanları olsun.',
+        'ROL: Sen dijital oyun ürünleri, e-pin ve top-up e-ticareti için çalışan kıdemli Türkçe SEO stratejisti, ürün içerik editörü ve dönüşüm odaklı UX yazarıydın.',
+        'AMAÇ: Ürün veya kategori sayfası için Google uyumlu, kullanıcıya gerçekten fayda veren, satışa yardımcı ama abartısız içerik üret.',
+        'VERİ DİSİPLİNİ: Sadece kullanıcı girdisindeki ve fallback içeriğindeki gerçek verileri kullan. Fiyat, stok, teslimat süresi, garanti, resmi partnerlik, kampanya, indirim oranı, bölge uyumluluğu veya ödeme yöntemi uydurma.',
+        'MARKA/DOMAIN KURALI: brandName veya domain verilmemişse hiçbir marka, domain veya site adı yazma. Verilmişse markayı en fazla doğal bir yerde kullan; title içinde tekrarlama yapma.',
+        'ARAMA NİYETİ: Ürün adı, kategori, platform, bölge, ürün tipi ve requiredFields üzerinden ana kelime, uzun kuyruk kelime ve satın alma niyetini çıkar. Kelimeleri doğal kullan; keyword stuffing yapma.',
+        'TITLE KURALI: seoTitle açıklayıcı, sayfa içeriğiyle birebir uyumlu, benzersiz ve en fazla 70 karakter olmalı. Clickbait, şok edici dil, gereksiz ayraç ve tekrar yok.',
+        'META KURALI: seoDescription 120-160 karakter aralığında, net fayda anlatan, uydurma vaat içermeyen ve kullanıcıyı doğru beklentiyle tıklamaya çağıran bir cümle olsun.',
+        'AÇIKLAMA KURALI: description güvenli HTML döndürsün. Sadece p, h2, h3, ul, li, strong etiketlerini kullan. İlk paragraf ürünü/kategoriyi net tanımlasın; sonraki bölümde kullanım, doğru bilgi girişi, bölge/platform kontrolü ve sipariş takibi anlatılsın.',
+        'TOPUP/EPIN KURALI: TOPUP veya requiredFields varsa oyuncu ID/sunucu/bölge bilgisinin doğru girilmesi gerektiğini doğal şekilde yaz. EPIN ürünlerde kodun sipariş detayından görüntüleneceğini anlat.',
+        'GÜVEN KURALI: Kullanıcının satın almadan önce kontrol etmesi gerekenleri açıkla; yasal/marka iddiası, rakip karşılaştırması, "en ucuz", "kesin anında", "resmi partner" gibi kanıtlanmayan ifadeleri kullanma.',
+        'FAQ KURALI: 3-5 kısa SSS üret. Sorular gerçek kullanıcı aramalarına benzeyen doğal Türkçe sorular olsun.',
+        'ÇIKTI KURALI: Sadece geçerli JSON döndür. Markdown, açıklama veya kod bloğu yazma. Alanlar: description, shortDescription, seoTitle, seoDescription, seoKeywords, faq.',
       ].join('\n');
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -989,7 +997,7 @@ export class AdminCompatController {
     const content = await this.buildSeoContent({
       ...body,
       languageCode: body.languageCode || 'tr',
-      brandName: body.brandName || 'Epin365',
+      brandName: String(body.brandName || '').trim() || undefined,
     });
     return { success: true, ...content };
   }
@@ -1027,16 +1035,20 @@ export class AdminCompatController {
 
     try {
       const systemPrompt = [
-        'Sen Epin365 için çalışan kıdemli Türkçe SEO editörü, oyun gündemi analisti ve sosyal medya içerik stratejistisin.',
-        'Kaynaklardan gelen bilgileri sadece bağlam olarak kullan; cümleleri kopyalama, haber metnini yeniden yayımlama, telifli uzun alıntı yapma.',
-        'Kesin olmayan bilgileri kesinmiş gibi yazma. Fiyat, stok, resmi partnerlik, garanti, teslimat süresi veya kampanya uydurma.',
-        'Önce arama niyetini analiz et: bilgi arayan, satın alma niyeti olan ve kampanya arayan kelimeleri ayır.',
-        'Başlıkta ve H2lerde yüksek tıklama potansiyeli olan ama clickbait olmayan kelimeleri kullan.',
-        'İçerik Türkçe, özgün, güven veren, kullanıcıya faydalı ve e-ticaret dönüşümüne yardımcı olsun.',
-        'Top-up ürünlerde doğru oyuncu bilgisi uyarısı; e-pin ürünlerde sipariş/kod takibi uyarısı doğal şekilde yer alsın.',
-        'seoTitle 70 karakteri, seoDescription 160 karakteri geçmesin.',
-        'Sosyal medya metinleri platforma uygun kısa taslak olsun; otomatik paylaşım yapılmayacak, sadece taslak üretilecek.',
-        'Cevabı sadece geçerli JSON olarak döndür. Alanlar: title, slug, excerpt, contentHtml, seoTitle, seoDescription, keywords, keywordInsights, socialPosts.',
+        'ROL: Sen oyun gündemi, dijital ürün e-ticareti, e-pin/top-up SEO ve sosyal medya içerikleri konusunda kıdemli Türkçe editörsün.',
+        'ANA HEDEF: Okuyanın işini çözen, güven veren, özgün, Google için anlaşılır ve kullanıcı için gerçekten faydalı blog taslağı üret. İçerik sadece trafik çekmek için değil, kullanıcının sorusunu cevaplamak için yazılmalı.',
+        'KAYNAK KULLANIMI: sourceSnapshots sadece araştırma notudur. Kaynak cümlelerini kopyalama, haber metnini yeniden yayımlama, uzun alıntı yapma. Bir bilgi kaynaklarda yoksa veya inputta verilmemişse kesin bilgi gibi yazma.',
+        'UYDURMA YASAĞI: Fiyat, stok, kampanya, kupon, indirim oranı, teslimat süresi, resmi partnerlik, garanti, oyun içi etkinlik tarihi veya ödeme yöntemi uydurma. Kupon/kampanya bilgisi inputta yoksa genel ifade kullan.',
+        'ARAMA NİYETİ: Önce konuyu bilgi, satın alma, karşılaştırma, kampanya ve destek niyetlerine ayır. keywordInsights içinde her kelimeye score, intent ve reason ver. Satın alma niyeti yüksek kelimeleri doğal ve ölçülü kullan.',
+        'BAŞLIK STRATEJİSİ: title ve H2ler yüksek tıklama potansiyelli ama clickbait olmayan, açıklayıcı, abartısız ve konuya tam uygun olmalı. Şok edici, yanıltıcı veya kanıtsız üstünlük iddiaları kullanma.',
+        'SEO TITLE: En fazla 70 karakter. Ana kelime başa yakın olsun. Marka adı input/brandName ile verilmemişse marka kullanma.',
+        'META DESCRIPTION: 120-160 karakter. Kullanıcının ne öğreneceğini net anlatsın, sahte aciliyet veya kanıtsız vaat içermesin.',
+        'İÇERİK YAPISI: contentHtml içinde H1 kullanma; başlık alanı zaten ayrı. p, h2, h3, ul, li, strong etiketleriyle temiz HTML üret. İlk 2-3 cümle konunun cevabını versin, sonra detaylandır.',
+        'E-TİCARET BAĞLAMI: Top-up ürünlerde oyuncu ID/sunucu/bölge bilgisinin doğru girilmesi gerektiğini; e-pin ürünlerde kod/sipariş takibinin sipariş detayında kontrol edileceğini doğal şekilde anlat.',
+        'E-E-A-T/GÜVEN: Net, doğrulanabilir, dikkatli bir dil kullan. Kullanıcıya kontrol listesi, yanlış bilgi girişinden kaçınma ve güvenli ödeme/sipariş takibi gibi pratik değerler ver.',
+        'DİL: Türkçe, akıcı, modern, oyuncu odaklı ve profesyonel olsun. Gereksiz anahtar kelime tekrarı, dolgu paragrafı ve yapay pazarlama dili kullanma.',
+        'SOSYAL TASLAKLAR: socialPosts platforma uygun kısa ve paylaşılabilir taslaklar olsun; otomatik paylaşım yapılmayacak, sadece taslak üretilecek.',
+        'ÇIKTI: Sadece geçerli JSON döndür. Markdown, açıklama veya kod bloğu yazma. Alanlar: title, slug, excerpt, contentHtml, seoTitle, seoDescription, keywords, keywordInsights, socialPosts.',
         settings.blog_ai_editorial_prompt || '',
       ].filter(Boolean).join('\n');
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
