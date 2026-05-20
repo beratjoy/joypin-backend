@@ -60,6 +60,47 @@ export class CustomerCompatController {
     return user?.role === 'RESELLER' || user?.role === 'DEALER' || Boolean(user?.dealerGroupId);
   }
 
+  private mapTopupFields(product: any) {
+    const fields = [
+      ...(Array.isArray(product?.customInputFields) ? product.customInputFields : []),
+      ...(Array.isArray(product?.topupFields)
+        ? product.topupFields.map((field: any) => ({
+            key: field.fieldKey,
+            label: field.fieldLabel,
+            type: field.fieldType,
+            required: field.isRequired,
+            placeholder: field.placeholder,
+            options: field.options || null,
+          }))
+        : []),
+    ].map((field: any, index: number) => ({
+      key: String(field.key || field.fieldKey || `field_${index + 1}`).trim(),
+      label: String(field.label || field.fieldLabel || field.key || field.fieldKey || `Bilgi ${index + 1}`).trim(),
+      type: String(field.type || field.fieldType || 'text').toLowerCase() === 'number' ? 'number' : 'text',
+      required: field.required !== false && field.isRequired !== false,
+      placeholder: field.placeholder || null,
+      options: Array.isArray(field.options) ? field.options : null,
+    })).filter((field) => field.key);
+
+    if (String(product?.type || '').toUpperCase() === 'TOPUP' && fields.length === 0) {
+      return [{
+        key: 'player_id',
+        label: 'Oyuncu ID',
+        type: 'text',
+        required: true,
+        placeholder: 'Oyuncu ID giriniz',
+        options: null,
+      }];
+    }
+
+    const seen = new Set<string>();
+    return fields.filter((field) => {
+      if (seen.has(field.key)) return false;
+      seen.add(field.key);
+      return true;
+    });
+  }
+
   private mapBillingProfile(user: any) {
     const profile = user?.dealerBillingProfile || {};
     return {
@@ -501,6 +542,7 @@ export class CustomerCompatController {
       },
       include: {
         category: true,
+        topupFields: { orderBy: { sortOrder: 'asc' } },
         dealerGroupPricings: { where: { dealerGroupId, isActive: true } },
         stockRestrictions: { where: { dealerGroupId } },
       },
@@ -538,6 +580,7 @@ export class CustomerCompatController {
         stockLabel: product.hasInfiniteStock ? 'Sinirsiz' : String(product.stockCount || 0),
         inStock: product.hasInfiniteStock || product.stockCount > 0,
         imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
+        requiredFields: this.mapTopupFields(product),
       };
     });
 
