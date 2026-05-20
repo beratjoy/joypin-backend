@@ -88,25 +88,6 @@ export class StorefrontCompatController {
       : {};
   }
 
-  private productRegionMeta(product: any) {
-    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
-      ? product.metadata as Record<string, any>
-      : {};
-    const compatibleRegionCodes = Array.isArray(metadata.compatibleRegionCodes)
-      ? metadata.compatibleRegionCodes.map((code: any) => String(code || '').trim().toUpperCase()).filter(Boolean)
-      : [];
-    const productRegionCode = String(metadata.productRegionCode || '').trim().toUpperCase();
-
-    return {
-      productRegionCode: productRegionCode || null,
-      productRegionName: String(metadata.productRegionName || '').trim() || (productRegionCode === 'GLOBAL' ? 'Global' : null),
-      compatibleRegionCodes,
-      regionWarning: String(metadata.regionWarning || '').trim(),
-      regionCheckRequired: Boolean(metadata.regionCheckRequired),
-      blockMismatchedRegion: Boolean(metadata.blockMismatchedRegion),
-    };
-  }
-
   private toCdnUrl(pathname: string) {
     const cdnBase = (process.env.CDN_PUBLIC_URL || '').replace(/\/$/, '');
     return cdnBase && pathname.startsWith('/') ? `${cdnBase}${pathname}` : pathname;
@@ -305,7 +286,7 @@ export class StorefrontCompatController {
     }).catch(() => null);
 
     const products = await this.prisma.$queryRawUnsafe<any[]>(
-      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl", "allowedCountries", "tenantIds", metadata FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
+      'SELECT id, name, "shortName", slug, "fixedPrice", "baseCost", "marginPercent", "pricingModel", type, "iconUrl", "merchantImageUrl", "sliderImageUrl", "allowedCountries", "tenantIds" FROM products WHERE "categoryId" = $1 AND "isActive" = true ORDER BY "sortOrder" ASC, "createdAt" DESC',
       category.id,
     );
     const visibleProducts = products.filter((product: any) => this.visibleForCountry(product, country) && this.visibleForTenant(product, tenant?.id));
@@ -341,7 +322,6 @@ export class StorefrontCompatController {
           iconUrl: productImage,
           imageUrl: productImage,
           sliderImageUrl: sliderImage,
-          ...this.productRegionMeta(product),
         };
       }),
     };
@@ -377,7 +357,6 @@ export class StorefrontCompatController {
         inStock: product.hasInfiniteStock || product.stockCount > 0,
         stockType: product.hasInfiniteStock ? 'infinite' : 'manual',
         discount,
-        ...this.productRegionMeta(product),
       };
     });
   }
@@ -433,7 +412,6 @@ export class StorefrontCompatController {
       categorySlug: product.category?.slug || null,
       allowedCountries: product.allowedCountries || [],
       categoryAllowedCountries: product.category?.allowedCountries || [],
-      ...this.productRegionMeta(product),
       hasInfiniteStock: product.hasInfiniteStock,
       lowStockThreshold: product.lowStockThreshold,
       stockType: product.hasInfiniteStock ? 'infinite' : 'manual',
@@ -467,7 +445,6 @@ export class StorefrontCompatController {
           currency: item.baseCurrency || 'TRY',
           inStock: item.hasInfiniteStock || item.stockCount > 0,
           type: item.type,
-          ...this.productRegionMeta(item),
         };
       }),
     };

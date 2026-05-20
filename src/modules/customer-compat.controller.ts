@@ -51,24 +51,6 @@ export class CustomerCompatController {
     return countries.length === 0 || countries.includes(normalized);
   }
 
-  private productRegionMeta(product: any) {
-    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
-      ? product.metadata as Record<string, any>
-      : {};
-    const compatibleRegionCodes = Array.isArray(metadata.compatibleRegionCodes)
-      ? metadata.compatibleRegionCodes.map((code: any) => String(code || '').trim().toUpperCase()).filter(Boolean)
-      : [];
-    const productRegionCode = String(metadata.productRegionCode || '').trim().toUpperCase();
-    return {
-      productRegionCode: productRegionCode || null,
-      productRegionName: String(metadata.productRegionName || '').trim() || (productRegionCode === 'GLOBAL' ? 'Global' : null),
-      compatibleRegionCodes,
-      regionWarning: String(metadata.regionWarning || '').trim(),
-      regionCheckRequired: Boolean(metadata.regionCheckRequired),
-      blockMismatchedRegion: Boolean(metadata.blockMismatchedRegion),
-    };
-  }
-
   private maskApiKey(key: any) {
     if (!key) return null;
     return `${key.prefix}••••••••${key.keyLast4}`;
@@ -651,7 +633,6 @@ export class CustomerCompatController {
         inStock: product.hasInfiniteStock || product.stockCount > 0,
         imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
         requiredFields: this.mapTopupFields(product),
-        ...this.productRegionMeta(product),
       };
     }));
 
