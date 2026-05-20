@@ -88,6 +88,18 @@ export class StorefrontCompatController {
       : {};
   }
 
+  private categorySiteContent(category: any, tenantId?: string | null) {
+    const metadata = category?.metadata && typeof category.metadata === 'object' && !Array.isArray(category.metadata)
+      ? category.metadata
+      : {};
+    const siteContent = metadata?.siteContent && typeof metadata.siteContent === 'object'
+      ? metadata.siteContent
+      : {};
+    return tenantId && siteContent[tenantId] && typeof siteContent[tenantId] === 'object'
+      ? siteContent[tenantId]
+      : {};
+  }
+
   private productRegionLabel(product: any) {
     const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
       ? product.metadata as Record<string, any>
@@ -283,7 +295,7 @@ export class StorefrontCompatController {
     const tenant = await this.resolveTenant(host);
     const category = (
       await this.prisma.$queryRawUnsafe<any[]>(
-        'SELECT id, name, slug, description, "imageUrl", "logoUrl", layout, badges, "paymentMethods", "allowedCountries", "tenantIds", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
+        'SELECT id, name, slug, description, "richDescription", "seoTitle", "seoDescription", "seoKeywords", "faqItems", metadata, "imageUrl", "logoUrl", layout, badges, "paymentMethods", "allowedCountries", "tenantIds", "requiresUserId", "userIdLabel", "userIdPlaceholder", "zoneIdLabel" FROM product_categories WHERE slug = $1 AND "isActive" = true LIMIT 1',
         slug,
       )
     )[0];
@@ -300,12 +312,19 @@ export class StorefrontCompatController {
       category.id,
     );
     const visibleProducts = products.filter((product: any) => this.visibleForCountry(product, country) && this.visibleForTenant(product, tenant?.id));
+    const categoryContent = this.categorySiteContent(category, tenant?.id);
+    const categoryDescription = categoryContent.description || category.richDescription || category.description || '';
 
     return {
       id: category.id,
       slug: category.slug,
       name: category.name,
-      description: category.description || '',
+      description: categoryDescription,
+      seoTitle: categoryContent.seoTitle || category.seoTitle || null,
+      seoDescription: categoryContent.seoDescription || category.seoDescription || null,
+      seoKeywords: categoryContent.seoKeywords || category.seoKeywords || null,
+      richDescription: categoryDescription,
+      faqItems: category.faqItems || [],
       imageUrl: this.normalizeImageUrl(category.imageUrl, category.slug),
       logoUrl: this.normalizeImageUrl(category.logoUrl || category.imageUrl, category.slug),
       layout: category.layout || 'jollymax',

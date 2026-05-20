@@ -511,6 +511,10 @@ model ProductCategory {
   // SEO
   seoTitle       String? @db.VarChar(200)
   seoDescription String? @db.VarChar(500)
+  seoKeywords    String? @db.VarChar(500)
+  richDescription String?
+  faqItems       Json?
+  metadata       Json?
 
   products    Product[]
   paymentRestrictions CategoryPaymentRestriction[]

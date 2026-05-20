@@ -4386,6 +4386,12 @@ export class AdminCompatController {
       logoUrl: category.logoUrl || null,
       layout: category.layout || 'jollymax',
       description: category.description || '',
+      richDescription: category.richDescription || '',
+      seoTitle: category.seoTitle || '',
+      seoDescription: category.seoDescription || '',
+      seoKeywords: category.seoKeywords || '',
+      faqItems: category.faqItems || [],
+      siteContent: (category.metadata as any)?.siteContent || {},
       badges: category.badges || [],
       paymentMethods: category.paymentMethods || [],
       allowedCountries: category.allowedCountries || [],
@@ -4403,11 +4409,20 @@ export class AdminCompatController {
   @Post('categories')
   async createCategory(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const metadata = body.siteContent && typeof body.siteContent === 'object'
+      ? { siteContent: body.siteContent }
+      : {};
     const category = await this.prisma.productCategory.create({
       data: {
         name: body.name,
         slug: body.slug,
         description: body.description || null,
+        richDescription: body.richDescription || null,
+        seoTitle: body.seoTitle || null,
+        seoDescription: body.seoDescription || null,
+        seoKeywords: body.seoKeywords || null,
+        faqItems: Array.isArray(body.faqItems) ? body.faqItems : [],
+        metadata: metadata as any,
         imageUrl: body.imageUrl || null,
         logoUrl: body.logoUrl || null,
         layout: body.layout || 'jollymax',
@@ -4428,12 +4443,28 @@ export class AdminCompatController {
   @Patch('categories/:id')
   async updateCategory(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const shouldUpdateMetadata = body.siteContent !== undefined;
+    const existing = shouldUpdateMetadata
+      ? await this.prisma.productCategory.findUnique({ where: { id }, select: { metadata: true } })
+      : null;
+    const existingMetadata = existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+      ? existing.metadata as Record<string, any>
+      : {};
+    const nextMetadata = shouldUpdateMetadata
+      ? { ...existingMetadata, siteContent: body.siteContent && typeof body.siteContent === 'object' ? body.siteContent : {} }
+      : undefined;
     const category = await this.prisma.productCategory.update({
       where: { id },
       data: {
         name: body.name,
         slug: body.slug,
         description: body.description,
+        richDescription: body.richDescription,
+        seoTitle: body.seoTitle,
+        seoDescription: body.seoDescription,
+        seoKeywords: body.seoKeywords,
+        faqItems: body.faqItems,
+        metadata: nextMetadata as any,
         imageUrl: body.imageUrl,
         logoUrl: body.logoUrl,
         layout: body.layout,

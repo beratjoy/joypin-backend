@@ -1,0 +1,5 @@
+ALTER TABLE "product_categories"
+  ADD COLUMN IF NOT EXISTS "seoKeywords" VARCHAR(500),
+  ADD COLUMN IF NOT EXISTS "richDescription" TEXT,
+  ADD COLUMN IF NOT EXISTS "faqItems" JSONB,
+  ADD COLUMN IF NOT EXISTS "metadata" JSONB;
