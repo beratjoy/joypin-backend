@@ -11,6 +11,9 @@ export interface BotCallbackDto {
   codes?: string[];
   transactionRef?: string;
   message?: string;
+  staffNote?: string;
+  employeeNote?: string;
+  internalNote?: string;
   botProviderId?: string;
 }
 
@@ -47,6 +50,8 @@ export class BotCallbackService {
    * Bot'un gönderdiği e-pin kodlarını işle.
    */
   async processCallback(dto: BotCallbackDto): Promise<CallbackProcessResult> {
+    const staffNote = this.getStaffOnlyNote(dto);
+
     // 1. SubOrder doğrula
     const subOrder = await this.prisma.subOrder.findUnique({
       where: { id: dto.subOrderId },
@@ -70,6 +75,7 @@ export class BotCallbackService {
         data: {
           status: 'FAILED',
           lastError: dto.message || 'Bot reported failure',
+          adminNote: this.mergeStaffNote(subOrder.adminNote, staffNote),
         },
       });
 
@@ -137,6 +143,7 @@ export class BotCallbackService {
         status: dto.status === 'partial' ? 'PROCESSING' : 'DELIVERED',
         deliveredCount: { increment: deliveredCount },
         deliveryNote: dto.transactionRef ? `Bot ref: ${dto.transactionRef}` : undefined,
+        adminNote: this.mergeStaffNote(subOrder.adminNote, staffNote),
       },
     });
 
@@ -160,14 +167,34 @@ export class BotCallbackService {
     subOrderId: string,
     status: string,
     message?: string,
+    staffNote?: string,
   ): Promise<void> {
+    const subOrder = await this.prisma.subOrder.findUnique({
+      where: { id: subOrderId },
+      select: { adminNote: true },
+    });
+
     // SubOrder'a durum notu ekle
     await this.prisma.subOrder.update({
       where: { id: subOrderId },
       data: {
         lastError: message ? `[BOT STATUS: ${status}] ${message}` : undefined,
+        adminNote: this.mergeStaffNote(subOrder?.adminNote, staffNote),
       },
     });
+  }
+
+  private getStaffOnlyNote(dto: BotCallbackDto): string | undefined {
+    const raw = dto.staffNote || dto.employeeNote || dto.internalNote;
+    const note = String(raw || '').trim();
+    return note || undefined;
+  }
+
+  private mergeStaffNote(current?: string | null, incoming?: string): string | undefined {
+    if (!incoming) return current || undefined;
+    const line = `[BOT PERSONEL NOTU] ${incoming}`;
+    if (current?.includes(line)) return current;
+    return [current, line].filter(Boolean).join('\n');
   }
 
   /**

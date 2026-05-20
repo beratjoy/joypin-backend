@@ -73,6 +73,7 @@ export class BotCallbackController {
         codes: { type: 'array', items: { type: 'string' }, description: 'E-pin kodları (status=success ise zorunlu)', example: ['PUBG-UC-XXXX-YYYY', 'PUBG-UC-AAAA-BBBB'] },
         transactionRef: { type: 'string', description: 'Bot tarafındaki işlem referansı', example: 'BOT-TX-12345' },
         message: { type: 'string', description: 'Bot mesajı (hata veya bilgi)', example: 'E-pin başarıyla alındı' },
+        staffNote: { type: 'string', description: 'Sadece admin/personel panelinde gorunen bot notu', example: 'Oyuncu adi eslesti, teslimat onaylandi.' },
         botProviderId: { type: 'string', description: 'Hangi bot provider olduğunu belirtir (opsiyonel)' },
       },
     },
@@ -128,13 +129,14 @@ Bu endpoint opsiyoneldir — sadece progress tracking için kullanılır.`,
         subOrderId: { type: 'string', format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' },
         status: { type: 'string', description: 'Ara durum kodu', example: 'purchasing' },
         message: { type: 'string', description: 'Detay mesajı', example: 'Bot şu an satın alma işlemi yapıyor...' },
+        staffNote: { type: 'string', description: 'Sadece admin/personel panelinde gorunen ara durum notu', example: 'Captcha cikti, tekrar deneniyor.' },
       },
     },
   })
   @ApiResponse({ status: 200, description: 'Status update alındı' })
   @ApiResponse({ status: 401, description: 'X-Bot-Callback-Key eksik veya geçersiz' })
   async handleStatusUpdate(
-    @Body() body: { subOrderId: string; status: string; message?: string },
+    @Body() body: { subOrderId: string; status: string; message?: string; staffNote?: string; employeeNote?: string; internalNote?: string },
   ) {
     this.logger.log(
       `📋 Bot status update — SubOrder: ${body.subOrderId}, Status: ${body.status}`,
@@ -144,6 +146,7 @@ Bu endpoint opsiyoneldir — sadece progress tracking için kullanılır.`,
       body.subOrderId,
       body.status,
       body.message,
+      body.staffNote || body.employeeNote || body.internalNote,
     );
 
     return { success: true, received: true };
