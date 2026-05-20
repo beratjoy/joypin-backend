@@ -755,6 +755,16 @@ export class AdminCompatController {
     ).slice(0, 12).join(', ');
   }
 
+  private htmlWordCount(value: any) {
+    return String(value || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;|&amp;|&quot;|&#39;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(Boolean).length;
+  }
+
   private localSeoContent(input: any) {
     const brand = String(input.brandName || '').trim();
     const brandSuffix = brand ? ` | ${brand}` : '';
@@ -770,6 +780,10 @@ export class AdminCompatController {
       .join(', ');
     const subject = name || category || 'Dijital ürün';
     const isTopup = productType === 'TOPUP' || requiredFields.length > 0;
+    const regionText = String(input.regionLabel || input.regionCode || '').trim();
+    const fieldSentence = isTopup
+      ? `Bu ürün top-up akışında çalıştığı için sipariş sırasında ${fieldText || 'oyuncu ID, sunucu veya bölge bilgisi'} gibi alanların eksiksiz ve doğru girilmesi gerekir. Yanlış ya da eksik bilgi, teslimatın gecikmesine veya işlemin manuel kontrole düşmesine neden olabilir.`
+      : 'Bu ürün e-pin veya dijital kod mantığıyla teslim ediliyorsa, teslim edilen kod ve kullanım bilgileri sipariş detay ekranından görüntülenebilir.';
     const title = entityType === 'CATEGORY'
       ? `${subject} Ürünleri ve Fiyatları${brandSuffix}`
       : `${subject} Satın Al${brandSuffix}`;
@@ -777,8 +791,8 @@ export class AdminCompatController {
       ? `${subject} kategorisindeki dijital ürünleri güvenli ödeme, güncel fiyat ve kolay sipariş takibiyle inceleyin.`
       : `${subject} için güvenli ödeme, kolay sipariş takibi ve destek seçenekleriyle hızlıca sipariş oluşturun.`;
     const body = entityType === 'CATEGORY'
-      ? `<p><strong>${subject}</strong> kategorisinde oyun kredileri, dijital kodlar ve top-up ürünlerini tek ekranda inceleyebilirsiniz. Sipariş süreci anlaşılır tutulur; fiyat, stok ve teslimat durumlarını panelden takip edebilirsiniz.</p><p>Satın almadan önce ürün açıklamalarını, bölge bilgisini ve istenen hesap bilgilerini kontrol etmeniz önerilir.</p>`
-      : `<p><strong>${subject}</strong>${category ? `, ${category} kategorisinde` : ''} güvenli sipariş deneyimi için hazırlanmış dijital bir üründür. ${isTopup ? `Sipariş sırasında ${fieldText || 'oyuncu bilgileri'} gibi gerekli bilgileri doğru girmeniz gerekir.` : 'Teslim edilen kod veya ürün bilgileri sipariş detayınızda görüntülenir.'}</p><p>Ödeme durumunu, teslimat sürecini ve sipariş geçmişini ${brandPhrase} takip edebilirsiniz. Ürün bölgesi, platformu ve kullanım koşullarını satın almadan önce kontrol edin.</p>`;
+      ? `<p><strong>${subject}</strong> kategorisi; oyun kredileri, dijital kodlar, abonelikler ve top-up ürünlerini düzenli, anlaşılır ve güvenli bir alışveriş deneyimiyle incelemek isteyen kullanıcılar için hazırlanır. Bu sayfada kategoriye bağlı ürünleri karşılaştırabilir, fiyatları kontrol edebilir ve satın almadan önce ürün tipi, teslimat yöntemi, bölge uygunluğu ve gerekli hesap bilgileri gibi kritik detayları değerlendirebilirsiniz.</p><h2>${subject} kategorisinde nelere dikkat edilmeli?</h2><p>Her dijital ürün aynı teslimat mantığıyla çalışmaz. Bazı ürünlerde e-pin kodu teslim edilirken, bazı top-up ürünleri doğrudan oyuncu hesabına yüklenir. Bu nedenle satın alma öncesinde ürün açıklamasını, platform bilgisini, geçerli olduğu bölgeyi ve istenen kullanıcı bilgilerini kontrol etmek önemlidir. ${regionText ? `Bu kategori veya ürün grubu için görünen bölge etiketi <strong>${regionText}</strong> olarak belirtilmiştir; yine de ürün detayındaki kullanım koşullarını incelemeniz önerilir.` : 'Bölge bilgisi açıkça belirtilmiş ürünlerde, satın aldığınız ürünün hesabınızın bölgesiyle uyumlu olduğundan emin olmanız gerekir.'}</p><h2>Güvenli sipariş ve takip</h2><p>Sipariş oluşturduktan sonra ödeme durumu, teslimat aşaması ve varsa teslim edilen kod bilgileri hesabınızdaki sipariş detaylarından takip edilebilir. Dijital ürünlerde doğru ürünü seçmek kadar sipariş bilgilerinin doğru girilmesi de önemlidir. Özellikle oyuncu ID, sunucu, bölge veya e-posta gibi alanlar isteniyorsa bu bilgileri dikkatle yazmalısınız. Hatalı bilgi girildiğinde sistem otomatik teslimat yapamayabilir ve sipariş manuel kontrole alınabilir.</p><h3>Bu kategori kimler için uygun?</h3><ul><li>Oyun hesabına hızlı kredi veya dijital içerik almak isteyen kullanıcılar.</li><li>E-pin kodu, oyun bakiyesi veya top-up ürünlerini tek yerden takip etmek isteyenler.</li><li>Farklı ürün seçeneklerini fiyat, stok ve teslimat tipine göre karşılaştırmak isteyen müşteriler.</li></ul><p>Satın alma kararı verirken yalnızca fiyatı değil, ürünün geçerli olduğu platformu, bölge etiketini ve teslimat biçimini de değerlendirmeniz daha doğru bir alışveriş deneyimi sağlar.</p>`
+      : `<p><strong>${subject}</strong>${category ? `, ${category} kategorisinde` : ''} yer alan dijital bir üründür ve oyun hesabına kredi, bakiye, kod veya benzeri dijital içerik almak isteyen kullanıcılar için hazırlanır. Bu ürün sayfasında satın almadan önce bilmeniz gereken temel detayları, teslimat mantığını ve dikkat edilmesi gereken kullanım koşullarını inceleyebilirsiniz. Amaç, doğru ürünü seçmenizi, sipariş sırasında gerekli bilgileri eksiksiz girmenizi ve teslimat sürecini daha rahat takip etmenizi sağlamaktır.</p><h2>${subject} ürününün öne çıkan özellikleri</h2><p>${subject}, dijital ürün alışverişinde net ürün adı, kategori bilgisi, fiyatlandırma, stok durumu ve teslimat takibi gibi alanların bir arada sunulması için düzenlenmiştir. ${fieldSentence} ${regionText ? `Ürün için gösterilen bölge etiketi <strong>${regionText}</strong> olarak tanımlanmıştır; bu bilgi ürünün hangi bölge veya sunucu için tercih edilmesi gerektiğini anlamanıza yardımcı olur.` : 'Ürün bölgesi veya platform bilgisi açıklamada yer alıyorsa, satın almadan önce hesabınızla uyumlu olduğundan emin olmanız önerilir.'}</p><h2>Sipariş verirken nelere dikkat etmelisiniz?</h2><p>Dijital ürünlerde en sık yaşanan sorunlar yanlış ürün seçimi, hatalı oyuncu bilgisi, farklı bölgeye ait hesap kullanımı veya platform uyumsuzluğundan kaynaklanır. Bu nedenle satın alma öncesinde ürün adını, kategori bilgisini, varsa bölge etiketini, istenen alanları ve kullanım koşullarını dikkatle kontrol etmelisiniz. Ürün top-up ise bilgiler doğrudan teslimat sürecinde kullanılır; e-pin ürünlerde ise teslim edilen kodu sipariş detayınızda güvenli şekilde görüntüleyebilirsiniz.</p><h2>Ödeme, teslimat ve takip</h2><p>Ödeme tamamlandıktan sonra sipariş durumunu, teslimat aşamasını ve geçmiş işlemleri ${brandPhrase} takip edebilirsiniz. Stok, tedarikçi ve doğrulama süreçlerine göre bazı siparişler otomatik tamamlanabilir, bazıları ise personel kontrolüne alınabilir. Bu süreçte sipariş numaranızı saklamak, destek gerektiğinde daha hızlı kontrol yapılmasına yardımcı olur. Ürünü kullanmadan önce hesabınızın bölgesini, platformunu ve yazdığınız bilgileri tekrar kontrol etmeniz güvenli bir alışveriş deneyimi sağlar.</p><h3>Kısaca kontrol listesi</h3><ul><li>Ürün adı ve kategori doğru mu?</li><li>Hesap, sunucu veya bölge bilgisi isteniyorsa eksiksiz girildi mi?</li><li>Ürün bölge etiketi hesabınızla uyumlu mu?</li><li>Sipariş detayını ve teslimat durumunu kontrol ettiniz mi?</li></ul>`;
     const baseKeywords = entityType === 'CATEGORY'
       ? [subject, `${subject} ürünleri`, `${subject} fiyatları`, brand, 'epin', 'oyun kodu']
       : [subject, `${subject} satın al`, `${subject} fiyat`, category, brand, isTopup ? 'top up' : 'epin', 'dijital ürün'];
@@ -816,7 +830,8 @@ export class AdminCompatController {
         'ARAMA NİYETİ: Ürün adı, kategori, platform, bölge, ürün tipi ve requiredFields üzerinden ana kelime, uzun kuyruk kelime ve satın alma niyetini çıkar. Kelimeleri doğal kullan; keyword stuffing yapma.',
         'TITLE KURALI: seoTitle açıklayıcı, sayfa içeriğiyle birebir uyumlu, benzersiz ve en fazla 70 karakter olmalı. Clickbait, şok edici dil, gereksiz ayraç ve tekrar yok.',
         'META KURALI: seoDescription 120-160 karakter aralığında, net fayda anlatan, uydurma vaat içermeyen ve kullanıcıyı doğru beklentiyle tıklamaya çağıran bir cümle olsun.',
-        'AÇIKLAMA KURALI: description güvenli HTML döndürsün. Sadece p, h2, h3, ul, li, strong etiketlerini kullan. İlk paragraf ürünü/kategoriyi net tanımlasın; sonraki bölümde kullanım, doğru bilgi girişi, bölge/platform kontrolü ve sipariş takibi anlatılsın.',
+        'AÇIKLAMA KURALI: description güvenli HTML döndürsün ve Türkçe metin en az 300 kelime, en fazla 450 kelime olsun. Sadece p, h2, h3, ul, li, strong etiketlerini kullan. İlk paragraf ürünü/kategoriyi net tanımlasın; sonraki bölümlerde ürünün özellikleri, kullanım amacı, doğru bilgi girişi, bölge/platform kontrolü, ödeme, teslimat ve sipariş takibi anlatılsın.',
+        'YAPI KURALI: description içinde en az 3 paragraf, en az 2 h2/h3 başlığı ve kullanıcıya yardımcı olan kısa bir ul/li kontrol listesi olsun.',
         'TOPUP/EPIN KURALI: TOPUP veya requiredFields varsa oyuncu ID/sunucu/bölge bilgisinin doğru girilmesi gerektiğini doğal şekilde yaz. EPIN ürünlerde kodun sipariş detayından görüntüleneceğini anlat.',
         'GÜVEN KURALI: Kullanıcının satın almadan önce kontrol etmesi gerekenleri açıkla; yasal/marka iddiası, rakip karşılaştırması, "en ucuz", "kesin anında", "resmi partner" gibi kanıtlanmayan ifadeleri kullanma.',
         'FAQ KURALI: 3-5 kısa SSS üret. Sorular gerçek kullanıcı aramalarına benzeyen doğal Türkçe sorular olsun.',
@@ -842,8 +857,10 @@ export class AdminCompatController {
       const data: any = await response.json();
       const raw = data?.choices?.[0]?.message?.content || '';
       const parsed = JSON.parse(raw);
+      const description = String(parsed.description || fallback.description);
+      const safeDescription = this.htmlWordCount(description) >= 300 ? description : fallback.description;
       return {
-        description: String(parsed.description || fallback.description),
+        description: safeDescription,
         shortDescription: this.clampSeoText(parsed.shortDescription || fallback.shortDescription, 220),
         seoTitle: this.clampSeoText(parsed.seoTitle || fallback.seoTitle, 70),
         seoDescription: this.clampSeoText(parsed.seoDescription || fallback.seoDescription, 160),
