@@ -102,6 +102,55 @@ export class AdminCompatController {
     return tenantIds.length === 0 || tenantIds.includes(tenantId);
   }
 
+  private productRegionMeta(product: any) {
+    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+      ? product.metadata as Record<string, any>
+      : {};
+    const compatibleRegionCodes = Array.isArray(metadata.compatibleRegionCodes)
+      ? metadata.compatibleRegionCodes.map((code: any) => String(code || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const productRegionCode = String(metadata.productRegionCode || '').trim().toUpperCase();
+
+    return {
+      productRegionCode: productRegionCode || null,
+      productRegionName: String(metadata.productRegionName || '').trim() || (productRegionCode === 'GLOBAL' ? 'Global' : null),
+      compatibleRegionCodes,
+      regionWarning: String(metadata.regionWarning || '').trim(),
+      regionCheckRequired: Boolean(metadata.regionCheckRequired),
+      blockMismatchedRegion: Boolean(metadata.blockMismatchedRegion),
+    };
+  }
+
+  private shouldUpdateProductRegion(body: any) {
+    return [
+      'productRegionCode',
+      'productRegionName',
+      'compatibleRegionCodes',
+      'regionWarning',
+      'regionCheckRequired',
+      'blockMismatchedRegion',
+    ].some((key) => body[key] !== undefined);
+  }
+
+  private productRegionMetadataFromBody(body: any) {
+    const productRegionCode = String(body.productRegionCode || '').trim().toUpperCase();
+    const compatibleRegionCodes = Array.isArray(body.compatibleRegionCodes)
+      ? body.compatibleRegionCodes.map((code: any) => String(code || '').trim().toUpperCase()).filter(Boolean)
+      : String(body.compatibleRegionCodes || '')
+        .split(',')
+        .map((code) => code.trim().toUpperCase())
+        .filter(Boolean);
+
+    return {
+      productRegionCode: productRegionCode || null,
+      productRegionName: String(body.productRegionName || '').trim() || (productRegionCode === 'GLOBAL' ? 'Global' : null),
+      compatibleRegionCodes: Array.from(new Set(compatibleRegionCodes)),
+      regionWarning: String(body.regionWarning || '').trim(),
+      regionCheckRequired: Boolean(body.regionCheckRequired),
+      blockMismatchedRegion: Boolean(body.blockMismatchedRegion),
+    };
+  }
+
   private isTenantScoped(tenantId?: string) {
     return Boolean(tenantId && tenantId !== 'all');
   }
@@ -4458,6 +4507,7 @@ export class AdminCompatController {
       sliderImage: product.sliderImageUrl,
       isExportable: true,
       siteContent: (product.metadata as any)?.siteContent || {},
+      ...this.productRegionMeta(product),
       seoTitle: product.seoTitle,
       seoDescription: product.seoDescription,
       seoKeywords: product.seoKeywords,
@@ -5276,6 +5326,18 @@ export class AdminCompatController {
           providerSlug: providerProduct.Slug || null,
           regionList: providerProduct.RegionList || null,
           platformList: providerProduct.PlatformList || null,
+          productRegionCode: Array.isArray(providerProduct.RegionList) && providerProduct.RegionList.length === 1
+            ? String(providerProduct.RegionList[0]).trim().toUpperCase()
+            : 'GLOBAL',
+          productRegionName: Array.isArray(providerProduct.RegionList) && providerProduct.RegionList.length === 1
+            ? String(providerProduct.RegionList[0]).trim()
+            : 'Global',
+          compatibleRegionCodes: Array.isArray(providerProduct.RegionList) && providerProduct.RegionList.length > 0
+            ? providerProduct.RegionList.map((region: any) => String(region || '').trim().toUpperCase()).filter(Boolean)
+            : ['GLOBAL'],
+          regionCheckRequired: productType === 'TOPUP',
+          blockMismatchedRegion: false,
+          regionWarning: productType === 'TOPUP' ? 'Oyuncu hesabinizin urun bolgesiyle uyumlu oldugunu kontrol edin.' : '',
         },
       },
     });
@@ -5598,9 +5660,10 @@ export class AdminCompatController {
   @Post('products')
   async createProduct(@Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
-    const metadata = body.siteContent && typeof body.siteContent === 'object'
-      ? { siteContent: body.siteContent }
-      : undefined;
+    const metadata = {
+      ...(body.siteContent && typeof body.siteContent === 'object' ? { siteContent: body.siteContent } : {}),
+      ...this.productRegionMetadataFromBody(body),
+    };
     return this.prisma.product.create({
       data: {
         name: body.name,
@@ -5634,13 +5697,21 @@ export class AdminCompatController {
   @Patch('products/:id')
   async updateProduct(@Param('id') id: string, @Body() body: any, @Query('tenantId') tenantId?: string) {
     const scopedTenantIds = this.scopedTenantIds(body.tenantIds, tenantId);
+    const shouldUpdateMetadata = body.siteContent !== undefined || this.shouldUpdateProductRegion(body);
     return this.prisma.$transaction(async (tx) => {
-      const existing = body.siteContent !== undefined
+      const existing = shouldUpdateMetadata
         ? await tx.product.findUnique({ where: { id }, select: { metadata: true } })
         : null;
       const existingMetadata = existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
         ? existing.metadata as Record<string, any>
         : {};
+      const nextMetadata = shouldUpdateMetadata
+        ? ({
+            ...existingMetadata,
+            ...(body.siteContent !== undefined ? { siteContent: body.siteContent || {} } : {}),
+            ...(this.shouldUpdateProductRegion(body) ? this.productRegionMetadataFromBody(body) : {}),
+          } as any)
+        : undefined;
       const product = await tx.product.update({
         where: { id },
         data: {
@@ -5662,7 +5733,7 @@ export class AdminCompatController {
           iconUrl: body.imageUrl,
           merchantImageUrl: body.marketingImage,
           sliderImageUrl: body.sliderImage,
-          metadata: body.siteContent !== undefined ? ({ ...existingMetadata, siteContent: body.siteContent || {} } as any) : undefined,
+          metadata: nextMetadata,
           seoTitle: body.seoTitle,
           seoDescription: body.seoDescription,
           seoKeywords: body.seoKeywords,

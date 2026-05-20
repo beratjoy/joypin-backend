@@ -95,6 +95,26 @@ export class DealerApiController {
     return countries.length === 0 || countries.includes(normalized);
   }
 
+  private productRegionMeta(product: any) {
+    const metadata = product?.metadata && typeof product.metadata === 'object' && !Array.isArray(product.metadata)
+      ? product.metadata as Record<string, any>
+      : {};
+    const compatibleRegionCodes = Array.isArray(metadata.compatibleRegionCodes)
+      ? metadata.compatibleRegionCodes.map((code: any) => String(code || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+    const productRegionCode = String(metadata.productRegionCode || '').trim().toUpperCase();
+    return {
+      region: {
+        code: productRegionCode || null,
+        name: String(metadata.productRegionName || '').trim() || (productRegionCode === 'GLOBAL' ? 'Global' : null),
+        compatibleCodes: compatibleRegionCodes,
+        warning: String(metadata.regionWarning || '').trim(),
+        checkRequired: Boolean(metadata.regionCheckRequired),
+        blockMismatched: Boolean(metadata.blockMismatchedRegion),
+      },
+    };
+  }
+
   private calculateDealerUnitPrice(product: any, dealerGroup: any, pricing: any) {
     const pricingModel = pricing?.overridePricingModel || product.pricingModel;
     const baseCost = Number(product.baseCost || 0);
@@ -179,6 +199,7 @@ export class DealerApiController {
       stock: product.hasInfiniteStock ? null : product.stockCount,
       inStock: product.hasInfiniteStock || Number(product.stockCount || 0) > 0,
       imageUrl: product.iconUrl || product.merchantImageUrl || product.category?.logoUrl || product.category?.imageUrl || null,
+      ...this.productRegionMeta(product),
       requiredFields: fields.map((field: any) => ({
         key: field.key || field.fieldKey,
         label: field.label || field.fieldLabel || field.key || field.fieldKey,
