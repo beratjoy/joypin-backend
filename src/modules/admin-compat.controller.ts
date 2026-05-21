@@ -2,6 +2,7 @@
 import { ForbiddenException, NotFoundException, Req, Res, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail/mail.service';
+import { SmsService } from './sms/sms.service';
 import { ReferralGuardService } from './referrals/referral-guard.service';
 import { ReferralsService } from './referrals/referrals.service';
 import { StockDeliveryService } from './stocks/stock-delivery.service';
@@ -18,6 +19,7 @@ export class AdminCompatController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
+    private readonly smsService: SmsService,
     private readonly referralGuard: ReferralGuardService,
     private readonly stockDelivery: StockDeliveryService,
     private readonly authService: AuthService,
@@ -3521,6 +3523,23 @@ export class AdminCompatController {
 
     await this.mailService.sendTestEmail(to, this.isTenantScoped(tenantId) ? String(tenantId) : undefined);
     return { success: true };
+  }
+  @Post('settings/sms/test')
+  async sendSmsSettingsTest(@Body() body: any, @Query('tenantId') tenantId?: string) {
+    const to = String(body?.to || '').trim();
+    if (!to) {
+      throw new BadRequestException('Valid test phone is required');
+    }
+
+    const message = String(body?.message || 'Epin365 SMS testi: Netgsm bağlantısı başarıyla çalışıyor.').trim();
+    const result = await this.smsService.sendSms({
+      to,
+      message,
+      kind: 'TEST',
+      tenantId: this.isTenantScoped(tenantId) ? String(tenantId) : undefined,
+      metadata: { source: 'admin_sms_settings_test' },
+    });
+    return { success: true, result };
   }
   @Get('mail/templates')
   async listMailTemplates(@Query('tenantId') tenantId?: string) {

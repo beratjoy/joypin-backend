@@ -22,6 +22,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { ActivityInterceptor } from './modules/audit/activity.interceptor';
 import { MailModule } from './modules/mail/mail.module';
+import { SmsModule } from './modules/sms/sms.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { StocksModule } from './modules/stocks/stocks.module';
 import { SecurityModule } from './modules/security/security.module';
@@ -63,6 +64,7 @@ import { DealerApiController } from './modules/dealer-api.controller';
 
     // ─── Communication ──────────────────────────────────
     MailModule,
+    SmsModule,
 
     // ─── Domain Modules ───────────────────────────────────
     AuditModule,
